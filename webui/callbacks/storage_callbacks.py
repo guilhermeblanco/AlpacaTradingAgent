@@ -42,6 +42,18 @@ def register_storage_callbacks(app):
             Input("google-thinking-level", "value"),
             Input("anthropic-effort", "value"),
             Input("xai-reasoning-effort", "value"),
+            Input("quick-llm-reasoning-effort", "value"),
+            Input("quick-llm-verbosity", "value"),
+            Input("quick-llm-summary", "value"),
+            Input("quick-llm-max-output-tokens", "value"),
+            Input("quick-llm-store", "value"),
+            Input("quick-llm-parallel-tool-calls", "value"),
+            Input("deep-llm-reasoning-effort", "value"),
+            Input("deep-llm-verbosity", "value"),
+            Input("deep-llm-summary", "value"),
+            Input("deep-llm-max-output-tokens", "value"),
+            Input("deep-llm-store", "value"),
+            Input("deep-llm-parallel-tool-calls", "value"),
         ],
         [
             State("settings-store", "data"),
@@ -57,6 +69,10 @@ def register_storage_callbacks(app):
                      llm_provider, backend_url, output_language, checkpoint_enabled,
                      quick_llm, deep_llm, quick_llm_custom_model, deep_llm_custom_model,
                      google_thinking_level, anthropic_effort, xai_reasoning_effort,
+                     quick_reasoning_effort, quick_verbosity, quick_summary, quick_max_output_tokens,
+                     quick_store, quick_parallel_tool_calls,
+                     deep_reasoning_effort, deep_verbosity, deep_summary, deep_max_output_tokens,
+                     deep_store, deep_parallel_tool_calls,
                      current_settings, loop_enabled, market_hour_enabled):
         """Save settings to localStorage store"""
         
@@ -90,6 +106,18 @@ def register_storage_callbacks(app):
             "google_thinking_level": google_thinking_level or "",
             "anthropic_effort": anthropic_effort or "",
             "xai_reasoning_effort": xai_reasoning_effort or "",
+            "quick_reasoning_effort": quick_reasoning_effort or "low",
+            "quick_verbosity": quick_verbosity or "low",
+            "quick_summary": quick_summary or "auto",
+            "quick_max_output_tokens": quick_max_output_tokens,
+            "quick_store": quick_store or False,
+            "quick_parallel_tool_calls": quick_parallel_tool_calls if quick_parallel_tool_calls is not None else True,
+            "deep_reasoning_effort": deep_reasoning_effort or "medium",
+            "deep_verbosity": deep_verbosity or "medium",
+            "deep_summary": deep_summary or "auto",
+            "deep_max_output_tokens": deep_max_output_tokens,
+            "deep_store": deep_store or False,
+            "deep_parallel_tool_calls": deep_parallel_tool_calls if deep_parallel_tool_calls is not None else True,
         }
         
         # Check if settings actually changed to prevent circular updates
@@ -105,3 +133,86 @@ def register_storage_callbacks(app):
                 return current_settings
         
         return new_settings
+
+    # Callback to load settings from localStorage into UI components when page loads/refreshes
+    @app.callback(
+        [
+            Output("ticker-input", "value"),
+            Output("analyst-market", "value"),
+            Output("analyst-social", "value"),
+            Output("analyst-news", "value"),
+            Output("analyst-fundamentals", "value"),
+            Output("analyst-macro", "value"),
+            Output("research-depth", "value"),
+            Output("allow-shorts", "value"),
+            Output("loop-interval", "value"),
+            Output("market-hours-input", "value"),
+            Output("trade-after-analyze", "value"),
+            Output("trade-dollar-amount", "value"),
+            Output("llm-provider", "value"),
+            Output("backend-url", "value"),
+            Output("output-language", "value"),
+            Output("checkpoint-enabled", "value"),
+            Output("quick-llm", "value"),
+            Output("deep-llm", "value"),
+            Output("quick-llm-custom-model", "value"),
+            Output("deep-llm-custom-model", "value"),
+            Output("google-thinking-level", "value"),
+            Output("anthropic-effort", "value"),
+            Output("quick-llm-reasoning-effort", "value"),
+            Output("quick-llm-verbosity", "value"),
+            Output("quick-llm-summary", "value"),
+            Output("quick-llm-max-output-tokens", "value"),
+            Output("quick-llm-store", "value"),
+            Output("quick-llm-parallel-tool-calls", "value"),
+            Output("deep-llm-reasoning-effort", "value"),
+            Output("deep-llm-verbosity", "value"),
+            Output("deep-llm-summary", "value"),
+            Output("deep-llm-max-output-tokens", "value"),
+            Output("deep-llm-store", "value"),
+            Output("deep-llm-parallel-tool-calls", "value"),
+        ],
+        [Input("settings-store", "data")],
+        prevent_initial_call=False
+    )
+    def load_settings(stored_settings):
+        """Restore UI component values from stored localStorage settings on page load"""
+        defaults = get_default_settings()
+        s = stored_settings or defaults
+
+        return (
+            s.get("ticker_input", defaults.get("ticker_input", "NVDA, AMD, TSLA")),
+            s.get("analyst_market", defaults.get("analyst_market", True)),
+            s.get("analyst_social", defaults.get("analyst_social", True)),
+            s.get("analyst_news", defaults.get("analyst_news", True)),
+            s.get("analyst_fundamentals", defaults.get("analyst_fundamentals", True)),
+            s.get("analyst_macro", defaults.get("analyst_macro", True)),
+            s.get("research_depth", defaults.get("research_depth", "Shallow")),
+            s.get("allow_shorts", defaults.get("allow_shorts", False)),
+            s.get("loop_interval", defaults.get("loop_interval", 60)),
+            s.get("market_hours_input", defaults.get("market_hours_input", "")),
+            s.get("trade_after_analyze", defaults.get("trade_after_analyze", False)),
+            s.get("trade_dollar_amount", defaults.get("trade_dollar_amount", 4500)),
+            s.get("llm_provider", defaults.get("llm_provider", "openai")),
+            s.get("backend_url", defaults.get("backend_url", "")),
+            s.get("output_language", defaults.get("output_language", "English")),
+            s.get("checkpoint_enabled", defaults.get("checkpoint_enabled", False)),
+            s.get("quick_llm", defaults.get("quick_llm", "gpt-5.4-nano")),
+            s.get("deep_llm", defaults.get("deep_llm", "gpt-5.4-mini")),
+            s.get("quick_llm_custom_model", defaults.get("quick_llm_custom_model", "")),
+            s.get("deep_llm_custom_model", defaults.get("deep_llm_custom_model", "")),
+            s.get("google_thinking_level", defaults.get("google_thinking_level", "")),
+            s.get("anthropic_effort", defaults.get("anthropic_effort", "")),
+            s.get("quick_reasoning_effort", defaults.get("quick_reasoning_effort", "low")),
+            s.get("quick_verbosity", defaults.get("quick_verbosity", "low")),
+            s.get("quick_summary", defaults.get("quick_summary", "auto")),
+            s.get("quick_max_output_tokens", defaults.get("quick_max_output_tokens", None)),
+            s.get("quick_store", defaults.get("quick_store", False)),
+            s.get("quick_parallel_tool_calls", defaults.get("quick_parallel_tool_calls", True)),
+            s.get("deep_reasoning_effort", defaults.get("deep_reasoning_effort", "medium")),
+            s.get("deep_verbosity", defaults.get("deep_verbosity", "medium")),
+            s.get("deep_summary", defaults.get("deep_summary", "auto")),
+            s.get("deep_max_output_tokens", defaults.get("deep_max_output_tokens", None)),
+            s.get("deep_store", defaults.get("deep_store", False)),
+            s.get("deep_parallel_tool_calls", defaults.get("deep_parallel_tool_calls", True)),
+        )

@@ -2,6 +2,7 @@
 webui/components/config_panel.py - Configuration panel for the web UI.
 """
 
+import os
 import dash_bootstrap_components as dbc
 from dash import dcc, html
 
@@ -482,7 +483,7 @@ def _model_setup():
                         dbc.Select(
                             id="llm-provider",
                             options=get_llm_provider_options(),
-                            value="openai",
+                            value=os.getenv("LLM_PROVIDER", "openai"),
                             className="config-select",
                         ),
                         "network-wired",
@@ -494,7 +495,7 @@ def _model_setup():
                                 id="backend-url",
                                 type="text",
                                 placeholder="Optional OpenAI-compatible endpoint",
-                                value="",
+                                value=os.getenv("OPENAI_BASE_URL", ""),
                                 className="config-input",
                             ),
                             "server",

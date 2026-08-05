@@ -2,7 +2,7 @@
 Storage utility for persisting user settings in localStorage
 """
 
-from typing import Dict, Any
+import os
 
 # Default settings structure
 DEFAULT_SETTINGS = {
@@ -20,8 +20,8 @@ DEFAULT_SETTINGS = {
     "market_hours_input": "",
     "trade_after_analyze": False,
     "trade_dollar_amount": 4500,
-    "llm_provider": "openai",
-    "backend_url": "",
+    "llm_provider": os.getenv("LLM_PROVIDER", "openai"),
+    "backend_url": os.getenv("OPENAI_BASE_URL", ""),
     "output_language": "English",
     "checkpoint_enabled": False,
     "quick_llm": "gpt-5.4-nano",
@@ -31,6 +31,18 @@ DEFAULT_SETTINGS = {
     "google_thinking_level": "",
     "anthropic_effort": "",
     "xai_reasoning_effort": "",
+    "quick_reasoning_effort": "low",
+    "quick_verbosity": "low",
+    "quick_summary": "auto",
+    "quick_max_output_tokens": None,
+    "quick_store": False,
+    "quick_parallel_tool_calls": True,
+    "deep_reasoning_effort": "medium",
+    "deep_verbosity": "medium",
+    "deep_summary": "auto",
+    "deep_max_output_tokens": None,
+    "deep_store": False,
+    "deep_parallel_tool_calls": True,
 }
 
 # Default API keys structure (empty by default, loaded from localStorage or .env)
@@ -57,7 +69,10 @@ DEFAULT_API_KEYS = {
 
 def get_default_settings() -> Dict[str, Any]:
     """Get the default settings structure"""
-    return DEFAULT_SETTINGS.copy()
+    defaults = DEFAULT_SETTINGS.copy()
+    defaults["llm_provider"] = os.getenv("LLM_PROVIDER", defaults.get("llm_provider", "openai"))
+    defaults["backend_url"] = os.getenv("OPENAI_BASE_URL", defaults.get("backend_url", ""))
+    return defaults
 
 
 def get_default_api_keys() -> Dict[str, Any]:
@@ -68,7 +83,7 @@ def get_default_api_keys() -> Dict[str, Any]:
 def create_storage_store_component():
     """Create a dcc.Store component for localStorage persistence"""
     from dash import dcc
-    return dcc.Store(id='settings-store', storage_type='local', data=DEFAULT_SETTINGS)
+    return dcc.Store(id='settings-store', storage_type='local', data=get_default_settings())
 
 
 def create_api_keys_store_component():
