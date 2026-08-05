@@ -54,11 +54,11 @@ def register_storage_callbacks(app):
             Input("deep-llm-max-output-tokens", "value"),
             Input("deep-llm-store", "value"),
             Input("deep-llm-parallel-tool-calls", "value"),
+            Input("loop-enabled", "value"),
+            Input("market-hour-enabled", "value"),
         ],
         [
             State("settings-store", "data"),
-            State("loop-enabled", "value"),
-            State("market-hour-enabled", "value")
         ],
         prevent_initial_call=True
     )
@@ -73,7 +73,8 @@ def register_storage_callbacks(app):
                      quick_store, quick_parallel_tool_calls,
                      deep_reasoning_effort, deep_verbosity, deep_summary, deep_max_output_tokens,
                      deep_store, deep_parallel_tool_calls,
-                     current_settings, loop_enabled, market_hour_enabled):
+                     loop_enabled, market_hour_enabled,
+                     current_settings):
         """Save settings to localStorage store"""
         
         # Don't save if triggered by initial load
@@ -89,9 +90,9 @@ def register_storage_callbacks(app):
             "analyst_macro": analyst_macro,
             "research_depth": research_depth,
             "allow_shorts": allow_shorts,
-            "loop_enabled": loop_enabled,
+            "loop_enabled": loop_enabled or False,
             "loop_interval": loop_interval,
-            "market_hour_enabled": market_hour_enabled,
+            "market_hour_enabled": market_hour_enabled or False,
             "market_hours_input": market_hours_input,
             "trade_after_analyze": trade_after_analyze,
             "trade_dollar_amount": trade_dollar_amount,
@@ -171,6 +172,8 @@ def register_storage_callbacks(app):
             Output("deep-llm-max-output-tokens", "value"),
             Output("deep-llm-store", "value"),
             Output("deep-llm-parallel-tool-calls", "value"),
+            Output("loop-enabled", "value"),
+            Output("market-hour-enabled", "value"),
         ],
         [Input("settings-store", "data")],
         prevent_initial_call=False
@@ -215,4 +218,6 @@ def register_storage_callbacks(app):
             s.get("deep_max_output_tokens", defaults.get("deep_max_output_tokens", None)),
             s.get("deep_store", defaults.get("deep_store", False)),
             s.get("deep_parallel_tool_calls", defaults.get("deep_parallel_tool_calls", True)),
+            s.get("loop_enabled", defaults.get("loop_enabled", False)),
+            s.get("market_hour_enabled", defaults.get("market_hour_enabled", False)),
         )
