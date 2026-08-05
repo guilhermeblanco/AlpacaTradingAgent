@@ -3,6 +3,7 @@ Storage utility for persisting user settings in localStorage
 """
 
 import os
+from typing import Dict, Any
 
 # Default settings structure
 DEFAULT_SETTINGS = {
