@@ -1550,4 +1550,91 @@ class AlpacaUtils:
         except Exception as e:
             error_msg = f"Error executing trading action for {symbol}: {e}"
             print(error_msg)
-            return {"success": False, "error": error_msg} 
+            return {"success": False, "error": error_msg}
+
+    _tradeable_assets_cache = {
+        "expires_at": 0.0,
+        "assets": {}
+    }
+
+    @staticmethod
+    def get_tradeable_assets() -> Dict[str, str]:
+        """
+        Fetches all active tradeable assets from the Alpaca API and returns a dict mapping symbol -> asset_type ('stock' or 'crypto').
+        Filters out non-tradable, OTC (except fractionable ADRs), and derivatives.
+        """
+        now = time.time()
+        if now < AlpacaUtils._tradeable_assets_cache.get("expires_at", 0):
+            return AlpacaUtils._tradeable_assets_cache.get("assets", {})
+
+        try:
+            client = get_alpaca_trading_client()
+            request = GetAssetsRequest(status=AssetStatus.ACTIVE)
+            assets = client.get_all_assets(request)
+
+            tradeable_assets = {}
+            for asset in assets:
+                if not getattr(asset, "tradable", False):
+                    continue
+                
+                symbol = getattr(asset, "symbol", "")
+                if not symbol:
+                    continue
+                    
+                # Filter out derivative instruments (warrants, preferred, rights)
+                if "." in symbol:
+                    suffix = symbol.split(".")[-1].upper()
+                    if suffix in ("WS", "PR", "RT"):
+                        continue
+                
+                # Filter out OTC penny stocks, keep high-quality fractionable ADRs
+                exchange_str = _enum_value(getattr(asset, "exchange", ""))
+                if exchange_str and exchange_str.upper() == "OTC":
+                    if not getattr(asset, "fractionable", False):
+                        continue
+
+                asset_class = _enum_value(getattr(asset, "asset_class", ""))
+                
+                if asset_class == AssetClass.US_EQUITY.value or asset_class == "us_equity":
+                    # Exclude preferred shares, warrants, units (symbols containing '.')
+                    if "." in symbol:
+                        continue
+                    # Filter to fractionable or major exchange assets for liquidity
+                    if getattr(asset, "fractionable", False) or (exchange_str and exchange_str.upper() in ("NASDAQ", "NYSE", "AMEX", "ARCA")):
+                        tradeable_assets[symbol] = "stock"
+                elif asset_class == AssetClass.CRYPTO.value or asset_class == "crypto":
+                    # Normalize symbol to BASE-USD format
+                    if symbol.endswith("/USD") or symbol.endswith("USD"):
+                        normalized = _normalize_crypto_symbol(symbol)
+                        tradeable_assets[normalized] = "crypto"
+            
+            AlpacaUtils._tradeable_assets_cache["assets"] = tradeable_assets
+            AlpacaUtils._tradeable_assets_cache["expires_at"] = now + 3600
+            return tradeable_assets
+
+        except Exception as e:
+            print(f"Error fetching tradeable assets: {e}")
+            return {}
+
+    @staticmethod
+    def get_open_orders() -> set:
+        """
+        Fetches all open/pending orders from Alpaca and returns a set of symbols.
+        """
+        try:
+            client = get_alpaca_trading_client()
+            req = GetOrdersRequest(
+                status=QueryOrderStatus.OPEN,
+                nested=False
+            )
+            orders = client.get_orders(req)
+            
+            open_symbols = set()
+            for order in orders:
+                symbol = getattr(order, "symbol", "")
+                if symbol:
+                    open_symbols.add(symbol.upper())
+            return open_symbols
+        except Exception as e:
+            print(f"Error fetching open orders: {e}")
+            return set()

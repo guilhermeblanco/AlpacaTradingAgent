@@ -292,6 +292,15 @@ class AppState:
         self.current_session_id = None
         self.session_start_time = None
 
+        self.screener_cooldown = {}
+        self.screener_status = {
+            "last_scan_time": None,
+            "last_scan_asset_type": None,
+            "tickers_scanned": 0,
+            "candidates_found": [],
+            "is_running": False,
+        }
+
     def get_tool_calls_for_display(self, agent_filter=None, symbol_filter=None):
         """Get tool calls in a consistent format for UI display, optionally filtered by agent type and symbol"""
         formatted_calls = []
@@ -497,6 +506,31 @@ class AppState:
         self.market_hour_enabled = False
         self.analysis_running = False
         print("[STATE] Stopping market hour mode")
+
+    def start_screener_mode(self, config):
+        """Enable screener mode with given analysis configuration."""
+        self.screener_enabled = True
+        self.stop_screener = False
+        self.active_analysts_config = config
+
+    def stop_screener_mode(self):
+        """Stop screener mode."""
+        self.stop_screener = True
+        self.screener_enabled = False
+
+    def record_analysis_time(self, symbol):
+        """Record the completion time of an analysis for cooldown tracking."""
+        import time
+        self.screener_cooldown[symbol] = time.time()
+
+    def get_cooldown_map(self):
+        """Return the cooldown map for the screener filter."""
+        return dict(self.screener_cooldown)
+
+    def update_screener_status(self, status):
+        """Update the screener status for UI display."""
+        self.screener_status = status
+        self.needs_ui_update = True
     
     def start_new_session_for_symbol(self, symbol):
         """Start a new analysis session for an existing symbol."""

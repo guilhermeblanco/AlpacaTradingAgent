@@ -438,6 +438,34 @@ def _schedule_and_trading():
                 [
                     html.Div(
                         dbc.Switch(
+                            id="screener-enabled",
+                            label="Screener mode (auto-discover)",
+                            value=False,
+                            className="config-switch",
+                        ),
+                        className="config-toggle-tile",
+                    ),
+                    _field(
+                        "Scan interval (min)",
+                        dbc.Input(
+                            id="screener-interval",
+                            type="number",
+                            placeholder="30",
+                            value=30,
+                            min=10,
+                            max=1440,
+                            className="config-input",
+                        ),
+                        "radar",
+                    ),
+                ],
+                className="config-two-column",
+            ),
+            html.Div(id="screener-mode-info", className="config-status-slot"),
+            html.Div(
+                [
+                    html.Div(
+                        dbc.Switch(
                             id="trade-after-analyze",
                             label="Place order after analysis",
                             value=False,

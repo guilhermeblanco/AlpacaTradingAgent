@@ -543,29 +543,32 @@ def register_control_callbacks(app):
     @app.callback(
         [Output("loop-enabled", "value"),
          Output("market-hour-enabled", "value"),
+         Output("screener-enabled", "value"),
          Output("loop-interval", "disabled"),
-         Output("market-hours-input", "disabled")],
+         Output("market-hours-input", "disabled"),
+         Output("screener-interval", "disabled")],
         [Input("loop-enabled", "value"),
-         Input("market-hour-enabled", "value")],
+         Input("market-hour-enabled", "value"),
+         Input("screener-enabled", "value")],
         prevent_initial_call=True
     )
-    def mutual_exclusive_scheduling_modes(loop_enabled, market_hour_enabled):
+    def mutual_exclusive_scheduling_modes(loop_enabled, market_hour_enabled, screener_enabled):
         """Ensure only one scheduling mode can be enabled at a time"""
         ctx = dash.callback_context
         if not ctx.triggered:
-            return loop_enabled, market_hour_enabled, False, False
+            return loop_enabled, market_hour_enabled, screener_enabled, False, False, False
 
         trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
 
         if trigger_id == "loop-enabled" and loop_enabled:
-            # Loop mode was enabled, disable market hour mode
-            return True, False, False, True
+            return True, False, False, False, True, True
         elif trigger_id == "market-hour-enabled" and market_hour_enabled:
-            # Market hour mode was enabled, disable loop mode
-            return False, True, True, False
+            return False, True, False, True, False, True
+        elif trigger_id == "screener-enabled" and screener_enabled:
+            return False, False, True, True, True, False
         else:
-            # Either mode was disabled, enable both inputs
-            return loop_enabled, market_hour_enabled, not loop_enabled, not market_hour_enabled
+            # Mode was disabled, enable all inputs
+            return loop_enabled, market_hour_enabled, screener_enabled, not loop_enabled, not market_hour_enabled, not screener_enabled
 
     @app.callback(
         Output("scheduling-mode-info", "children"),
@@ -631,12 +634,30 @@ def register_control_callbacks(app):
             )
 
     @app.callback(
+        Output("screener-mode-info", "children"),
+        [Input("screener-enabled", "value"),
+         Input("screener-interval", "value")]
+    )
+    def update_screener_mode_info(screener_enabled, screener_interval):
+        """Update the screener mode information display"""
+        if not screener_enabled:
+            return ""
+        interval = screener_interval if screener_interval and screener_interval > 0 else 30
+        return _status_panel(
+            "Screener mode active",
+            f"Auto-scans the entire market every {interval} minutes. Crypto scans 24/7.",
+            ["Score ≥ 7.0 stocks, ≥ 4.0 crypto", "Max 3 candidates per cycle", "24h cooldown per ticker"],
+            tone="success",
+            icon="fa-radar",
+        )
+
+    @app.callback(
         Output("control-button-container", "children"),
         [Input("refresh-interval", "n_intervals")]
     )
     def update_control_button(n_intervals):
         """Update the control button (Start/Stop) based on current state"""
-        if app_state.analysis_running or app_state.loop_enabled or app_state.market_hour_enabled:
+        if app_state.analysis_running or app_state.loop_enabled or app_state.market_hour_enabled or app_state.screener_enabled:
             return dbc.Button(
                 [html.I(className="fa-solid fa-stop me-2"), "Stop Analysis"],
                 id="control-btn",
@@ -755,7 +776,9 @@ def register_control_callbacks(app):
          State("trade-after-analyze", "value"),
          State("trade-dollar-amount", "value"),
          State("market-hour-enabled", "value"),
-         State("market-hours-input", "value")]
+         State("market-hours-input", "value"),
+         State("screener-enabled", "value"),
+         State("screener-interval", "value")]
     )
     def on_control_button_click(n_clicks, button_children, tickers, analysts_market, analysts_social, analysts_news,
                                analysts_fundamentals, analysts_macro, research_depth,
@@ -767,7 +790,8 @@ def register_control_callbacks(app):
                                deep_reasoning_effort, deep_verbosity, deep_summary, deep_temperature,
                                deep_top_p, deep_max_output_tokens, deep_store, deep_parallel_tool_calls,
                                allow_shorts, loop_enabled, loop_interval, trade_enabled, trade_amount,
-                               market_hour_enabled, market_hours_input):
+                               market_hour_enabled, market_hours_input,
+                               screener_enabled, screener_interval):
         """Handle control button clicks"""
         # Detect which property triggered this callback
         triggered_prop = None
@@ -790,11 +814,15 @@ def register_control_callbacks(app):
         from datetime import datetime
 
         # Determine action based on current state
-        is_stop_action = app_state.analysis_running or app_state.loop_enabled or app_state.market_hour_enabled
+        is_stop_action = app_state.analysis_running or app_state.loop_enabled or app_state.market_hour_enabled or app_state.screener_enabled
 
         # Handle stop action
         if is_stop_action:
-            if app_state.loop_enabled:
+            if app_state.screener_enabled:
+                app_state.stop_screener_mode()
+                app_state.analysis_running = False
+                return "Screener mode stopped.", dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+            elif app_state.loop_enabled:
                 app_state.stop_loop_mode()
                 return "Loop analysis stopped.", dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
             elif app_state.market_hour_enabled:
@@ -808,9 +836,13 @@ def register_control_callbacks(app):
         if app_state.analysis_running:
             return "Analysis already in progress. Please wait.", dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
 
-        symbols = [s.strip().upper() for s in tickers.split(',') if s.strip()]
-        if not symbols:
-            return "Please enter at least one stock symbol.", {}, 1, 1, 1, 1
+        # Screener mode does not require symbols from the input field
+        if screener_enabled:
+            symbols = []  # Will be populated dynamically by screener
+        else:
+            symbols = [s.strip().upper() for s in tickers.split(',') if s.strip()]
+            if not symbols:
+                return "Please enter at least one stock symbol.", {}, 1, 1, 1, 1
 
         if not app_state.analysis_running:
             app_state.reset()
@@ -1047,6 +1079,132 @@ def register_control_callbacks(app):
                         loop_iteration += 1
 
                 print("[LOOP] Loop stopped")
+            elif screener_enabled:
+                # Screener mode: automatic market scanning
+                from tradingagents.screener import run_scan, SCREENER_SCAN_INTERVAL_MIN, SCREENER_CRYPTO_INTERVAL_H
+                from tradingagents.dataflows.alpaca_utils import AlpacaUtils
+
+                scan_interval = (screener_interval or SCREENER_SCAN_INTERVAL_MIN) * 60
+                crypto_interval = SCREENER_CRYPTO_INTERVAL_H * 3600
+                screener_config = {
+                    'analysts_market': analysts_market,
+                    'analysts_social': analysts_social,
+                    'analysts_news': analysts_news,
+                    'analysts_fundamentals': analysts_fundamentals,
+                    'analysts_macro': analysts_macro,
+                    'research_depth': research_depth,
+                    'allow_shorts': allow_shorts,
+                    'llm_provider': llm_provider,
+                    'backend_url': backend_url,
+                    'output_language': output_language,
+                    'checkpoint_enabled': checkpoint_enabled,
+                    'quick_llm': quick_llm,
+                    'deep_llm': deep_llm,
+                    'quick_llm_params': quick_llm_params,
+                    'deep_llm_params': deep_llm_params,
+                    **provider_settings,
+                    'trade_enabled': trade_enabled,
+                    'trade_amount': trade_amount
+                }
+                app_state.start_screener_mode(screener_config)
+
+                last_stock_scan = 0
+                last_crypto_scan = 0
+
+                while not app_state.stop_screener:
+                    now = time.time()
+
+                    # Gather filter data from Alpaca
+                    try:
+                        positions = AlpacaUtils.get_positions_data() or []
+                        owned = {p.get('symbol', '').upper() for p in positions if p.get('symbol')}
+                    except Exception:
+                        owned = set()
+                    try:
+                        pending = AlpacaUtils.get_open_orders()
+                    except Exception:
+                        pending = set()
+                    cooldown = app_state.get_cooldown_map()
+
+                    scan_ran = False
+
+                    # Stock scan during market hours
+                    if now - last_stock_scan >= scan_interval:
+                        print(f"[SCREENER] Running stock market scan...")
+                        try:
+                            result = run_scan(
+                                asset_filter='stock',
+                                owned_symbols=owned,
+                                pending_symbols=pending,
+                                cooldown_map=cooldown,
+                            )
+                            app_state.update_screener_status(result)
+                            last_stock_scan = time.time()
+                            candidates = result.get('candidates', [])
+                            if candidates:
+                                print(f"[SCREENER] Found {len(candidates)} stock candidates: {[c['symbol'] for c in candidates]}")
+                                scan_ran = True
+                        except Exception as e:
+                            print(f"[SCREENER] Stock scan error: {e}")
+
+                    # Crypto scan (24/7)
+                    if now - last_crypto_scan >= crypto_interval:
+                        print(f"[SCREENER] Running crypto scan...")
+                        try:
+                            result = run_scan(
+                                asset_filter='crypto',
+                                owned_symbols=owned,
+                                pending_symbols=pending,
+                                cooldown_map=cooldown,
+                            )
+                            last_crypto_scan = time.time()
+                            crypto_candidates = result.get('candidates', [])
+                            if crypto_candidates:
+                                print(f"[SCREENER] Found {len(crypto_candidates)} crypto candidates: {[c['symbol'] for c in crypto_candidates]}")
+                                # Merge with stock candidates if scan_ran
+                                if scan_ran:
+                                    candidates = candidates + crypto_candidates
+                                else:
+                                    candidates = crypto_candidates
+                                    scan_ran = True
+                        except Exception as e:
+                            print(f"[SCREENER] Crypto scan error: {e}")
+
+                    # If candidates found, run AI analysis
+                    if scan_ran and candidates:
+                        candidate_symbols = [c['symbol'] for c in candidates]
+                        print(f"[SCREENER] Feeding {len(candidate_symbols)} candidates to AI pipeline: {candidate_symbols}")
+
+                        app_state.reset_for_loop()
+                        for sym in candidate_symbols:
+                            app_state.init_symbol_state(sym)
+                        app_state.add_symbols_to_queue(candidate_symbols)
+
+                        while app_state.analysis_queue and not app_state.stop_screener:
+                            symbol = app_state.get_next_symbol()
+                            if symbol:
+                                print(f"[SCREENER] Analyzing {symbol} via multi-agent pipeline...")
+                                start_analysis(
+                                    symbol,
+                                    analysts_market, analysts_social, analysts_news,
+                                    analysts_fundamentals, analysts_macro,
+                                    research_depth, allow_shorts, quick_llm, deep_llm,
+                                    quick_llm_params, deep_llm_params,
+                                    llm_provider=llm_provider,
+                                    backend_url=backend_url,
+                                    output_language=output_language,
+                                    checkpoint_enabled=checkpoint_enabled,
+                                    provider_settings=provider_settings,
+                                )
+                                app_state.record_analysis_time(symbol)
+
+                    # Sleep between scans (check stop every 30s)
+                    elapsed = 0
+                    while elapsed < 60 and not app_state.stop_screener:
+                        time.sleep(30)
+                        elapsed += 30
+
+                print("[SCREENER] Screener mode stopped.")
             else:
                 # Single run mode (original behavior) - use current date
                 # States already initialized above, just add to queue
@@ -1075,7 +1233,13 @@ def register_control_callbacks(app):
             thread = threading.Thread(target=analysis_thread)
             thread.start()
 
-        if market_hour_enabled:
+        if screener_enabled:
+            mode_text = "screener mode"
+            interval_text = f" (scanning every {screener_interval or 30} minutes)"
+            # Screener doesn't use fixed symbols
+            num_symbols = 1  # Placeholder for pagination
+            symbols = ["SCREENER"]  # Placeholder
+        elif market_hour_enabled:
             mode_text = "market hour mode"
             # Format hours for display
             formatted_hours = []
@@ -1101,6 +1265,9 @@ def register_control_callbacks(app):
             "mode": mode_text,
             "interval_text": interval_text
         }
+
+        if screener_enabled:
+            return f"🔍 Screener mode active. Scanning entire market every {screener_interval or 30} minutes. Candidates will be auto-analyzed...", store_data, num_symbols, 1, num_symbols, 1
 
         return f"Starting real-time analysis for {', '.join(symbols)} in {mode_text}{interval_text} using current market data...", store_data, num_symbols, 1, num_symbols, 1
 
