@@ -657,7 +657,7 @@ def register_control_callbacks(app):
     )
     def update_control_button(n_intervals):
         """Update the control button (Start/Stop) based on current state"""
-        if app_state.analysis_running or app_state.loop_enabled or app_state.market_hour_enabled or app_state.screener_enabled:
+        if app_state.analysis_running:
             return dbc.Button(
                 [html.I(className="fa-solid fa-stop me-2"), "Stop Analysis"],
                 id="control-btn",
@@ -814,7 +814,7 @@ def register_control_callbacks(app):
         from datetime import datetime
 
         # Determine action based on current state
-        is_stop_action = app_state.analysis_running or app_state.loop_enabled or app_state.market_hour_enabled or app_state.screener_enabled
+        is_stop_action = app_state.analysis_running
 
         # Handle stop action
         if is_stop_action:
