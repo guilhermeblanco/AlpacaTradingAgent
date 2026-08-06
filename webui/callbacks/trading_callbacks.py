@@ -10,6 +10,7 @@ import json
 from tradingagents.dataflows.alpaca_utils import AlpacaUtils
 from webui.components.alpaca_account import (
     ORDERS_PAGE_SIZE,
+    render_account_summary,
     render_orders_pagination,
     render_orders_table_body,
     render_orders_table_error,
@@ -56,18 +57,20 @@ def register_trading_callbacks(app):
     @app.callback(
         [Output("positions-table-container", "children"),
          Output("orders-table-body-container", "children"),
-         Output("orders-pagination-container", "children")],
+         Output("orders-pagination-container", "children"),
+         Output("account-summary-container", "children")],
         [Input("slow-refresh-interval", "n_intervals"),
          Input("refresh-btn", "n_clicks"),
          Input("refresh-alpaca-btn", "n_clicks"),
          Input("orders-page-store", "data")]
     )
     def update_enhanced_alpaca_tables(n_intervals, n_clicks, alpaca_refresh, orders_page):
-        """Update the enhanced positions and orders tables"""
+        """Update the enhanced positions, orders tables, and account summary"""
 
         page = orders_page if orders_page is not None else 1
 
         positions_table = render_positions_table()
+        account_summary = render_account_summary()
         try:
             page_data = AlpacaUtils.get_recent_orders_page(page=page, page_size=ORDERS_PAGE_SIZE)
             active_page = page_data.get("page", page)
@@ -82,7 +85,7 @@ def register_trading_callbacks(app):
             orders_table = render_orders_table_error(e)
             orders_pagination = render_orders_pagination(1, 1, 0, False)
 
-        return positions_table, orders_table, orders_pagination
+        return positions_table, orders_table, orders_pagination, account_summary
 
     @app.callback(
         [Output('liquidate-confirm', 'displayed'),
