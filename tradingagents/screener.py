@@ -60,8 +60,10 @@ def load_universe() -> Dict[str, str]:
                 if ticker not in universe:
                     universe[ticker] = 'stock'
             for ticker in DEFAULT_CRYPTO_UNIVERSE:
-                if ticker not in universe:
-                    universe[ticker] = 'crypto'
+                # Normalize crypto format to BASE/USD
+                norm = ticker.replace('-', '/')
+                if norm not in universe and ticker not in universe:
+                    universe[norm] = 'crypto'
             
             # If SCREENER_MAX_UNIVERSE is configured > 0, cap to that number; otherwise return full market
             if SCREENER_MAX_UNIVERSE > 0 and len(universe) > SCREENER_MAX_UNIVERSE:
@@ -80,36 +82,47 @@ def load_universe() -> Dict[str, str]:
     for ticker in DEFAULT_US_UNIVERSE:
         universe[ticker] = 'stock'
     for ticker in DEFAULT_CRYPTO_UNIVERSE:
-        universe[ticker] = 'crypto'
+        norm = ticker.replace('-', '/')
+        universe[norm] = 'crypto'
     return universe
 
 def _download_batch(tickers: List[str], period: str, interval: str) -> Dict[str, pd.DataFrame]:
     if not tickers:
         return {}
     import time
+    from tradingagents.dataflows.ticker_utils import TickerUtils
+
+    # Map original ticker -> yahoo ticker (e.g. BTC/USD -> BTC-USD)
+    ticker_map = {t: TickerUtils.convert_for_api(t, "yahoo") for t in tickers}
+    yahoo_tickers = list(set(ticker_map.values()))
+    # Reverse map: yahoo ticker -> original ticker
+    yahoo_to_orig = {v: k for k, v in ticker_map.items()}
+
     try:
-        data = yf.download(tickers, period=period, interval=interval, group_by='ticker', threads=True, progress=False)
+        data = yf.download(yahoo_tickers, period=period, interval=interval, group_by='ticker', threads=True, progress=False)
         result = {}
-        if len(tickers) == 1:
+        if len(yahoo_tickers) == 1:
+            orig = yahoo_to_orig.get(yahoo_tickers[0], yahoo_tickers[0])
             if not data.empty:
-                result[tickers[0]] = data
+                result[orig] = data
         else:
-            for t in tickers:
-                if t in data and not data[t].empty:
-                    df = data[t].dropna(how='all')
+            for yt in yahoo_tickers:
+                orig = yahoo_to_orig.get(yt, yt)
+                if yt in data and not data[yt].empty:
+                    df = data[yt].dropna(how='all')
                     if not df.empty:
-                        result[t] = df
+                        result[orig] = df
         return result
     except Exception as e:
         logger.warning(f"Batch download warning for {len(tickers)} tickers: {e}")
         return {}
 
-def fetch_bulk_ohlcv(tickers: List[str], period: str = '60d', interval: str = '1d') -> Dict[str, pd.DataFrame]:
+def fetch_bulk_ohlcv(tickers: List[str], period: str = '250d', interval: str = '1d') -> Dict[str, pd.DataFrame]:
     """
     Downloads OHLCV data in batches of 50 using yfinance with rate-limit protection.
-    Missing tickers: full download with period='60d'
-    Cached tickers: incremental 2-day update
-    Enforces max 60 trading days per ticker in cache
+    Missing tickers: full download with period='250d'
+    Cached tickers: incremental 5-day update
+    Enforces max 200 trading days per ticker in cache for SMA200 calculation
     """
     import time
     os.makedirs(_CACHE_DIR, exist_ok=True)
@@ -127,7 +140,7 @@ def fetch_bulk_ohlcv(tickers: List[str], period: str = '60d', interval: str = '1
     update_tickers = []
     
     for t in tickers:
-        if t not in cache or cache[t].empty or len(cache[t]) < 20:
+        if t not in cache or cache[t].empty or len(cache[t]) < 100:
             missing_tickers.append(t)
         else:
             update_tickers.append(t)
@@ -140,7 +153,7 @@ def fetch_bulk_ohlcv(tickers: List[str], period: str = '60d', interval: str = '1
     # Process missing in small batches with pause
     for i in range(0, len(missing_tickers), batch_size):
         batch = missing_tickers[i:i+batch_size]
-        batch_data = _download_batch(batch, period='60d', interval='1d')
+        batch_data = _download_batch(batch, period='250d', interval='1d')
         new_data.update(batch_data)
         if i + batch_size < len(missing_tickers):
             time.sleep(0.3)
@@ -167,8 +180,8 @@ def fetch_bulk_ohlcv(tickers: List[str], period: str = '60d', interval: str = '1
     for t in tickers:
         df = new_data.get(t, cache.get(t))
         if df is not None and not df.empty:
-            # Enforce max 60 trading days
-            final_data[t] = df.tail(60)
+            # Enforce max 200 trading days
+            final_data[t] = df.tail(200)
             
     # Save cache
     try:
@@ -330,9 +343,9 @@ def apply_filters(
                 
         # Volume check
         avg_vol = c['signals']['avg_volume']
-        if asset_type == 'stock' and avg_vol < SCREENER_MIN_VOLUME:
+        if asset_type == 'stock' and (avg_vol is None or pd.isna(avg_vol) or avg_vol < SCREENER_MIN_VOLUME):
             continue
-        if asset_type == 'crypto' and avg_vol < 1000:
+        if asset_type == 'crypto' and (avg_vol is not None and not pd.isna(avg_vol) and avg_vol < 10):
             continue
             
         # Score check

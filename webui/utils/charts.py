@@ -16,6 +16,8 @@ def create_chart(ticker: str, period: str = "1y", end_date: Union[str, datetime]
     Create a Plotly candlestick+volume chart for a given ticker and period.
     Falls back to demo data if API fails or no bars are returned.
     """
+    if ticker and ticker.upper() == "SCREENER":
+        return create_screener_overview_chart()
     # determine end and start datetimes (in UTC for the API)
     now_utc = datetime.now(pytz.UTC)
     if end_date:
@@ -173,5 +175,70 @@ def create_welcome_chart():
         annotations=[dict(x=1.5,y=2.5,xref='x',yref='y',text="Select symbols and click 'Start Analysis'",
                          showarrow=True,arrowhead=1,ax=0,ay=-40)],
         height=400, margin=dict(l=40,r=40,t=40,b=40), autosize=True
+    )
+    return fig
+
+
+def create_screener_overview_chart():
+    """Create an overview chart/graph for the quantitative screener showing candidate scores."""
+    try:
+        from tradingagents.screener import get_scan_status
+        status = get_scan_status() or {}
+    except Exception:
+        status = {}
+
+    candidates = status.get('candidates', [])
+    all_scored = status.get('all_scored', [])
+    
+    items = candidates if candidates else all_scored[:10]
+    
+    if not items:
+        fig = go.Figure()
+        fig.add_annotation(
+            x=0.5, y=0.5, xref='paper', yref='paper',
+            text="🔍 Quantitative Screener Active<br>Scanning Stock & Crypto Markets...",
+            showarrow=False, font=dict(size=16, color='#00d4b1'),
+            align='center'
+        )
+        fig.update_layout(
+            title="🔍 Screener Overview — Market Scan",
+            template="plotly_dark",
+            height=400, margin=dict(l=40, r=40, t=40, b=40)
+        )
+        return fig
+
+    symbols = [item['symbol'] for item in items]
+    scores = [item['score'] for item in items]
+    colors = ['#00d4b1' if item.get('asset_type') == 'crypto' else '#3b82f6' for item in items]
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=symbols,
+        y=scores,
+        marker_color=colors,
+        text=[f"{s}/10" for s in scores],
+        textposition='auto',
+        name='Score'
+    ))
+
+    scan_time = status.get('scan_time', '')
+    scanned_count = status.get('tickers_scanned', 0)
+    title = f"🔍 Screener Top Candidates ({scanned_count} Assets Scanned"
+    if scan_time:
+        try:
+            dt = datetime.fromisoformat(scan_time)
+            title += f" at {dt.strftime('%H:%M:%S')}"
+        except Exception:
+            pass
+    title += ")"
+
+    fig.update_layout(
+        title=title,
+        template="plotly_dark",
+        yaxis_title="Technical Score (0 - 10)",
+        yaxis=dict(range=[0, 10]),
+        height=400,
+        margin=dict(l=40, r=40, t=40, b=40),
+        autosize=True
     )
     return fig

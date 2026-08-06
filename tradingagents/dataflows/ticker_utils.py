@@ -74,19 +74,22 @@ class TickerUtils:
     @staticmethod
     def _is_crypto_ticker(ticker: str) -> bool:
         """Detect if a ticker represents a cryptocurrency"""
-        ticker = ticker.upper()
+        if not ticker:
+            return False
+        ticker = ticker.upper().strip()
         
-        # Check for crypto indicators in the ticker
-        crypto_indicators = [
-            '/', '-', 'USD', 'USDT', 'USDC', 'BTC', 'ETH'
-        ]
-        
-        # If contains common crypto pair indicators
-        if any(indicator in ticker for indicator in crypto_indicators):
-            # Extract potential base symbol
-            base = TickerUtils._extract_crypto_base(ticker)
-            if base in TickerUtils.CRYPTO_SYMBOLS:
+        # Explicit pair formats with slash or hyphen
+        if "/" in ticker or "-" in ticker:
+            parts = ticker.replace('-', '/').split('/')
+            if len(parts) == 2 and parts[1] in ('USD', 'USDT', 'USDC', 'EUR', 'GBP', 'BTC', 'ETH'):
                 return True
+
+        # Check if ends with standard crypto quote currencies
+        for quote in ('USDT', 'USDC', 'USD'):
+            if ticker.endswith(quote) and len(ticker) > len(quote):
+                base = ticker[:-len(quote)]
+                if base in TickerUtils.CRYPTO_SYMBOLS or '/' in ticker or '-' in ticker or len(base) <= 6:
+                    return True
         
         # Check if the ticker itself is a known crypto symbol
         if ticker in TickerUtils.CRYPTO_SYMBOLS:

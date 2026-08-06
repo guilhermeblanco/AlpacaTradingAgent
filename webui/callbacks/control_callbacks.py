@@ -1183,17 +1183,21 @@ def register_control_callbacks(app):
 
                     # If candidates found, run AI analysis
                     if scan_ran and candidates:
-                        candidate_symbols = [c['symbol'] for c in candidates]
+                        candidate_symbols = [c['symbol'] for c in candidates if c['symbol'] != 'SCREENER']
                         print(f"[SCREENER] Feeding {len(candidate_symbols)} candidates to AI pipeline: {candidate_symbols}")
 
-                        app_state.reset_for_loop()
+                        # Ensure SCREENER overview tab exists
+                        if "SCREENER" not in app_state.symbol_states:
+                            app_state.init_symbol_state("SCREENER")
+
                         for sym in candidate_symbols:
                             app_state.init_symbol_state(sym)
+                        
                         app_state.add_symbols_to_queue(candidate_symbols)
 
                         while app_state.analysis_queue and not app_state.stop_screener:
                             symbol = app_state.get_next_symbol()
-                            if symbol:
+                            if symbol and symbol != "SCREENER":
                                 print(f"[SCREENER] Analyzing {symbol} via multi-agent pipeline...")
                                 start_analysis(
                                     symbol,
