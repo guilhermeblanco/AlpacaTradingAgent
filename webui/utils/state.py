@@ -40,11 +40,13 @@ class AppState:
         self.market_hour_thread = None
         self.stop_market_hour = False
         
-        # Trading configuration
-        self.trade_enabled = False
-        self.trade_amount = 1000
-        self.trade_occurred = False
-        
+        # Screener configuration
+        self.screener_enabled = False
+        self.stop_screener = False
+        self.screener_cooldown = {}
+        self.screener_status = None
+        self.screener_thread = None
+
         self.refresh_interval = 1.0  # seconds
         self.analysis_complete = False
         self.analysis_results = None

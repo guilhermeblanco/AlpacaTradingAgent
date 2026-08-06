@@ -652,11 +652,13 @@ def register_control_callbacks(app):
         )
 
     @app.callback(
-        Output("control-button-container", "children"),
-        [Input("refresh-interval", "n_intervals")]
+        [Output("control-btn", "children"),
+         Output("control-btn", "color")],
+        [Input("refresh-interval", "n_intervals"),
+         Input("medium-refresh-interval", "n_intervals")]
     )
-    def update_control_button(n_intervals):
-        """Update the control button (Start/Stop) based on current state"""
+    def update_control_button(n_intervals, medium_n_intervals):
+        """Update the control button (Start/Stop) label and color based on current state"""
         is_active = (
             app_state.analysis_running
             or app_state.loop_enabled
@@ -664,21 +666,9 @@ def register_control_callbacks(app):
             or app_state.screener_enabled
         )
         if is_active:
-            return dbc.Button(
-                [html.I(className="fa-solid fa-stop me-2"), "Stop Analysis"],
-                id="control-btn",
-                color="danger",
-                size="lg",
-                className="w-100 config-primary-action"
-            )
+            return [html.I(className="fa-solid fa-stop me-2"), "Stop Analysis"], "danger"
         else:
-            return dbc.Button(
-                [html.I(className="fa-solid fa-play me-2"), "Start Analysis"],
-                id="control-btn",
-                color="primary",
-                size="lg",
-                className="w-100 config-primary-action"
-            )
+            return [html.I(className="fa-solid fa-play me-2"), "Start Analysis"], "primary"
 
     @app.callback(
         Output("trading-mode-info", "children"),
@@ -740,9 +730,9 @@ def register_control_callbacks(app):
          Output("chart-pagination", "active_page"),
          Output("report-pagination", "max_value"),
          Output("report-pagination", "active_page")],
-        [Input("control-btn", "n_clicks"),
-         Input("control-btn", "children")],
+        [Input("control-btn", "n_clicks")],
         [State("ticker-input", "value"),
+         State("symbol-query-input", "value"),
          State("analyst-market", "value"),
          State("analyst-social", "value"),
          State("analyst-news", "value"),
@@ -784,9 +774,10 @@ def register_control_callbacks(app):
          State("market-hour-enabled", "value"),
          State("market-hours-input", "value"),
          State("screener-enabled", "value"),
-         State("screener-interval", "value")]
+         State("screener-interval", "value")],
+        prevent_initial_call=True
     )
-    def on_control_button_click(n_clicks, button_children, tickers, analysts_market, analysts_social, analysts_news,
+    def on_control_button_click(n_clicks, tickers, symbol_query_input, analysts_market, analysts_social, analysts_news,
                                analysts_fundamentals, analysts_macro, research_depth,
                                llm_provider, backend_url, output_language, checkpoint_enabled,
                                quick_llm, deep_llm, quick_llm_custom_model, deep_llm_custom_model,
@@ -799,22 +790,8 @@ def register_control_callbacks(app):
                                market_hour_enabled, market_hours_input,
                                screener_enabled, screener_interval):
         """Handle control button clicks"""
-        # Detect which property triggered this callback
-        triggered_prop = None
-        if dash.callback_context.triggered:
-            triggered_prop = dash.callback_context.triggered[0]['prop_id']
-
-        # If the callback was invoked solely because the button *label* changed, ignore it
-        if triggered_prop == "control-btn.children":
+        if n_clicks is None or n_clicks == 0:
             return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
-
-        # Ignore callbacks caused by the periodic re-rendering of the button itself
-        if triggered_prop == "control-btn.n_clicks" and (n_clicks is None or n_clicks == 0):
-            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
-
-        # Real user click handling begins here
-        if n_clicks is None:
-            return "", {}, 1, 1, 1, 1
 
         # Always use current/real-time data for analysis
         from datetime import datetime
@@ -851,7 +828,9 @@ def register_control_callbacks(app):
         if screener_enabled:
             symbols = []  # Will be populated dynamically by screener
         else:
-            symbols = [s.strip().upper() for s in tickers.split(',') if s.strip()]
+            symbols = [s.strip().upper() for s in (tickers or "").split(',') if s.strip()]
+            if not symbols and symbol_query_input:
+                symbols = [s.strip().upper() for s in symbol_query_input.replace(";", ",").split(",") if s.strip()]
             if not symbols:
                 return "Please enter at least one stock symbol.", {}, 1, 1, 1, 1
 
