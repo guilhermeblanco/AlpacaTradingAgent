@@ -5,7 +5,6 @@ import sqlite3
 import time
 import logging
 import threading
-import asyncio
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
@@ -23,6 +22,7 @@ class VirtualStopsManager:
 
     _instance_lock = threading.Lock()
     _daemon_running = False
+    _db_initialized = False
 
     @staticmethod
     def _get_db_connection() -> sqlite3.Connection:
@@ -33,27 +33,34 @@ class VirtualStopsManager:
 
     @classmethod
     def init_db(cls) -> None:
-        """Initialize virtual stops database schema."""
-        with cls._get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
+        """Initialize virtual stops database schema. Safe to call multiple times;
+        actual work only happens once per process lifetime."""
+        if cls._db_initialized:
+            return
+        with cls._instance_lock:
+            if cls._db_initialized:
+                return
+            with cls._get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                CREATE TABLE IF NOT EXISTS virtual_stops (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
+                    qty REAL,
+                    notional REAL,
+                    entry_price REAL,
+                    stop_loss_price REAL,
+                    take_profit_price REAL,
+                    status TEXT NOT NULL DEFAULT 'ACTIVE',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
                 """
-            CREATE TABLE IF NOT EXISTS virtual_stops (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                symbol TEXT NOT NULL,
-                qty REAL,
-                notional REAL,
-                entry_price REAL,
-                stop_loss_price REAL,
-                take_profit_price REAL,
-                status TEXT NOT NULL DEFAULT 'ACTIVE',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            """
-            )
-            conn.commit()
-        cls.cleanup_old_stops(retention_days=30)
+                )
+                conn.commit()
+            cls._db_initialized = True
+            cls.cleanup_old_stops(retention_days=30)
 
     @classmethod
     def cleanup_old_stops(cls, retention_days: int = 30) -> int:
@@ -193,17 +200,34 @@ class VirtualStopsManager:
                 logger.warning(f"🚨 TRIGGERING VIRTUAL STOP #{stop_id} for {sym}: {reason}")
                 now = datetime.now(timezone.utc).isoformat()
 
-                # Mark stop as TRIGGERED immediately to avoid double execution
+                # Optimistic lock: only mark TRIGGERED if still ACTIVE (prevents double-trigger)
                 with cls._get_db_connection() as conn:
                     cursor = conn.cursor()
                     cursor.execute(
-                        "UPDATE virtual_stops SET status = 'TRIGGERED', updated_at = ? WHERE id = ?",
+                        "UPDATE virtual_stops SET status = 'TRIGGERED', updated_at = ? WHERE id = ? AND status = 'ACTIVE'",
                         (now, stop_id),
                     )
                     conn.commit()
+                    if cursor.rowcount == 0:
+                        # Another thread already triggered this stop
+                        logger.info(f"Virtual Stop #{stop_id} already triggered by another thread, skipping.")
+                        continue
 
                 # Execute position close via Alpaca
-                close_result = AlpacaUtils.close_position(sym)
+                try:
+                    close_result = AlpacaUtils.close_position(sym)
+                except Exception as e:
+                    # If close fails, restore stop to ACTIVE so it can be retried
+                    logger.error(f"Failed to close position for {sym} after stop trigger: {e}. Restoring stop to ACTIVE.")
+                    with cls._get_db_connection() as conn:
+                        cursor = conn.cursor()
+                        cursor.execute(
+                            "UPDATE virtual_stops SET status = 'ACTIVE', updated_at = ? WHERE id = ?",
+                            (datetime.now(timezone.utc).isoformat(), stop_id),
+                        )
+                        conn.commit()
+                    close_result = {"success": False, "error": str(e)}
+
                 triggered.append(
                     {
                         "stop_id": stop_id,
@@ -218,11 +242,13 @@ class VirtualStopsManager:
 
     @classmethod
     def start_realtime_daemon(cls) -> None:
-        """Start background thread monitoring price ticks via WebSocket / periodic polling."""
+        """Start background thread monitoring price ticks via periodic polling."""
         with cls._instance_lock:
             if cls._daemon_running:
                 return
             cls._daemon_running = True
+
+        cls.init_db()
 
         def _daemon_loop():
             logger.info("Starting VirtualStops Real-Time Monitoring Daemon...")
@@ -241,6 +267,10 @@ class VirtualStopsManager:
                                     cls.check_and_trigger_stops(sym, float(price))
                             except Exception as e:
                                 logger.debug(f"Error checking quote for {sym}: {e}")
+                    else:
+                        # No active stops, sleep longer to avoid unnecessary API calls
+                        time.sleep(8.0)
+                        continue
                 except Exception as e:
                     logger.error(f"Error in VirtualStops daemon: {e}")
 

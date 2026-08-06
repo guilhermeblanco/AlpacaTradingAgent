@@ -135,6 +135,11 @@ def render_positions_table():
             today_pl_color = _get_pl_color(position["Today's P/L ($)"])
             total_pl_color = _get_pl_color(position["Total P/L ($)"])
 
+            curr_price = position.get("Current Price", "-")
+            cost_basis = position.get("Cost Basis", "-")
+            sl_val = position.get("Virtual Stop Loss", "-")
+            tp_val = position.get("Virtual Take Profit", "-")
+
             row = html.Tr([
                 html.Td([
                     html.Div([
@@ -146,9 +151,21 @@ def render_positions_table():
                 html.Td([
                     html.Div([
                         html.Div(position["Market Value"], className="fw-bold"),
-                        html.Small(f"Entry: {position['Avg Entry']}", className="text-muted")
+                        html.Small(f"Cost: {cost_basis}", className="text-muted")
                     ])
                 ], className="value-cell"),
+                html.Td([
+                    html.Div([
+                        html.Div(f"Now: {curr_price}", className="fw-bold text-info"),
+                        html.Small(f"Entry: {position['Avg Entry']}", className="text-muted")
+                    ])
+                ], className="price-cell"),
+                html.Td([
+                    html.Div([
+                        html.Div(f"SL: {sl_val}", className="text-danger small fw-bold"),
+                        html.Div(f"TP: {tp_val}", className="text-success small fw-bold")
+                    ])
+                ], className="stops-cell"),
                 html.Td([
                     html.Div([
                         html.Div(position["Today's P/L ($)"], className=f"fw-bold {today_pl_color}"),
@@ -183,7 +200,9 @@ def render_positions_table():
                 html.Thead([
                     html.Tr([
                         html.Th("Position", className="table-header"),
-                        html.Th("Market Value", className="table-header"),
+                        html.Th("Market Value / Cost", className="table-header"),
+                        html.Th("Current / Entry", className="table-header"),
+                        html.Th("Stop / Target", className="table-header"),
                         html.Th("Today's P/L", className="table-header"),
                         html.Th("Total P/L", className="table-header"),
                         html.Th("Actions", className="table-header text-center")

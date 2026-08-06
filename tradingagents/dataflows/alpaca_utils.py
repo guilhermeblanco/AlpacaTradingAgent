@@ -1246,17 +1246,30 @@ class AlpacaUtils:
 
     @staticmethod
     def _resolve_protective_prices(intent, signal, is_crypto, warnings):
-        """Decide which protective price levels can be submitted to the broker.
+        """Decide protective price levels for broker bracket orders or virtual stops.
 
-        Returns a dict for place_protected_market_order, or None when the
-        intent must stay advisory (no numeric levels, crypto asset, disabled
-        by config, non-opening action, or inconsistent levels).
+        Returns a dict with stop_loss_price and take_profit_price if available.
         """
         from tradingagents.agents.schemas import extract_protective_price
 
         controls = intent.risk_controls
-        stop_price = controls.stop_loss_price or extract_protective_price(controls.stop_loss)
-        target_price = controls.take_profit_price or extract_protective_price(controls.take_profit)
+
+        # Fetch current price if needed to compute relative percentage stop levels
+        current_price = None
+        try:
+            sym = intent.symbol or ""
+            if sym:
+                quote = AlpacaUtils.get_latest_quote(sym)
+                current_price = float(quote.get("ask_price") or quote.get("bid_price") or 0.0)
+        except Exception:
+            current_price = None
+
+        stop_price = controls.stop_loss_price or extract_protective_price(
+            controls.stop_loss, entry_price=current_price, is_stop_loss=True
+        )
+        target_price = controls.take_profit_price or extract_protective_price(
+            controls.take_profit, entry_price=current_price, is_stop_loss=False
+        )
         if not stop_price and not target_price:
             return None
 
@@ -1267,15 +1280,15 @@ class AlpacaUtils:
 
         if is_crypto:
             warnings.append(
-                "Protective bracket/OTO orders are not supported for crypto assets; controls remain advisory."
+                "Protective bracket/OTO orders are not supported for crypto assets; virtual stops will be used."
             )
-            return None
+            # Don't return None — let _open_position register virtual stops instead.
 
-        if not get_config().get("protective_bracket_orders_enabled", True):
+        if not is_crypto and not get_config().get("protective_bracket_orders_enabled", True):
             warnings.append(
-                "Protective bracket orders are disabled by configuration; controls remain advisory."
+                "Protective bracket orders are disabled by configuration; virtual stops will be used."
             )
-            return None
+            # Don't return None — let _open_position register virtual stops instead.
 
         if stop_price and target_price:
             inverted = (opening_long and stop_price >= target_price) or (

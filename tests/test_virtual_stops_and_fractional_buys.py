@@ -79,13 +79,16 @@ def test_virtual_stop_trigger_tp():
 
 def test_fractional_buy_when_budget_low():
     """Test that AlpacaUtils.execute_trading_action executes a fractional buy
-
     with notional amount when budget is lower than 1 share price.
     """
     symbol = "MSFT"
     budget = 50.0  # Budget $50, while MSFT price is $400 (qty < 1)
 
-    with patch.object(AlpacaUtils, "get_latest_quote", return_value={"bid_price": 400.0, "ask_price": 400.0}), \
+    disabled_guard = MagicMock()
+    disabled_guard.enabled = False
+
+    with patch("tradingagents.safety.get_safety_guard", return_value=disabled_guard), \
+         patch.object(AlpacaUtils, "get_latest_quote", return_value={"bid_price": 400.0, "ask_price": 400.0}), \
          patch.object(AlpacaUtils, "place_market_order") as mock_place_order, \
          patch.object(VirtualStopsManager, "add_virtual_stop") as mock_add_stop:
 

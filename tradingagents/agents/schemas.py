@@ -14,24 +14,48 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 _PRICE_PATTERN = re.compile(r"\$?\s*(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?")
+_PCT_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*(?:%|percent)", re.IGNORECASE)
 
 
-def extract_protective_price(guidance: Optional[str]) -> Optional[float]:
-    """Extract the first absolute price level from free-text risk guidance.
+def extract_protective_price(
+    guidance: Optional[str],
+    entry_price: Optional[float] = None,
+    is_stop_loss: bool = True,
+) -> Optional[float]:
+    """Extract price level from guidance or compute from relative percentage if entry_price given.
 
-    Returns None for qualitative guidance ("below support"), relative values
-    ("8% below entry"), or empty input — a protective order must never be
-    submitted from a level we are not sure about.
+    Returns None for qualitative guidance ("below support") without price or entry_price.
     """
     if not guidance:
         return None
+
+    # Check for relative percentage first if entry_price is available
+    pct_match = _PCT_PATTERN.search(guidance)
+    if pct_match and entry_price and entry_price > 0:
+        try:
+            pct = float(pct_match.group(1))
+            if 0 < pct < 100:
+                mult = (1.0 - pct / 100.0) if is_stop_loss else (1.0 + pct / 100.0)
+                return round(entry_price * mult, 2)
+        except ValueError:
+            pass
+
     match = _PRICE_PATTERN.search(guidance)
     if not match:
         return None
-    # Percentages are relative to an unknown entry price, not price levels.
+
     tail = guidance[match.end():].lstrip()
     if tail.startswith("%") or tail.lower().startswith("percent"):
+        if entry_price and entry_price > 0:
+            try:
+                pct = float(match.group(0).replace("$", "").strip())
+                if 0 < pct < 100:
+                    mult = (1.0 - pct / 100.0) if is_stop_loss else (1.0 + pct / 100.0)
+                    return round(entry_price * mult, 2)
+            except ValueError:
+                pass
         return None
+
     whole = match.group(1).replace(",", "")
     fraction = match.group(2) or "0"
     try:
