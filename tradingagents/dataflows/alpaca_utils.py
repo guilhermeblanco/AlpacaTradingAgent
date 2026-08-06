@@ -951,6 +951,17 @@ class AlpacaUtils:
             # Normalize symbol for Alpaca
             alpaca_symbol = symbol.upper().replace("/", "")
             
+            # Cancel any open orders for this symbol first to release held_for_orders shares
+            try:
+                open_orders = client.get_orders(GetOrdersRequest(status=QueryOrderStatus.OPEN, symbols=[alpaca_symbol]))
+                for order_item in open_orders:
+                    try:
+                        client.cancel_order_by_id(order_item.id)
+                    except Exception as c_err:
+                        print(f"Warning: Failed to cancel open order {order_item.id} for {alpaca_symbol}: {c_err}")
+            except Exception as get_ord_err:
+                print(f"Warning: Could not check open orders before closing {alpaca_symbol}: {get_ord_err}")
+
             # For full position close (100%), don't specify percentage - let Alpaca close entire position
             if percentage >= 100.0:
                 # Close the entire position without specifying percentage

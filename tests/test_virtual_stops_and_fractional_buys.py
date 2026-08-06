@@ -116,3 +116,22 @@ def test_fractional_buy_when_budget_low():
             take_profit_price=450.0,
             notional=budget,
         )
+
+
+def test_close_position_cancels_existing_open_orders():
+    """Test that close_position cancels open orders for the symbol prior to closing."""
+    mock_client = MagicMock()
+    mock_order_1 = MagicMock(id="order_swim_123")
+    mock_client.get_orders.return_value = [mock_order_1]
+    
+    mock_close_order = MagicMock(id="close_order_999", symbol="SWIM", side="sell", qty=8, status="accepted")
+    mock_client.close_position.return_value = mock_close_order
+
+    with patch("tradingagents.dataflows.alpaca_utils.get_alpaca_trading_client", return_value=mock_client):
+        res = AlpacaUtils.close_position("SWIM")
+
+    assert res["success"] is True
+    assert res["order_id"] == "close_order_999"
+    mock_client.cancel_order_by_id.assert_called_once_with("order_swim_123")
+    mock_client.close_position.assert_called_once_with("SWIM")
+
