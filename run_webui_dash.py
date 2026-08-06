@@ -81,6 +81,13 @@ def main():
     
     print(f"Starting TradingAgents Dash Web UI on port {port}...")
     
+    # Initialize VirtualStopsManager real-time monitoring daemon for fractional orders
+    try:
+        from tradingagents.dataflows.virtual_stops_manager import VirtualStopsManager
+        VirtualStopsManager.start_realtime_daemon()
+    except Exception as e:
+        print(f"Warning: Could not start VirtualStopsManager daemon: {e}")
+
     # Run the app
     sys.exit(run_app(
         port=port,

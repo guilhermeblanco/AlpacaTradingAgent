@@ -582,12 +582,31 @@ class AlpacaUtils:
                 today_pl_percent = (today_pl_dollars / cost_basis) * 100 if cost_basis != 0 else 0
                 total_pl_percent = (total_pl_dollars / cost_basis) * 100 if cost_basis != 0 else 0
                 
+                # Retrieve active virtual stops if registered
+                sl_str = "-"
+                tp_str = "-"
+                try:
+                    from tradingagents.dataflows.virtual_stops_manager import VirtualStopsManager
+                    v_stops = VirtualStopsManager.get_active_virtual_stops(position.symbol)
+                    if v_stops:
+                        sl_val = v_stops[0].get("stop_loss_price")
+                        tp_val = v_stops[0].get("take_profit_price")
+                        if sl_val:
+                            sl_str = f"${float(sl_val):.2f}"
+                        if tp_val:
+                            tp_str = f"${float(tp_val):.2f}"
+                except Exception:
+                    pass
+
                 positions_data.append({
                     "Symbol": position.symbol,
                     "Qty": qty,
-                    "Market Value": f"${market_value:.2f}",
+                    "Current Price": f"${current_price:.2f}",
                     "Avg Entry": f"${avg_entry_price:.2f}",
+                    "Market Value": f"${market_value:.2f}",
                     "Cost Basis": f"${cost_basis:.2f}",
+                    "Virtual Stop Loss": sl_str,
+                    "Virtual Take Profit": tp_str,
                     "Today's P/L (%)": f"{today_pl_percent:.2f}%",
                     "Today's P/L ($)": f"${today_pl_dollars:.2f}",
                     "Total P/L (%)": f"{total_pl_percent:.2f}%",
@@ -597,6 +616,16 @@ class AlpacaUtils:
             return positions_data
         except Exception as e:
             print(f"Error fetching positions: {e}")
+            return []
+
+    @staticmethod
+    def get_active_virtual_stops(symbol: str = None) -> list:
+        """Get list of active virtual stop loss / take profit orders."""
+        try:
+            from tradingagents.dataflows.virtual_stops_manager import VirtualStopsManager
+            return VirtualStopsManager.get_active_virtual_stops(symbol)
+        except Exception as e:
+            print(f"Error fetching virtual stops: {e}")
             return []
 
     @staticmethod
@@ -933,6 +962,13 @@ class AlpacaUtils:
                 )
                 order = client.close_position(alpaca_symbol, close_request)
             
+            # Cancel any active virtual stops for this symbol
+            try:
+                from tradingagents.dataflows.virtual_stops_manager import VirtualStopsManager
+                VirtualStopsManager.cancel_virtual_stops(symbol)
+            except Exception:
+                pass
+
             return {
                 "success": True,
                 "order_id": order.id,
@@ -1388,15 +1424,62 @@ class AlpacaUtils:
                 is_crypto_sym = "/" in sym.upper()
                 if is_crypto_sym and side == "buy":
                     # Crypto buys use exact notional sizing (no bracket support).
-                    return AlpacaUtils.place_market_order(sym, side, notional=amount)
+                    crypto_res = AlpacaUtils.place_market_order(sym, side, notional=amount)
+                    if crypto_res.get("success") and protective_prices:
+                        try:
+                            from tradingagents.dataflows.virtual_stops_manager import VirtualStopsManager
+                            VirtualStopsManager.add_virtual_stop(
+                                symbol=sym,
+                                stop_loss_price=protective_prices.get("stop_loss_price"),
+                                take_profit_price=protective_prices.get("take_profit_price"),
+                                notional=amount,
+                            )
+                            crypto_res["virtual_stop_registered"] = True
+                        except Exception as e:
+                            print(f"Warning: Failed to register virtual stop for crypto {sym}: {e}")
+                    return crypto_res
 
-                qty_int = _calc_qty(sym, amount)
-                if qty_int is None:
+                price = 0.0
+                try:
+                    quote = AlpacaUtils.get_latest_quote(sym)
+                    raw_p = quote.get("bid_price") or quote.get("ask_price")
+                    price = float(raw_p) if raw_p else 0.0
+                except Exception:
+                    price = 0.0
+
+                if price <= 0:
                     return {
                         "success": False,
                         "broker_attempted": False,
                         "error": (
-                            f"No trustworthy price or affordable whole-share quantity for {sym}; "
+                            f"No trustworthy price data available for {sym}; "
+                            f"{side} order skipped"
+                        ),
+                    }
+
+                qty_int = int(amount / price)
+                if qty_int < 1:
+                    # Budget is lower than 1 whole share price: execute fractional buy using notional
+                    if amount > 0:
+                        frac_res = AlpacaUtils.place_market_order(sym, side, notional=amount)
+                        if frac_res.get("success") and protective_prices:
+                            try:
+                                from tradingagents.dataflows.virtual_stops_manager import VirtualStopsManager
+                                VirtualStopsManager.add_virtual_stop(
+                                    symbol=sym,
+                                    stop_loss_price=protective_prices.get("stop_loss_price"),
+                                    take_profit_price=protective_prices.get("take_profit_price"),
+                                    notional=amount,
+                                )
+                                frac_res["virtual_stop_registered"] = True
+                            except Exception as e:
+                                print(f"Warning: Failed to register virtual stop for fractional buy {sym}: {e}")
+                        return frac_res
+                    return {
+                        "success": False,
+                        "broker_attempted": False,
+                        "error": (
+                            f"No trustworthy price or affordable quantity for {sym}; "
                             f"{side} order skipped"
                         ),
                     }
@@ -1413,6 +1496,18 @@ class AlpacaUtils:
                     fallback = AlpacaUtils.place_market_order(sym, side, qty=qty_int)
                     fallback["protective_fallback"] = True
                     fallback["protective_error"] = protected.get("error")
+                    if fallback.get("success") and protective_prices:
+                        try:
+                            from tradingagents.dataflows.virtual_stops_manager import VirtualStopsManager
+                            VirtualStopsManager.add_virtual_stop(
+                                symbol=sym,
+                                stop_loss_price=protective_prices.get("stop_loss_price"),
+                                take_profit_price=protective_prices.get("take_profit_price"),
+                                qty=qty_int,
+                            )
+                            fallback["virtual_stop_registered"] = True
+                        except Exception as e:
+                            print(f"Warning: Failed to register virtual stop for fallback order {sym}: {e}")
                     return fallback
                 return AlpacaUtils.place_market_order(sym, side, qty=qty_int)
 

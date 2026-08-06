@@ -438,7 +438,11 @@ class ExecuteTradeIntentRiskSizingTests(unittest.TestCase):
 
 class CalcQtyPriceFailureTests(unittest.TestCase):
     def test_buy_without_price_data_fails_instead_of_guessing_quantity(self):
-        with patch.object(
+        disabled_guard = MagicMock()
+        disabled_guard.enabled = False
+        with patch(
+            "tradingagents.safety.get_safety_guard", return_value=disabled_guard
+        ), patch.object(
             AlpacaUtils, "get_latest_quote", return_value={}
         ), patch.object(AlpacaUtils, "place_market_order") as place_order:
             result = AlpacaUtils.execute_trading_action(
@@ -455,7 +459,7 @@ class CalcQtyPriceFailureTests(unittest.TestCase):
         self.assertFalse(buy_action["result"]["success"])
         self.assertIn("price", buy_action["result"]["error"].lower())
 
-    def test_budget_below_one_share_does_not_exceed_the_notional_cap(self):
+    def test_budget_below_one_share_executes_fractional_notional_buy(self):
         disabled_guard = MagicMock()
         disabled_guard.enabled = False
         with patch(
@@ -464,7 +468,7 @@ class CalcQtyPriceFailureTests(unittest.TestCase):
             AlpacaUtils,
             "get_latest_quote",
             return_value={"bid_price": 500.0, "ask_price": 501.0},
-        ), patch.object(AlpacaUtils, "place_market_order") as place_order:
+        ), patch.object(AlpacaUtils, "place_market_order", return_value={"success": True}) as place_order:
             result = AlpacaUtils.execute_trading_action(
                 symbol="AAPL",
                 current_position="NEUTRAL",
@@ -473,8 +477,8 @@ class CalcQtyPriceFailureTests(unittest.TestCase):
                 allow_shorts=False,
             )
 
-        self.assertFalse(result["success"])
-        place_order.assert_not_called()
+        self.assertTrue(result["success"])
+        place_order.assert_called_once_with("AAPL", "buy", notional=100.0)
 
 
 if __name__ == "__main__":
