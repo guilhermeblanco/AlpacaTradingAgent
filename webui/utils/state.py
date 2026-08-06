@@ -7,6 +7,7 @@ class AppState:
     def __init__(self):
         self.analysis_queue = []
         self.symbol_states = {}
+        self.max_symbols = 10  # Maximum number of analyzed symbols kept in memory
         self.current_symbol = None  # Symbol displayed in UI
         self.analyzing_symbol = None  # Symbol currently being analyzed (backend)
         self.analysis_running = False
@@ -238,6 +239,33 @@ class AppState:
             "session_start_time": session_start,
             "report_timestamps": {}  # Track when each report was last updated
         }
+        # Enforce max symbol limit to prevent infinite memory & UI buildup
+        self.prune_symbol_states()
+
+    def prune_symbol_states(self, max_limit=None):
+        """
+        Prune symbol_states to keep at most max_limit symbols.
+        Protected symbols ('SCREENER', current_symbol, analyzing_symbol) are never pruned.
+        """
+        if max_limit is None:
+            max_limit = getattr(self, "max_symbols", 10)
+
+        if len(self.symbol_states) <= max_limit:
+            return
+
+        protected = {"SCREENER"}
+        if self.current_symbol:
+            protected.add(self.current_symbol)
+        if self.analyzing_symbol:
+            protected.add(self.analyzing_symbol)
+
+        # Candidates for removal: in insertion order, excluding protected symbols
+        keys_to_check = [k for k in list(self.symbol_states.keys()) if k not in protected]
+
+        while len(self.symbol_states) > max_limit and keys_to_check:
+            oldest_key = keys_to_check.pop(0)
+            del self.symbol_states[oldest_key]
+            print(f"[STATE] Pruned oldest symbol '{oldest_key}' to keep symbol limit <= {max_limit}")
 
     def update_agent_status(self, agent, status, symbol=None):
         """Update the status of an agent for a specific symbol (or current symbol if none specified)."""
