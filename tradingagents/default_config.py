@@ -89,6 +89,9 @@ DEFAULT_CONFIG = {
     "analysis_material_price_move_pct": 3.0,
     "operations_heartbeat_path": None,
     "source_health_log_path": None,
+    "execution_reconciliation_enabled": True,
+    "execution_reconciliation_poll_seconds": 2.0,
+    "execution_reconciliation_timeout_seconds": 120.0,
     # Production safety layer (deterministic, independent of agent logic)
     "safety_enabled": True,  # Master switch for pre-trade checks + circuit breakers + kill switch
     "max_trade_notional_usd": 25000.0,  # Per-order notional cap; 0 = uncapped

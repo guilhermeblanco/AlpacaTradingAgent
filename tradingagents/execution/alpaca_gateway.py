@@ -3,10 +3,45 @@ from __future__ import annotations
 from tradingagents.agents.schemas import TradeIntent
 
 from .models import ExecutionPlan, ExecutionResult, PlanAction
+from .reconciliation import BrokerOrderSnapshot, BrokerOrderStatus
 
 
 class AlpacaExecutionGateway:
     name = "alpaca"
+
+    def get_order_snapshot(self, *, order_id=None, client_order_id=None) -> BrokerOrderSnapshot:
+        from tradingagents.dataflows.alpaca_utils import get_alpaca_trading_client
+        from alpaca.trading.requests import GetOrderByIdRequest
+
+        client = get_alpaca_trading_client()
+        if order_id:
+            order = client.get_order_by_id(order_id, GetOrderByIdRequest(nested=True))
+        elif client_order_id:
+            order = client.get_order_by_client_id(client_order_id)
+            order = client.get_order_by_id(order.id, GetOrderByIdRequest(nested=True))
+        else:
+            raise ValueError("order_id or client_order_id is required")
+
+        def convert(value) -> BrokerOrderSnapshot:
+            raw_status = str(getattr(getattr(value, "status", None), "value", getattr(value, "status", "unknown"))).lower()
+            try:
+                status = BrokerOrderStatus(raw_status)
+            except ValueError:
+                status = BrokerOrderStatus.UNKNOWN
+            return BrokerOrderSnapshot(
+                order_id=str(value.id),
+                client_order_id=getattr(value, "client_order_id", None),
+                symbol=str(value.symbol),
+                side=str(getattr(getattr(value, "side", None), "value", getattr(value, "side", ""))),
+                status=status,
+                requested_quantity=float(value.qty) if getattr(value, "qty", None) is not None else None,
+                filled_quantity=float(getattr(value, "filled_qty", 0) or 0),
+                filled_avg_price=(float(value.filled_avg_price)
+                                  if getattr(value, "filled_avg_price", None) is not None else None),
+                child_orders=[convert(child) for child in (getattr(value, "legs", None) or [])],
+            )
+
+        return convert(order)
 
     def submit_plan(self, plan: ExecutionPlan, intent: TradeIntent) -> ExecutionResult:
         from tradingagents.dataflows.alpaca_utils import AlpacaUtils
