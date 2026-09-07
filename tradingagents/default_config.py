@@ -92,6 +92,10 @@ DEFAULT_CONFIG = {
     "execution_reconciliation_enabled": True,
     "execution_reconciliation_poll_seconds": 2.0,
     "execution_reconciliation_timeout_seconds": 120.0,
+    "batch_max_workers": 4,
+    "batch_provider_max_concurrency": 2,
+    "batch_provider_min_interval_seconds": 0.25,
+    "batch_provider_max_retries": 1,
     # Production safety layer (deterministic, independent of agent logic)
     "safety_enabled": True,  # Master switch for pre-trade checks + circuit breakers + kill switch
     "max_trade_notional_usd": 25000.0,  # Per-order notional cap; 0 = uncapped
