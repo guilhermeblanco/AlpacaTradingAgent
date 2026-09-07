@@ -30,6 +30,12 @@ The `decision_events` table is append-only. PostgreSQL rejects updates and
 deletes through a database trigger, preserving the audit trail even if an
 application code path attempts a mutation.
 
+The `outbox` table makes local state changes and queued external work one
+transaction. Dispatch is at least once: workers use leases and `SKIP LOCKED`,
+retry failures with exponential backoff, and dead-letter exhausted messages.
+Every remote handler must propagate the message idempotency key because a
+worker can fail after a remote call succeeds but before the local acknowledgement.
+
 ## Operations
 
 - Back up both the database and application secrets before a production deploy.

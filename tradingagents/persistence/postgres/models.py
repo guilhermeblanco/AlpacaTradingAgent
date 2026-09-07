@@ -170,5 +170,6 @@ class OutboxRow(Base):
     locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     locked_by: Mapped[Optional[str]] = mapped_column(String(160))
     processed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    dead_lettered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_error: Mapped[Optional[str]] = mapped_column(Text)

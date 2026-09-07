@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
+from uuid import uuid4
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from tradingagents.evaluation.models import EvaluationEpisode, EvaluationOutcome
@@ -21,7 +23,9 @@ from .models import (
     EvaluationOutcomeRow,
     LifecycleRow,
     LifecycleTransitionRow,
+    OutboxRow,
 )
+from tradingagents.persistence.outbox import OutboxLeaseLost, OutboxMessage
 
 
 def _utcnow() -> datetime:
@@ -371,3 +375,141 @@ class PostgresAdmissionPolicy:
         if row is not None:
             row.in_flight = False
             self.session.flush()
+
+
+class PostgresOutboxRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def enqueue(
+        self,
+        topic: str,
+        *,
+        idempotency_key: str,
+        payload: dict[str, Any],
+        available_at: Optional[datetime] = None,
+    ) -> str:
+        existing = self.session.scalar(
+            select(OutboxRow).where(OutboxRow.idempotency_key == idempotency_key)
+        )
+        if existing is not None:
+            self._validate_idempotent_content(existing, topic, payload)
+            return existing.outbox_id
+        now = _utcnow()
+        row = OutboxRow(
+            outbox_id=str(uuid4()),
+            topic=topic,
+            idempotency_key=idempotency_key,
+            payload=payload,
+            created_at=now,
+            available_at=available_at or now,
+            attempts=0,
+        )
+        try:
+            with self.session.begin_nested():
+                self.session.add(row)
+                self.session.flush()
+        except IntegrityError:
+            existing = self.session.scalar(
+                select(OutboxRow).where(
+                    OutboxRow.idempotency_key == idempotency_key
+                )
+            )
+            if existing is None:
+                raise
+            self._validate_idempotent_content(existing, topic, payload)
+            return existing.outbox_id
+        return row.outbox_id
+
+    def claim(
+        self,
+        *,
+        worker_id: str,
+        limit: int = 10,
+        lease_seconds: int = 60,
+        now: Optional[datetime] = None,
+    ) -> list[OutboxMessage]:
+        now = now or _utcnow()
+        rows = self.session.scalars(
+            select(OutboxRow)
+            .where(
+                OutboxRow.processed_at.is_(None),
+                OutboxRow.dead_lettered_at.is_(None),
+                OutboxRow.available_at <= now,
+                (OutboxRow.locked_until.is_(None)) | (OutboxRow.locked_until < now),
+            )
+            .order_by(OutboxRow.available_at, OutboxRow.created_at)
+            .limit(max(1, int(limit)))
+            .with_for_update(skip_locked=True)
+        ).all()
+        locked_until = now + timedelta(seconds=max(1, int(lease_seconds)))
+        for row in rows:
+            row.locked_by = worker_id
+            row.locked_until = locked_until
+            row.attempts += 1
+        self.session.flush()
+        return [self._message(row) for row in rows]
+
+    def mark_processed(
+        self,
+        outbox_id: str,
+        *,
+        worker_id: str,
+        processed_at: Optional[datetime] = None,
+    ) -> None:
+        row = self._locked_message(outbox_id, worker_id)
+        row.processed_at = processed_at or _utcnow()
+        row.locked_by = None
+        row.locked_until = None
+        row.last_error = None
+        self.session.flush()
+
+    def mark_failed(
+        self,
+        outbox_id: str,
+        *,
+        worker_id: str,
+        error: str,
+        retry_at: datetime,
+        dead_letter: bool = False,
+    ) -> None:
+        row = self._locked_message(outbox_id, worker_id)
+        row.last_error = error[:4000]
+        row.available_at = retry_at
+        row.dead_lettered_at = _utcnow() if dead_letter else None
+        row.locked_by = None
+        row.locked_until = None
+        self.session.flush()
+
+    def _locked_message(self, outbox_id: str, worker_id: str) -> OutboxRow:
+        row = self.session.scalar(
+            select(OutboxRow)
+            .where(OutboxRow.outbox_id == outbox_id)
+            .with_for_update()
+        )
+        if row is None or row.locked_by != worker_id:
+            raise OutboxLeaseLost(f"Worker {worker_id} no longer owns {outbox_id}")
+        return row
+
+    @staticmethod
+    def _validate_idempotent_content(
+        row: OutboxRow, topic: str, payload: dict[str, Any]
+    ) -> None:
+        if row.topic != topic or row.payload != payload:
+            raise ValueError(
+                "outbox idempotency key already exists with different content"
+            )
+
+    @staticmethod
+    def _message(row: OutboxRow) -> OutboxMessage:
+        return OutboxMessage(
+            outbox_id=row.outbox_id,
+            topic=row.topic,
+            idempotency_key=row.idempotency_key,
+            payload=row.payload,
+            created_at=row.created_at,
+            available_at=row.available_at,
+            locked_until=row.locked_until,
+            locked_by=row.locked_by,
+            attempts=row.attempts,
+        )
