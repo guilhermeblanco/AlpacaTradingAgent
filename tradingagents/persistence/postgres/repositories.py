@@ -98,9 +98,37 @@ class PostgresLifecycleRepository:
         run_id: Optional[str] = None,
         metadata: Optional[dict[str, Any]] = None,
     ) -> LifecycleRecord:
+        record, _ = self.create_once(
+            decision_id=decision_id,
+            symbol=symbol,
+            idempotency_key=idempotency_key,
+            valid_until=valid_until,
+            run_id=run_id,
+            metadata=metadata,
+        )
+        return record
+
+    def create_once(
+        self,
+        *,
+        decision_id: str,
+        symbol: str,
+        idempotency_key: str,
+        valid_until: Optional[datetime] = None,
+        run_id: Optional[str] = None,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> tuple[LifecycleRecord, bool]:
+        if self.session.bind is not None and self.session.bind.dialect.name == "postgresql":
+            self.session.execute(
+                select(
+                    func.pg_advisory_xact_lock(
+                        func.hashtextextended(decision_id, 0)
+                    )
+                )
+            )
         existing = self.session.get(LifecycleRow, decision_id)
         if existing is not None:
-            return self._record(existing)
+            return self._record(existing), False
         now = _utcnow()
         row = LifecycleRow(
             decision_id=decision_id,
@@ -124,7 +152,7 @@ class PostgresLifecycleRepository:
             )
         )
         self.session.flush()
-        return self._record(row)
+        return self._record(row), True
 
     def transition(
         self,
