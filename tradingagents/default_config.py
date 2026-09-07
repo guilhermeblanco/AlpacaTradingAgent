@@ -84,6 +84,11 @@ DEFAULT_CONFIG = {
     "evaluation_benchmark_symbol": "SPY",
     "evaluation_horizons_days": [1, 5, 20],
     "evaluation_estimated_cost_pct": 0.10,
+    "analysis_admission_enabled": True,
+    "analysis_admission_db_path": None,
+    "analysis_material_price_move_pct": 3.0,
+    "operations_heartbeat_path": None,
+    "source_health_log_path": None,
     # Production safety layer (deterministic, independent of agent logic)
     "safety_enabled": True,  # Master switch for pre-trade checks + circuit breakers + kill switch
     "max_trade_notional_usd": 25000.0,  # Per-order notional cap; 0 = uncapped
