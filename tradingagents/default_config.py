@@ -96,6 +96,15 @@ DEFAULT_CONFIG = {
     "batch_provider_max_concurrency": 2,
     "batch_provider_min_interval_seconds": 0.25,
     "batch_provider_max_retries": 1,
+    "options_autonomous_enabled": False,
+    "options_paper_only": True,
+    "options_max_contracts": 2,
+    "options_max_loss_usd": 500.0,
+    "options_min_dte": 7,
+    "options_max_dte": 60,
+    "options_min_open_interest": 100,
+    "options_max_bid_ask_spread_pct": 15.0,
+    "options_allow_undefined_risk": False,
     # Production safety layer (deterministic, independent of agent logic)
     "safety_enabled": True,  # Master switch for pre-trade checks + circuit breakers + kill switch
     "max_trade_notional_usd": 25000.0,  # Per-order notional cap; 0 = uncapped
