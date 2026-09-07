@@ -173,3 +173,68 @@ class OutboxRow(Base):
     dead_lettered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_error: Mapped[Optional[str]] = mapped_column(Text)
+
+
+class BrokerOrderRow(Base):
+    __tablename__ = "broker_orders"
+    __table_args__ = (
+        UniqueConstraint("broker", "client_order_id", name="uq_broker_order_client"),
+        UniqueConstraint("broker", "broker_order_id", name="uq_broker_order_remote"),
+        UniqueConstraint("decision_id", "leg_index", name="uq_broker_order_leg"),
+        Index("ix_broker_orders_status_updated", "status", "updated_at"),
+    )
+
+    order_key: Mapped[str] = mapped_column(String(36), primary_key=True)
+    decision_id: Mapped[str] = mapped_column(
+        ForeignKey("lifecycle.decision_id", ondelete="CASCADE"), nullable=False
+    )
+    leg_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    broker: Mapped[str] = mapped_column(String(80), nullable=False)
+    broker_order_id: Mapped[Optional[str]] = mapped_column(String(160))
+    client_order_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(80), nullable=False)
+    side: Mapped[str] = mapped_column(String(20), nullable=False)
+    status: Mapped[str] = mapped_column(String(40), nullable=False)
+    requested_quantity: Mapped[Optional[float]] = mapped_column(Float)
+    requested_notional: Mapped[Optional[float]] = mapped_column(Float)
+    filled_quantity: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    filled_avg_price: Mapped[Optional[float]] = mapped_column(Float)
+    submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    terminal_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    raw: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, nullable=False, default=dict)
+
+
+class BrokerOrderTransitionRow(Base):
+    __tablename__ = "broker_order_transitions"
+    __table_args__ = (
+        Index("ix_broker_order_transitions_order", "order_key", "transition_id"),
+    )
+
+    transition_id: Mapped[int] = mapped_column(SEQUENCE_ID, primary_key=True, autoincrement=True)
+    order_key: Mapped[str] = mapped_column(
+        ForeignKey("broker_orders.order_key", ondelete="CASCADE"), nullable=False
+    )
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    from_status: Mapped[Optional[str]] = mapped_column(String(40))
+    to_status: Mapped[str] = mapped_column(String(40), nullable=False)
+    filled_quantity: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    filled_avg_price: Mapped[Optional[float]] = mapped_column(Float)
+    raw: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, nullable=False, default=dict)
+
+
+class BrokerFillRow(Base):
+    __tablename__ = "broker_fills"
+    __table_args__ = (
+        UniqueConstraint("order_key", "fill_sequence", name="uq_broker_fill_sequence"),
+    )
+
+    fill_key: Mapped[str] = mapped_column(String(36), primary_key=True)
+    order_key: Mapped[str] = mapped_column(
+        ForeignKey("broker_orders.order_key", ondelete="CASCADE"), nullable=False
+    )
+    fill_sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    quantity: Mapped[float] = mapped_column(Float, nullable=False)
+    price: Mapped[float] = mapped_column(Float, nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    source: Mapped[str] = mapped_column(String(80), nullable=False)

@@ -12,6 +12,9 @@ class LifecycleStatus(str, Enum):
     VALIDATED = "validated"
     PLANNED = "planned"
     SUBMITTING = "submitting"
+    SUBMITTED = "submitted"
+    PARTIALLY_FILLED = "partially_filled"
+    FILLED = "filled"
     SUCCEEDED = "succeeded"
     BLOCKED = "blocked"
     FAILED = "failed"
@@ -21,6 +24,7 @@ class LifecycleStatus(str, Enum):
 
 TERMINAL_STATUSES = {
     LifecycleStatus.SUCCEEDED,
+    LifecycleStatus.FILLED,
     LifecycleStatus.BLOCKED,
     LifecycleStatus.FAILED,
     LifecycleStatus.EXPIRED,

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Optional, Protocol
+from typing import Any, Callable, Optional, Protocol
 
 from pydantic import BaseModel, Field
 
@@ -60,7 +60,14 @@ class ExecutionReconciler:
         self.quantity_tolerance = max(0.0, quantity_tolerance)
 
     def reconcile(self, plan: ExecutionPlan, actions: list[dict]) -> ReconciliationReport:
+        report, _ = self.reconcile_with_snapshots(plan, actions)
+        return report
+
+    def reconcile_with_snapshots(
+        self, plan: ExecutionPlan, actions: list[dict]
+    ) -> tuple[ReconciliationReport, list[tuple[int, BrokerOrderSnapshot]]]:
         reports: list[LegReconciliation] = []
+        snapshots = []
         idempotency_keys = plan.metadata.get("leg_idempotency_keys", [])
         for index, leg in enumerate(plan.legs):
             if leg.action == PlanAction.HOLD:
@@ -74,6 +81,7 @@ class ExecutionReconciler:
             snapshot = self.gateway.get_order_snapshot(
                 order_id=order_id, client_order_id=client_order_id
             )
+            snapshots.append((index, snapshot))
             problems: list[str] = []
             terminal_success = snapshot.status == BrokerOrderStatus.FILLED
             terminal_failure = snapshot.status in {
@@ -103,4 +111,56 @@ class ExecutionReconciler:
         return ReconciliationReport(
             decision_id=plan.decision_id, symbol=plan.symbol,
             complete=all(row.complete for row in reports), legs=reports,
+        ), snapshots
+
+
+class PersistentExecutionReconciler:
+    def __init__(
+        self,
+        gateway: ReconciliationGateway,
+        unit_of_work_factory: Callable[[], Any],
+        *,
+        quantity_tolerance: float = 1e-6,
+    ):
+        self.reconciler = ExecutionReconciler(
+            gateway, quantity_tolerance=quantity_tolerance
         )
+        self.unit_of_work_factory = unit_of_work_factory
+
+    def reconcile(
+        self, plan: ExecutionPlan, actions: list[dict], *, run_id: Optional[str] = None
+    ) -> ReconciliationReport:
+        report, snapshots = self.reconciler.reconcile_with_snapshots(plan, actions)
+        failure_statuses = {
+            BrokerOrderStatus.CANCELED,
+            BrokerOrderStatus.REJECTED,
+            BrokerOrderStatus.EXPIRED,
+        }
+        from tradingagents.lifecycle import LifecycleStatus
+
+        if any(leg.status in failure_statuses for leg in report.legs):
+            lifecycle_status = LifecycleStatus.FAILED
+        elif report.complete:
+            lifecycle_status = LifecycleStatus.FILLED
+        elif any(leg.filled_quantity > 0 for leg in report.legs):
+            lifecycle_status = LifecycleStatus.PARTIALLY_FILLED
+        else:
+            lifecycle_status = LifecycleStatus.SUBMITTED
+
+        with self.unit_of_work_factory() as uow:
+            for leg_index, snapshot in snapshots:
+                uow.orders.apply_snapshot(
+                    decision_id=plan.decision_id,
+                    leg_index=leg_index,
+                    snapshot=snapshot,
+                )
+            uow.lifecycle.transition(plan.decision_id, lifecycle_status)
+            uow.journal.append(
+                "orders_reconciled",
+                symbol=plan.symbol,
+                decision_id=plan.decision_id,
+                run_id=run_id,
+                payload={"report": report.model_dump(mode="json")},
+            )
+            uow.commit()
+        return report

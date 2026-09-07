@@ -165,6 +165,9 @@ def test_initial_migration_creates_all_persistence_tables(postgres_engine) -> No
         "evaluation_outcomes",
         "analysis_admission",
         "outbox",
+        "broker_orders",
+        "broker_order_transitions",
+        "broker_fills",
     }.issubset(inspect(postgres_engine).get_table_names())
 
 

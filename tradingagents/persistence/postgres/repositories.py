@@ -15,9 +15,15 @@ from tradingagents.evaluation.point_in_time import validate_episode_point_in_tim
 from tradingagents.lifecycle.models import LifecycleRecord, LifecycleStatus
 from tradingagents.operations.admission import AdmissionDecision
 from tradingagents.persistence.events import EventEnvelope
+from tradingagents.execution.models import ExecutionResult, PlanAction
+from tradingagents.execution.order_ledger import BrokerOrderRecord
+from tradingagents.execution.reconciliation import BrokerOrderSnapshot, BrokerOrderStatus
 
 from .models import (
     AnalysisAdmissionRow,
+    BrokerFillRow,
+    BrokerOrderRow,
+    BrokerOrderTransitionRow,
     DecisionEventRow,
     EvaluationEpisodeRow,
     EvaluationOutcomeRow,
@@ -193,6 +199,7 @@ class PostgresLifecycleRepository:
         now = now or _utcnow()
         terminal = {
             LifecycleStatus.SUCCEEDED.value,
+            LifecycleStatus.FILLED.value,
             LifecycleStatus.BLOCKED.value,
             LifecycleStatus.FAILED.value,
             LifecycleStatus.EXPIRED.value,
@@ -540,4 +547,171 @@ class PostgresOutboxRepository:
             locked_until=row.locked_until,
             locked_by=row.locked_by,
             attempts=row.attempts,
+        )
+
+
+class PostgresOrderLedger:
+    TERMINAL = {
+        BrokerOrderStatus.FILLED.value,
+        BrokerOrderStatus.CANCELED.value,
+        BrokerOrderStatus.REJECTED.value,
+        BrokerOrderStatus.EXPIRED.value,
+    }
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def record_submission(self, result: ExecutionResult) -> list[BrokerOrderRecord]:
+        now = _utcnow()
+        keys = result.plan.metadata.get("leg_idempotency_keys", [])
+        serialized_actions = result.model_dump(mode="json")["actions"]
+        records = []
+        for index, leg in enumerate(result.plan.legs):
+            if leg.action == PlanAction.HOLD:
+                continue
+            existing = self.session.scalar(
+                select(BrokerOrderRow).where(
+                    BrokerOrderRow.decision_id == result.decision_id,
+                    BrokerOrderRow.leg_index == index,
+                )
+            )
+            if existing is not None:
+                records.append(self._record(existing))
+                continue
+            action = serialized_actions[index] if index < len(serialized_actions) else {}
+            raw = action.get("result", action)
+            remote_id = raw.get("order_id")
+            client_id = (
+                keys[index]
+                if index < len(keys)
+                else raw.get("client_order_id") or f"{result.decision_id}-{index}"
+            )
+            status = str(raw.get("status") or "submitted").lower()
+            row = BrokerOrderRow(
+                order_key=str(uuid4()),
+                decision_id=result.decision_id,
+                leg_index=index,
+                broker=result.gateway,
+                broker_order_id=str(remote_id) if remote_id is not None else None,
+                client_order_id=client_id,
+                symbol=result.symbol,
+                side=leg.side or leg.action.value.lower(),
+                status=status,
+                requested_quantity=leg.quantity,
+                requested_notional=leg.notional_usd,
+                filled_quantity=float(raw.get("filled_quantity") or 0),
+                filled_avg_price=raw.get("filled_avg_price"),
+                submitted_at=now,
+                updated_at=now,
+                raw=raw,
+            )
+            self.session.add(row)
+            self.session.add(
+                BrokerOrderTransitionRow(
+                    order_key=row.order_key,
+                    observed_at=now,
+                    from_status=None,
+                    to_status=status,
+                    filled_quantity=row.filled_quantity,
+                    filled_avg_price=row.filled_avg_price,
+                    raw=raw,
+                )
+            )
+            records.append(self._record(row))
+        self.session.flush()
+        return records
+
+    def apply_snapshot(
+        self,
+        *,
+        decision_id: str,
+        leg_index: int,
+        snapshot: BrokerOrderSnapshot,
+        observed_at: Optional[datetime] = None,
+    ) -> BrokerOrderRecord:
+        observed_at = observed_at or _utcnow()
+        row = self.session.scalar(
+            select(BrokerOrderRow)
+            .where(
+                BrokerOrderRow.decision_id == decision_id,
+                BrokerOrderRow.leg_index == leg_index,
+            )
+            .with_for_update()
+        )
+        if row is None:
+            raise KeyError(f"Unknown broker order {decision_id} leg {leg_index}")
+        previous_status = row.status
+        previous_quantity = row.filled_quantity
+        delta = snapshot.filled_quantity - previous_quantity
+        if delta < -1e-9:
+            raise ValueError("broker filled quantity cannot decrease")
+        if delta > 1e-9 and snapshot.filled_avg_price is not None:
+            previous_notional = (row.filled_avg_price or 0.0) * previous_quantity
+            cumulative_notional = snapshot.filled_avg_price * snapshot.filled_quantity
+            fill_price = (cumulative_notional - previous_notional) / delta
+            sequence = self.session.scalar(
+                select(func.count(BrokerFillRow.fill_key)).where(
+                    BrokerFillRow.order_key == row.order_key
+                )
+            ) or 0
+            self.session.add(
+                BrokerFillRow(
+                    fill_key=str(uuid4()),
+                    order_key=row.order_key,
+                    fill_sequence=sequence + 1,
+                    quantity=delta,
+                    price=fill_price,
+                    observed_at=observed_at,
+                    source="reconciliation_snapshot",
+                )
+            )
+        row.broker_order_id = snapshot.order_id
+        row.status = snapshot.status.value
+        row.filled_quantity = snapshot.filled_quantity
+        row.filled_avg_price = snapshot.filled_avg_price
+        row.updated_at = observed_at
+        if row.status in self.TERMINAL:
+            row.terminal_at = observed_at
+        if previous_status != row.status or delta > 1e-9:
+            self.session.add(
+                BrokerOrderTransitionRow(
+                    order_key=row.order_key,
+                    observed_at=observed_at,
+                    from_status=previous_status,
+                    to_status=row.status,
+                    filled_quantity=row.filled_quantity,
+                    filled_avg_price=row.filled_avg_price,
+                    raw=snapshot.model_dump(mode="json"),
+                )
+            )
+        self.session.flush()
+        return self._record(row)
+
+    def orders_for_decision(self, decision_id: str) -> list[BrokerOrderRecord]:
+        rows = self.session.scalars(
+            select(BrokerOrderRow)
+            .where(BrokerOrderRow.decision_id == decision_id)
+            .order_by(BrokerOrderRow.leg_index)
+        ).all()
+        return [self._record(row) for row in rows]
+
+    @staticmethod
+    def _record(row: BrokerOrderRow) -> BrokerOrderRecord:
+        return BrokerOrderRecord(
+            order_key=row.order_key,
+            decision_id=row.decision_id,
+            leg_index=row.leg_index,
+            broker=row.broker,
+            broker_order_id=row.broker_order_id,
+            client_order_id=row.client_order_id,
+            symbol=row.symbol,
+            side=row.side,
+            status=row.status,
+            requested_quantity=row.requested_quantity,
+            requested_notional=row.requested_notional,
+            filled_quantity=row.filled_quantity,
+            filled_avg_price=row.filled_avg_price,
+            submitted_at=row.submitted_at,
+            updated_at=row.updated_at,
+            terminal_at=row.terminal_at,
         )

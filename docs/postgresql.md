@@ -51,6 +51,12 @@ retry failures with exponential backoff, and dead-letter exhausted messages.
 Every remote handler must propagate the message idempotency key because a
 worker can fail after a remote call succeeds but before the local acknowledgement.
 
+Accepted broker orders are stored separately from observed fills. A successful
+submission moves the execution to `submitted`; reconciliation advances it to
+`partially_filled`, `filled`, or `failed`. When only cumulative fill data is
+available, the ledger derives each newly observed fill quantity and effective
+price from successive snapshots.
+
 ## Operations
 
 - Back up both the database and application secrets before a production deploy.
