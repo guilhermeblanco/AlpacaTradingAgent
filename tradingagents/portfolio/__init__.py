@@ -27,6 +27,8 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 import pandas as pd
 
+from .risk_view import PortfolioRiskView, build_portfolio_risk_view
+
 _MIN_OVERLAP_BARS = 20  # fewer shared bars than this makes correlation noise
 
 
