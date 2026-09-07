@@ -35,6 +35,7 @@ def plan(intent):
         current_notional_usd=0,
         delta_notional_usd=5_000,
         reference_price=100,
+        metadata={"leg_idempotency_keys": ["ata-test-0"]},
         legs=[
             ExecutionLeg(
                 action=PlanAction.BUY,
@@ -61,6 +62,7 @@ class AlpacaGatewayTests(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertIn("bracket rejected", result.error)
         protected.assert_called_once()
+        self.assertEqual(protected.call_args.kwargs["client_order_id"], "ata-test-0")
         naked.assert_not_called()
 
 

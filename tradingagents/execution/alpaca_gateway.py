@@ -13,7 +13,9 @@ class AlpacaExecutionGateway:
         from tradingagents.agents.schemas import extract_protective_price
 
         actions = []
-        for leg in plan.legs:
+        idempotency_keys = plan.metadata.get("leg_idempotency_keys", [])
+        for index, leg in enumerate(plan.legs):
+            client_order_id = idempotency_keys[index] if index < len(idempotency_keys) else None
             if leg.action == PlanAction.HOLD:
                 actions.append({"action": "hold", "result": {"success": True, "message": leg.reason}})
                 continue
@@ -46,12 +48,14 @@ class AlpacaExecutionGateway:
                         qty=int(leg.quantity),
                         stop_loss_price=stop,
                         take_profit_price=target,
+                        client_order_id=client_order_id,
                     )
                 else:
                     result = AlpacaUtils.place_market_order(
                         plan.symbol,
                         leg.side or "buy",
                         notional=leg.notional_usd,
+                        client_order_id=client_order_id,
                     )
             actions.append({"action": leg.action.value.lower(), "leg": leg.model_dump(mode="json"), "result": result})
             if not result.get("success"):
