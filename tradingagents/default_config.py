@@ -79,6 +79,11 @@ DEFAULT_CONFIG = {
     "lifecycle_db_path": None,  # Defaults to <results_dir>/execution_lifecycle.sqlite3
     "lifecycle_intent_ttl_seconds": 900,
     "lifecycle_poll_interval_seconds": 30,
+    "evaluation_enabled": True,
+    "evaluation_db_path": None,  # Defaults to <results_dir>/evaluation.sqlite3
+    "evaluation_benchmark_symbol": "SPY",
+    "evaluation_horizons_days": [1, 5, 20],
+    "evaluation_estimated_cost_pct": 0.10,
     # Production safety layer (deterministic, independent of agent logic)
     "safety_enabled": True,  # Master switch for pre-trade checks + circuit breakers + kill switch
     "max_trade_notional_usd": 25000.0,  # Per-order notional cap; 0 = uncapped
