@@ -1,7 +1,7 @@
 # TradingAgents/graph/signal_processing.py
 
 from langchain_openai import ChatOpenAI
-from tradingagents.prompts import load_prompt
+REVIEW = "REVIEW"
 
 
 class SignalProcessor:
@@ -36,19 +36,6 @@ class SignalProcessor:
             if pattern in content:
                 return action
 
-        # Fallback: simple keyword search in the last 100 characters
-        tail = content[-100:]
-        for action in ["LONG", "SHORT", "NEUTRAL", "BUY", "SELL", "HOLD"]:
-            if action in tail:
-                return action
-
-        # If deterministic parsing fails, let the LLM infer (default to BUY/SELL/HOLD)
-        messages = [
-            (
-                "system",
-                load_prompt("graph/signal_extraction_system"),
-            ),
-            ("human", full_signal),
-        ]
-
-        return self.quick_thinking_llm.invoke(messages).content.strip().upper()
+        # A malformed final decision is not a neutral market opinion. Surface a
+        # non-executable sentinel instead of asking another model to guess.
+        return REVIEW

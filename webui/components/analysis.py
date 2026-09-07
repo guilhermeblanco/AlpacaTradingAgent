@@ -362,7 +362,12 @@ def run_analysis(
             trading_mode=final_state.get("trading_mode", config.get("trading_mode", "investment")),
         )
         if config.get("checkpoint_enabled", False):
-            clear_checkpoint(config["data_cache_dir"], ticker, current_date)
+            clear_checkpoint(
+                config["data_cache_dir"],
+                ticker,
+                current_date,
+                graph._run_signature(ticker),
+            )
         run_started = False
 
         # NEW: Persist the extracted decision so the trading engine can act on it directly

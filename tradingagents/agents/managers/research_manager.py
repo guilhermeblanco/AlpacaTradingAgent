@@ -56,7 +56,9 @@ def create_research_manager(llm, memory, config=None):
         past_memory_str = ""
         for i, rec in enumerate(past_memories, 1):
             past_memory_str += rec["recommendation"] + "\n\n"
-        decision_memory_str = decision_log.get_past_context(ticker)
+        decision_memory_str = decision_log.get_past_context(
+            ticker, as_of=state.get("trade_date")
+        )
 
         prompt = render_prompt(
             "managers/research_manager",

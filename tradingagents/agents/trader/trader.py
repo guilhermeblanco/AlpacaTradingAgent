@@ -81,7 +81,9 @@ def create_trader(llm, memory, config=None, snapshot_provider=None):
         past_memory_str = ""
         for i, rec in enumerate(past_memories, 1):
             past_memory_str += rec["recommendation"] + "\n\n"
-        decision_memory_str = decision_log.get_past_context(company_name)
+        decision_memory_str = decision_log.get_past_context(
+            company_name, as_of=state.get("trade_date")
+        )
 
         trader_context = render_prompt(
             "trader/trader_context",

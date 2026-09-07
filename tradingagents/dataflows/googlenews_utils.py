@@ -1,10 +1,11 @@
 import json
 import requests
 from bs4 import BeautifulSoup
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 import random
 import urllib.parse
+from email.utils import parsedate_to_datetime
 from tenacity import (
     retry,
     stop_after_attempt,
@@ -17,6 +18,8 @@ try:
     import feedparser
 except ImportError:
     feedparser = None
+
+from .date_window import in_window
 
 
 def is_rate_limited(response):
@@ -76,7 +79,9 @@ def _getNewsDataRSS(query, start_date, end_date, max_results=20):
         end_dt = datetime.strptime(end_date, "%Y-%m-%d")
 
     after_str = start_dt.strftime("%Y-%m-%d")
-    before_str = end_dt.strftime("%Y-%m-%d")
+    # Google's ``before:`` bound is exclusive. Advance it one day so the
+    # requested end date is fetched, then enforce the exact window locally.
+    before_str = (end_dt + timedelta(days=1)).strftime("%Y-%m-%d")
 
     encoded_q = urllib.parse.quote_plus(f"{query} after:{after_str} before:{before_str}")
     rss_url = (
@@ -95,6 +100,12 @@ def _getNewsDataRSS(query, start_date, end_date, max_results=20):
         title = getattr(entry, "title", "")
         link = getattr(entry, "link", "")
         published = getattr(entry, "published", "Unknown")
+        try:
+            published_at = parsedate_to_datetime(published)
+        except (TypeError, ValueError, OverflowError):
+            published_at = None
+        if not in_window(published_at, start_dt, end_dt):
+            continue
         # Google News RSS puts the source at the end of the title after " - "
         source = "Unknown"
         if " - " in title:

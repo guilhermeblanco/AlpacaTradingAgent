@@ -230,8 +230,20 @@ class TradingMemoryLog:
             return entries
         return [e for e in entries if e.get("ticker") == ticker]
 
-    def get_past_context(self, ticker: str, n_same: int = 5, n_cross: int = 3) -> str:
+    def get_past_context(
+        self,
+        ticker: str,
+        n_same: int = 5,
+        n_cross: int = 3,
+        as_of: str | None = None,
+    ) -> str:
         entries = [e for e in self.load_entries() if not e.get("pending")]
+        if as_of is not None and as_of < date.today().isoformat():
+            entries = [
+                entry
+                for entry in entries
+                if entry.get("resolved") and entry["resolved"] <= as_of
+            ]
         same, cross = [], []
         for entry in reversed(entries):
             if entry["ticker"] == ticker and len(same) < n_same:
@@ -257,6 +269,7 @@ class TradingMemoryLog:
         alpha_return: float | None,
         holding_days: int,
         reflection: str,
+        resolution_date: str | None = None,
     ) -> None:
         self.batch_update_with_outcomes([
             {
@@ -266,6 +279,7 @@ class TradingMemoryLog:
                 "alpha_return": alpha_return,
                 "holding_days": holding_days,
                 "reflection": reflection,
+                "resolution_date": resolution_date,
             }
         ])
 
@@ -294,6 +308,9 @@ class TradingMemoryLog:
                         f"[{trade_date} | {ticker} | {fields[2]} | {fields[3]} "
                         f"| {raw_pct} | {alpha_pct} | {upd['holding_days']}d]"
                     )
+                    resolution_date = upd.get("resolution_date")
+                    if resolution_date:
+                        new_tag = new_tag[:-1] + f" | resolved:{resolution_date}]"
                     rest = "\n".join(lines[1:]).lstrip()
                     new_blocks.append(f"{new_tag}\n\n{rest}\n\nREFLECTION:\n{upd['reflection']}")
                     del update_map[(trade_date, ticker)]
@@ -329,6 +346,14 @@ class TradingMemoryLog:
         body = "\n".join(lines[1:]).strip()
         decision = self._DECISION_RE.search(body)
         reflection = self._REFLECTION_RE.search(body)
+        resolved = next(
+            (
+                field.split(":", 1)[1].strip()
+                for field in fields[7:]
+                if field.startswith("resolved:")
+            ),
+            None,
+        )
         return {
             "date": fields[0],
             "ticker": fields[1],
@@ -338,6 +363,7 @@ class TradingMemoryLog:
             "raw": fields[4] if len(fields) > 5 else None,
             "alpha": fields[5] if len(fields) > 6 else None,
             "holding": fields[6] if len(fields) > 6 else None,
+            "resolved": resolved,
             "decision": decision.group(1).strip() if decision else "",
             "reflection": reflection.group(1).strip() if reflection else "",
         }

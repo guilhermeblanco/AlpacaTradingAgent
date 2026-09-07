@@ -87,7 +87,9 @@ def create_risk_manager(llm, memory, config=None, snapshot_provider=None):
         past_memory_str = ""
         for i, rec in enumerate(past_memories, 1):
             past_memory_str += rec["recommendation"] + "\n\n"
-        decision_memory_str = decision_log.get_past_context(company_name)
+        decision_memory_str = decision_log.get_past_context(
+            company_name, as_of=state.get("trade_date")
+        )
 
         prompt = render_prompt(
             "managers/risk_manager",
@@ -122,14 +124,19 @@ def create_risk_manager(llm, memory, config=None, snapshot_provider=None):
         # Extract the recommendation from the response
         trading_mode = trading_context["mode"]
         extracted_recommendation = extract_recommendation(response_content, trading_mode)
-        if not extracted_recommendation:
-            extracted_recommendation = "NEUTRAL" if trading_mode == "trading" else "HOLD"
+        review_required = not extracted_recommendation
+        if review_required:
+            extracted_recommendation = "REVIEW"
         
-        final_decision_content = ensure_final_transaction_proposal(
-            response_content, extracted_recommendation, trading_mode
+        final_decision_content = (
+            response_content
+            if review_required
+            else ensure_final_transaction_proposal(
+                response_content, extracted_recommendation, trading_mode
+            )
         )
 
-        if structured_decision is None:
+        if structured_decision is None and not review_required:
             structured_decision = RiskDecision(
                 action=ExecutableAction(extracted_recommendation),
                 confidence="unknown",
@@ -143,14 +150,16 @@ def create_risk_manager(llm, memory, config=None, snapshot_provider=None):
                 ),
             )
 
-        trade_intent = build_trade_intent_from_risk_decision(
-            symbol=company_name,
-            trading_mode=trading_mode,
-            current_position=current_position,
-            decision=structured_decision,
-            allow_shorts=allow_shorts,
-            trade_date=state.get("trade_date"),
-        ).model_dump(mode="json")
+        trade_intent = {}
+        if structured_decision is not None:
+            trade_intent = build_trade_intent_from_risk_decision(
+                symbol=company_name,
+                trading_mode=trading_mode,
+                current_position=current_position,
+                decision=structured_decision,
+                allow_shorts=allow_shorts,
+                trade_date=state.get("trade_date"),
+            ).model_dump(mode="json")
 
         new_risk_debate_state = {
             "judge_decision": final_decision_content,

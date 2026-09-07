@@ -35,6 +35,26 @@ class CheckpointerTests(unittest.TestCase):
             clear_checkpoint(tmp, "BTC/USD", "2026-01-02")
             self.assertFalse(has_checkpoint(tmp, "BTC/USD", "2026-01-02"))
 
+    def test_thread_id_changes_with_graph_signature(self):
+        legacy = thread_id("AAPL", "2026-01-02")
+        full = thread_id(
+            "AAPL", "2026-01-02", "analysts=market,news|debate=2|risk=2|asset=stock"
+        )
+        reduced = thread_id(
+            "AAPL", "2026-01-02", "analysts=market|debate=2|risk=2|asset=stock"
+        )
+
+        self.assertNotEqual(legacy, full)
+        self.assertNotEqual(full, reduced)
+        self.assertEqual(
+            full,
+            thread_id(
+                "AAPL",
+                "2026-01-02",
+                "analysts=market,news|debate=2|risk=2|asset=stock",
+            ),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
