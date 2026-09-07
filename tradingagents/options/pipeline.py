@@ -4,6 +4,7 @@ import hashlib
 from typing import Any
 
 from tradingagents.execution.journal import ExecutionJournal
+from tradingagents.persistence.protocols import EventJournalPort
 
 from .gateway import AlpacaOptionsGateway, OptionsExecutionGateway
 from .models import OptionsExecutionResult, OptionsTradeIntent
@@ -12,7 +13,7 @@ from .validator import OptionsRiskPolicy, validate_options_intent
 
 class OptionsExecutionPipeline:
     def __init__(self, gateway: OptionsExecutionGateway, *, policy: OptionsRiskPolicy,
-                 journal: ExecutionJournal | None = None, is_paper: bool = True):
+                 journal: EventJournalPort | None = None, is_paper: bool = True):
         self.gateway = gateway
         self.policy = policy
         self.journal = journal or ExecutionJournal()

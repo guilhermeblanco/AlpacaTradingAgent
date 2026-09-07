@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
-from .repository import LifecycleRepository
+from tradingagents.persistence.protocols import LifecycleRepositoryPort
 
 
 class LifecycleMonitor:
@@ -14,7 +14,7 @@ class LifecycleMonitor:
 
     def __init__(
         self,
-        repository: LifecycleRepository,
+        repository: LifecycleRepositoryPort,
         *,
         interval_seconds: float = 30,
         heartbeat_path: str | Path | None = None,
