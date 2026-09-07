@@ -17,6 +17,20 @@ jobs:
   pytest:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: tradingagents_test
+          POSTGRES_USER: tradingagents
+          POSTGRES_PASSWORD: tradingagents
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tradingagents -d tradingagents_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
     strategy:
       fail-fast: false
       matrix:
@@ -39,4 +53,6 @@ jobs:
         # `python -m pytest` puts the repo root on sys.path (the project is
         # not pip-installable). No API keys are configured on purpose: the
         # suite must stay runnable offline.
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg://tradingagents:tradingagents@localhost:5432/tradingagents_test
         run: python -m pytest tests/ -v --tb=short
