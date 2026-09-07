@@ -797,7 +797,13 @@ class AlpacaUtils:
             return "NEUTRAL"
 
     @staticmethod
-    def place_market_order(symbol: str, side: str, notional: float = None, qty: float = None) -> dict:
+    def place_market_order(
+        symbol: str,
+        side: str,
+        notional: float = None,
+        qty: float = None,
+        client_order_id: str = None,
+    ) -> dict:
         """
         Place a market order with Alpaca
         
@@ -830,7 +836,8 @@ class AlpacaUtils:
                     symbol=alpaca_symbol,
                     side=order_side,
                     time_in_force=tif,
-                    notional=notional
+                    notional=notional,
+                    client_order_id=client_order_id,
                 )
             elif qty and qty > 0:
                 # Use quantity (number of shares)
@@ -838,7 +845,8 @@ class AlpacaUtils:
                     symbol=alpaca_symbol,
                     side=order_side,
                     time_in_force=tif,
-                    qty=qty
+                    qty=qty,
+                    client_order_id=client_order_id,
                 )
             else:
                 return {"success": False, "error": "Must specify either notional or qty"}
@@ -854,6 +862,7 @@ class AlpacaUtils:
                 "qty": float(order.qty) if order.qty else None,
                 "notional": float(order.notional) if order.notional else None,
                 "status": order.status,
+                "client_order_id": getattr(order, "client_order_id", client_order_id),
                 "message": f"Successfully placed {side} order for {symbol}"
             }
             
@@ -869,6 +878,7 @@ class AlpacaUtils:
         qty: float,
         stop_loss_price: float = None,
         take_profit_price: float = None,
+        client_order_id: str = None,
     ) -> dict:
         """Place a market order with broker-side protective child orders.
 
@@ -908,6 +918,7 @@ class AlpacaUtils:
                 order_class=order_class,
                 stop_loss=stop_loss,
                 take_profit=take_profit,
+                client_order_id=client_order_id,
             )
             order = client.submit_order(order_request)
 
@@ -918,6 +929,7 @@ class AlpacaUtils:
                 "side": order.side,
                 "qty": float(order.qty) if order.qty else None,
                 "status": order.status,
+                "client_order_id": getattr(order, "client_order_id", client_order_id),
                 "order_class": "bracket" if order_class == OrderClass.BRACKET else "oto",
                 "stop_loss_price": float(stop_loss.stop_price) if stop_loss else None,
                 "take_profit_price": float(take_profit.limit_price) if take_profit else None,
