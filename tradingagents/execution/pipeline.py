@@ -274,30 +274,27 @@ def execute_autonomous_trade(
     lifecycle=None,
     run_id: Optional[str] = None,
 ) -> dict[str, Any]:
-    if snapshot_provider is None:
-        from tradingagents.broker.alpaca_snapshot import AlpacaSnapshotProvider
-
-        snapshot_provider = AlpacaSnapshotProvider()
     config = None
-    if gateway is None or journal is None or risk_sizer is None or lifecycle is None:
+    if snapshot_provider is None or gateway is None or journal is None or risk_sizer is None or lifecycle is None:
         try:
             from tradingagents.dataflows.config import get_config
 
             config = get_config() or {}
         except Exception:
             config = {}
-    if gateway is None:
-        from tradingagents.dataflows.config import get_alpaca_use_paper
+    if snapshot_provider is None or gateway is None:
+        from tradingagents.broker.registry import default_broker_registry
 
+        broker_name = str(config.get("execution_broker", "alpaca")).lower()
+        runtime = default_broker_registry().create(broker_name, config)
+        if snapshot_provider is None:
+            snapshot_provider = runtime.snapshot_provider
+        if gateway is None:
+            gateway = runtime.execution_gateway
         if str(config.get("execution_gateway", "alpaca")).lower() == "dry-run":
             from .dry_run_gateway import DryRunExecutionGateway
 
             gateway = DryRunExecutionGateway()
-        else:
-            from .alpaca_gateway import AlpacaExecutionGateway, AlpacaPaperExecutionGateway
-
-            use_paper = str(get_alpaca_use_paper()).strip().lower() in {"1", "true", "yes", "on"}
-            gateway = AlpacaPaperExecutionGateway() if use_paper else AlpacaExecutionGateway()
     if journal is None:
         journal = ExecutionJournal((config or {}).get("results_dir", "eval_results"))
     if lifecycle is None and (config or {}).get("lifecycle_enabled", True):

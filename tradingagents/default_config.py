@@ -75,6 +75,7 @@ DEFAULT_CONFIG = {
     "risk_sizing_params": {},  # optional RiskParameters overrides (see tradingagents/risk/position_sizing.py)
     "protective_bracket_orders_enabled": True,  # Submit stop-loss/take-profit as real bracket/OTO child orders on equity entries (crypto unsupported by Alpaca)
     "execution_gateway": "alpaca",  # alpaca or dry-run; Alpaca paper/live is controlled separately below
+    "execution_broker": "alpaca",  # alpaca, tradier, or robinhood
     "lifecycle_enabled": True,
     "lifecycle_db_path": None,  # Defaults to <results_dir>/execution_lifecycle.sqlite3
     "lifecycle_intent_ttl_seconds": 900,
@@ -206,4 +207,14 @@ DEFAULT_CONFIG = {
     "alpaca_secret_key": None,
     "alpaca_use_paper": "True",  # Set to "True" to use paper trading, "False" for live trading
     "coindesk_api_key": None,
+    "tradier_access_token": None,
+    "tradier_account_id": None,
+    "tradier_use_sandbox": True,
+    "robinhood_mcp_access_token": None,
+    "robinhood_mcp_token_path": None,
+    "robinhood_mcp_url": "https://agent.robinhood.com/mcp/trading",
+    "robinhood_account_number": None,
+    "robinhood_mcp_review_only": True,
+    "robinhood_mcp_live_orders_enabled": False,
+    "robinhood_mcp_timeout_seconds": 20,
 }
