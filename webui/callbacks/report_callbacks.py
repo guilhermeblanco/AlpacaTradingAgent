@@ -860,7 +860,31 @@ def register_report_callbacks(app):
             if state["analysis_results"]:
                 decision_text = f"## Final Decision for {state['ticker_symbol']}\n\n"
                 decision_text += f"**Trade Action:** {state['analysis_results'].get('decision', 'No decision')}\n\n"
-                decision_text += "**Date:** " + state['analysis_results'].get("date", "N/A")
+                decision_text += "**Date:** " + state['analysis_results'].get("date", "N/A") + "\n\n"
+
+                intent = state.get("final_trade_intent") or state["analysis_results"].get("trade_intent") or {}
+                if intent.get("target_portfolio_pct") is not None:
+                    decision_text += f"**Target Allocation:** {intent['target_portfolio_pct']:.2f}%\n\n"
+                if intent.get("confidence_score") is not None:
+                    decision_text += f"**Confidence:** {intent['confidence_score']:.0%}\n\n"
+                if intent.get("horizon"):
+                    decision_text += f"**Horizon:** {intent['horizon']}\n\n"
+
+                execution = state.get("trading_results") or {}
+                if execution.get("raw_result"):
+                    execution = execution["raw_result"]
+                plan = execution.get("plan") or {}
+                if plan:
+                    decision_text += "### Execution\n\n"
+                    decision_text += f"**Current Allocation:** {plan.get('current_allocation_pct', 0):.2f}%\n\n"
+                    target = plan.get("target_allocation_pct")
+                    if target is not None:
+                        decision_text += f"**Requested Target:** {target:.2f}%\n\n"
+                    decision_text += f"**Planned Delta:** ${plan.get('delta_notional_usd', 0):,.2f}\n\n"
+                    decision_text += f"**Gateway:** {execution.get('gateway', 'N/A')}\n\n"
+                    decision_text += "**Status:** " + ("Submitted" if execution.get("success") else "Blocked / Failed") + "\n\n"
+                    if execution.get("journal_path"):
+                        decision_text += f"**Journal:** `{execution['journal_path']}`"
             else:
                 # Show the recommended action if available
                 decision_text = f"## Final Decision for {state['ticker_symbol']}\n\n"

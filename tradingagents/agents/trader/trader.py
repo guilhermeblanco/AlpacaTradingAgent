@@ -15,7 +15,8 @@ from ..utils.report_context import (
     build_debate_digest,
 )
 from ..utils.structured import bind_structured, invoke_structured_or_freetext
-from tradingagents.dataflows.alpaca_utils import AlpacaUtils
+from tradingagents.broker.alpaca_snapshot import AlpacaSnapshotProvider
+from tradingagents.broker.prompt_context import build_broker_prompt_context
 from tradingagents.prompts import render_prompt
 
 # Import prompt capture utility
@@ -27,61 +28,21 @@ except ImportError:
         pass
 
 
-def create_trader(llm, memory, config=None):
+def create_trader(llm, memory, config=None, snapshot_provider=None):
     structured_llm = bind_structured(llm, TraderProposal, "Trader")
     decision_log = TradingMemoryLog(config)
+    broker_snapshots = snapshot_provider or AlpacaSnapshotProvider()
 
     def trader_node(state, name):
         company_name = state["company_of_interest"]
         investment_plan = state["investment_plan"]
         
-        # Determine current position from live Alpaca account (fallback to state)
-        current_position = AlpacaUtils.get_current_position_state(company_name)
-        # Persist into state so downstream agents see an accurate picture
-        state["current_position"] = current_position
-
-        # ---------------------------------------------------------
-        # NEW: Pull richer live account & position metrics from Alpaca
-        # ---------------------------------------------------------
-        positions_data = AlpacaUtils.get_positions_data()
-        account_info = AlpacaUtils.get_account_info()
-
-        # Build a user-friendly summary for the specific symbol the agent cares about
-        position_stats_desc = ""
-        symbol_key = company_name.upper().replace("/", "")
-        for pos in positions_data:
-            if pos["Symbol"].upper() == symbol_key:
-                qty = pos["Qty"]
-                avg_entry = pos["Avg Entry"]
-                today_pl_dollars = pos["Today's P/L ($)"]
-                today_pl_percent = pos["Today's P/L (%)"]
-                total_pl_dollars = pos["Total P/L ($)"]
-                total_pl_percent = pos["Total P/L (%)"]
-
-                position_stats_desc = (
-                    f"Position Details for {company_name}:\n"
-                    f"- Quantity: {qty}\n"
-                    f"- Average Entry Price: {avg_entry}\n"
-                    f"- Today's P/L: {today_pl_dollars} ({today_pl_percent})\n"
-                    f"- Total P/L: {total_pl_dollars} ({total_pl_percent})"
-                )
-                break
-        if not position_stats_desc:
-            position_stats_desc = "No open position details available for this symbol."
-
-        buying_power = account_info.get("buying_power", 0.0)
-        cash = account_info.get("cash", 0.0)
-        daily_change_dollars = account_info.get("daily_change_dollars", 0.0)
-        daily_change_percent = account_info.get("daily_change_percent", 0.0)
-        account_status_desc = (
-            "Account Status:\n"
-            f"- Buying Power: ${buying_power:,.2f}\n"
-            f"- Cash: ${cash:,.2f}\n"
-            f"- Daily Change: ${daily_change_dollars:,.2f} ({daily_change_percent:.2f}%)"
+        current_position, position_stats_desc, account_status_desc = build_broker_prompt_context(
+            broker_snapshots,
+            company_name,
+            fallback_position=state.get("current_position", "NEUTRAL"),
         )
-        # ---------------------------------------------------------
-        # END NEW BLOCK
-        # ---------------------------------------------------------
+        state["current_position"] = current_position
 
         # Human-readable description for the prompt
         open_pos_desc = (

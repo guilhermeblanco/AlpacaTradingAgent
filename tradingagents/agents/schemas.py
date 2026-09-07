@@ -10,6 +10,7 @@ import re
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
@@ -82,6 +83,14 @@ class ExecutableAction(str, Enum):
     SHORT = "SHORT"
 
 
+class IntentType(str, Enum):
+    OPEN = "OPEN"
+    INCREASE = "INCREASE"
+    REDUCE = "REDUCE"
+    CLOSE = "CLOSE"
+    HOLD = "HOLD"
+
+
 class TargetPosition(str, Enum):
     LONG = "LONG"
     SHORT = "SHORT"
@@ -152,12 +161,31 @@ class OrderIntent(BaseModel):
 class TradeIntent(BaseModel):
     """Machine-readable execution contract consumed by the execution engine."""
 
-    schema_version: str = Field(default="1.0")
+    schema_version: str = Field(default="2.0")
+    decision_id: str = Field(default_factory=lambda: str(uuid4()))
     symbol: str
     trade_date: Optional[str] = None
     generated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     trading_mode: str = Field(description="investment or trading.")
     action: ExecutableAction = Field(description="Final executable signal.")
+    intent_type: IntentType = Field(
+        default=IntentType.HOLD,
+        description="Portfolio operation requested by the model.",
+    )
+    target_portfolio_pct: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=100,
+        description="Desired absolute portfolio allocation in percentage points.",
+    )
+    max_notional_usd: Optional[float] = Field(
+        default=None,
+        ge=0,
+        description="Optional hard ceiling for the deterministic execution planner.",
+    )
+    confidence_score: Optional[float] = Field(default=None, ge=0, le=1)
+    horizon: Optional[str] = None
+    invalidation_conditions: list[str] = Field(default_factory=list)
     current_position: TargetPosition
     target_position: TargetPosition
     position_transition: PositionTransition
@@ -191,6 +219,10 @@ class TraderProposal(BaseModel):
 
 class RiskDecision(BaseModel):
     action: ExecutableAction = Field(description="Final executable action for Alpaca.")
+    intent_type: Optional[IntentType] = Field(
+        default=None,
+        description="Portfolio operation: OPEN, INCREASE, REDUCE, CLOSE, or HOLD.",
+    )
     confidence: str = Field(description="Confidence level: high, medium, or low.")
     risk_rationale: str = Field(description="Risk-adjusted justification.")
     required_controls: str = Field(description="Stops, invalidation, sizing, and risk controls.")
@@ -201,6 +233,15 @@ class RiskDecision(BaseModel):
     invalidation: Optional[str] = Field(default=None, description="Structured invalidation condition if available.")
     max_position_size: Optional[str] = Field(default=None, description="Structured max position size or risk budget.")
     time_horizon: Optional[str] = Field(default=None, description="Expected holding period or review window.")
+    target_portfolio_pct: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=100,
+        description="Desired absolute portfolio allocation in percentage points.",
+    )
+    max_notional_usd: Optional[float] = Field(default=None, ge=0)
+    confidence_score: Optional[float] = Field(default=None, ge=0, le=1)
+    invalidation_conditions: list[str] = Field(default_factory=list)
 
 
 def _rating_line(rating: Optional[AdvisoryRating]) -> list[str]:
@@ -264,6 +305,10 @@ def render_risk_decision(decision: RiskDecision) -> str:
         parts.extend(["", f"**Max Position Size**: {decision.max_position_size}"])
     if decision.time_horizon:
         parts.extend(["", f"**Time Horizon**: {decision.time_horizon}"])
+    if decision.target_portfolio_pct is not None:
+        parts.extend(["", f"**Target Portfolio Allocation**: {decision.target_portfolio_pct:.2f}%"])
+    if decision.max_notional_usd is not None:
+        parts.extend(["", f"**Maximum Notional**: ${decision.max_notional_usd:,.2f}"])
     parts.extend(["", f"FINAL TRANSACTION PROPOSAL: **{decision.action.value}**"])
     return "\n".join(parts)
 
@@ -326,6 +371,22 @@ def _position_transition(
         (TargetPosition.SHORT, TargetPosition.LONG): PositionTransition.REVERSE_TO_LONG,
     }
     return transition_map.get((current_position, target_position), PositionTransition.UNKNOWN)
+
+
+def _intent_type(
+    action: ExecutableAction,
+    current_position: TargetPosition,
+    target_position: TargetPosition,
+) -> IntentType:
+    if target_position == TargetPosition.NEUTRAL:
+        return IntentType.CLOSE if current_position != TargetPosition.NEUTRAL else IntentType.HOLD
+    if current_position == TargetPosition.NEUTRAL:
+        return IntentType.OPEN
+    if current_position != target_position:
+        return IntentType.OPEN
+    if action in (ExecutableAction.BUY, ExecutableAction.LONG, ExecutableAction.SHORT):
+        return IntentType.INCREASE
+    return IntentType.HOLD
 
 
 def _planned_actions(transition: PositionTransition) -> list[PlannedBrokerAction]:
@@ -436,6 +497,11 @@ def build_trade_intent_from_risk_decision(
 ) -> TradeIntent:
     current = _normalize_position(current_position)
     target = _target_position(decision.action, trading_mode, current)
+    intent_type = decision.intent_type or _intent_type(decision.action, current, target)
+    if intent_type in (IntentType.HOLD, IntentType.REDUCE):
+        target = current
+    elif intent_type == IntentType.CLOSE:
+        target = TargetPosition.NEUTRAL
     transition = _position_transition(current, target)
     planned = _planned_actions(transition)
     asset_class = "crypto" if "/" in (symbol or "") else "equity"
@@ -477,6 +543,17 @@ def build_trade_intent_from_risk_decision(
         trade_date=trade_date,
         trading_mode=(trading_mode or "investment").lower(),
         action=decision.action,
+        intent_type=intent_type,
+        target_portfolio_pct=(
+            0.0 if intent_type == IntentType.CLOSE else decision.target_portfolio_pct
+        ),
+        max_notional_usd=decision.max_notional_usd,
+        confidence_score=decision.confidence_score,
+        horizon=decision.time_horizon,
+        invalidation_conditions=(
+            decision.invalidation_conditions
+            or ([decision.invalidation] if decision.invalidation else [])
+        ),
         current_position=current,
         target_position=target,
         position_transition=transition,

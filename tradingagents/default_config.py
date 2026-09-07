@@ -74,6 +74,7 @@ DEFAULT_CONFIG = {
     "risk_sizing_enabled": False,
     "risk_sizing_params": {},  # optional RiskParameters overrides (see tradingagents/risk/position_sizing.py)
     "protective_bracket_orders_enabled": True,  # Submit stop-loss/take-profit as real bracket/OTO child orders on equity entries (crypto unsupported by Alpaca)
+    "execution_gateway": "alpaca",  # alpaca or dry-run; Alpaca paper/live is controlled separately below
     # Production safety layer (deterministic, independent of agent logic)
     "safety_enabled": True,  # Master switch for pre-trade checks + circuit breakers + kill switch
     "max_trade_notional_usd": 25000.0,  # Per-order notional cap; 0 = uncapped

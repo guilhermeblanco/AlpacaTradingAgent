@@ -25,14 +25,16 @@ and operators who want to know where things happen and why.
 │                                                               typed TradeIntent          │
 └──────────────────────────────────────────────────────────────────┬───────────────────────┘
                                                                    ▼
-                                      Alpaca execution (paper or live) — market/close orders
+                     broker snapshot → execution plan → safety/risk validation → gateway
+                                                                   ▼
+                                      Alpaca execution (paper/live) or dry-run simulation
 ```
 
-Final decisions are executable actions (`BUY/HOLD/SELL` in investment mode,
-`LONG/NEUTRAL/SHORT` in trading mode), carried in a typed `TradeIntent`
-schema. Numeric stop-loss and take-profit controls can be submitted as
-broker-side bracket/OTO orders when enabled; qualitative controls remain
-advisory.
+Final decisions are typed `TradeIntent` contracts. Version 2 intents carry
+an absolute `target_portfolio_pct` and an `OPEN/INCREASE/REDUCE/CLOSE/HOLD`
+operation; the deterministic planner converts the target into order deltas
+from a fresh broker snapshot. The configured trade amount and optional
+intent notional remain hard ceilings on exposure-increasing orders.
 
 ## Package map
 
@@ -40,6 +42,8 @@ advisory.
 |---|---|
 | `tradingagents/graph/` | LangGraph orchestration. `trading_graph.py` builds the graph and owns the LLM clients, memories, and reflection; `setup.py` wires nodes; `conditional_logic.py` controls debate rounds; `propagation.py` creates initial state; `signal_processing.py` extracts the final signal; `checkpointer.py` optional SQLite resume. |
 | `tradingagents/agents/` | The agents themselves: `analysts/` (market, social, news, fundamentals, macro), `researchers/` (bull/bear), `managers/`, `trader/`, `risk_mgmt/`, plus `utils/` (agent states, memory, trading modes) and `schemas.py` (typed `TradeIntent`). |
+| `tradingagents/broker/` | Broker-neutral account, position, portfolio, and quote snapshots. Agents read this boundary instead of calling Alpaca directly. |
+| `tradingagents/execution/` | Deterministic target-to-delta planner, semantic and stale-state validation, safety/risk pipeline, Alpaca/paper/dry-run gateways, and append-only execution journal. |
 | `tradingagents/dataflows/` | Every external data source behind one interface: `alpaca_utils.py` (bars, quotes, account, orders, execution), Finnhub, Google News, Reddit, FRED macro, crypto sources, with a yfinance fallback for supported failures. `config.py` holds runtime config + API keys. |
 | `tradingagents/llm_clients/` | Provider adapters (OpenAI, Anthropic, Google, xAI, MiniMax, DeepSeek, Qwen, GLM, OpenRouter, Ollama, Azure, local endpoints) behind `create_llm_client`. |
 | `tradingagents/prompts/` | All agent prompts as editable text templates (`TRADINGAGENTS_PROMPT_DIR` overrides). |
@@ -62,9 +66,11 @@ advisory.
 4. **Execution chain** — the trader turns the plan into a proposal; the
    risky/safe/neutral risk debate stress-tests it; the risk manager issues
    the final decision plus a typed `TradeIntent`.
-5. **Signal + execution** — `SignalProcessor` extracts the executable
-   action. If auto-trading is on, the WebUI executes it via
-   `AlpacaUtils.execute_trade_intent` / `execute_trading_action`.
+5. **Signal + execution** — if auto-trading is on, the WebUI sends the typed
+   intent through `ExecutionPipeline`: refresh snapshot, reject stale state,
+   compute target delta, apply deterministic risk and safety checks, submit
+   through an `ExecutionGateway`, and journal every stage. Old unstructured
+   runs retain the fail-closed legacy execution path.
 6. **Decision log** — the completed decision is appended to a markdown
    memory log as `pending`, and resolved later with realized returns and a
    reflection once the outcome is known.
@@ -87,6 +93,7 @@ Two complementary memories:
 | Location | Contents |
 |---|---|
 | `eval_results/<symbol>/TradingAgentsStrategy_logs/runs/*.json` | Full audit trail per run: config, events (prompts, tool calls, LLM calls with token usage), snapshots, final state, final signal. |
+| `eval_results/<symbol>/TradingAgentsStrategy_logs/executions/*.jsonl` | Append-only intent, snapshot hash, plan, validation, broker submission, and result events keyed by `decision_id`. |
 | `~/.tradingagents/memory/trading_memory.md` | The decision log (path configurable). |
 | `~/.tradingagents/memory/agent_memory/` | Persistent per-agent ChromaDB reflection memories. |
 | `~/.tradingagents/safety/` | Safety high-water mark, rejection/token counters, and the optional `KILL_SWITCH` flag. |
@@ -99,7 +106,8 @@ Two complementary memories:
 `tradingagents/default_config.py` is the single source of truth; the WebUI
 and CLI pass overrides per run, and API keys come from `.env` /
 environment (see `env.sample`). `ALPACA_USE_PAPER=True` keeps everything
-on the paper API — never develop against live trading.
+on the paper API. Set `execution_gateway` to `dry-run` to produce plans and
+journals without sending broker orders.
 
 ## Testing conventions
 

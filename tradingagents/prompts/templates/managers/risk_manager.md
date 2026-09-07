@@ -19,6 +19,8 @@ Decision constraints:
 2. Require explicit invalidation/stop logic.
 3. Prioritize capital preservation under elevated volatility/event risk.
 4. Treat high contradiction or low freshness scores as reasons to reduce size, wait for confirmation, or choose HOLD/NEUTRAL.
+5. Set intent_type to OPEN, INCREASE, REDUCE, CLOSE, or HOLD. Express exposure as an absolute target_portfolio_pct of account equity, not an order quantity. Use 0 for CLOSE and the current allocation for HOLD.
+6. Set max_notional_usd as a hard ceiling, confidence_score from 0 to 1, time_horizon, and concrete invalidation_conditions in the structured decision.
 
 Output format (concise):
 - Recommendation: {actions} (with confidence high/medium/low)

@@ -8,6 +8,7 @@ from tradingagents.graph.checkpointer import clear_checkpoint
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.run_logger import get_run_audit_logger
 from tradingagents.dataflows.alpaca_utils import AlpacaUtils
+from tradingagents.execution import execute_autonomous_trade
 from tradingagents.agents.schemas import trade_intent_action
 from tradingagents.agents.utils.agent_trading_modes import extract_recommendation
 from webui.utils.state import app_state
@@ -114,43 +115,31 @@ def execute_trade_after_analysis(ticker, allow_shorts, trade_amount):
             except Exception as exc:
                 print(f"[TRADE] Regime sizing unavailable for {ticker}: {exc}")
 
-        # Get current position. strict=True: a broker outage here must abort
-        # the trade instead of reading as NEUTRAL — acting on a guessed
-        # NEUTRAL re-buys an existing holding on BUY (pyramiding every loop
-        # iteration the outage persists) and skips the exit on SELL.
-        try:
-            current_position = AlpacaUtils.get_current_position_state(ticker, strict=True)
-        except Exception as e:
-            print(
-                f"[TRADE] Could not verify current position for {ticker} ({e}); "
-                "skipping trade execution rather than guessing NEUTRAL"
-            )
-            state["trading_results"] = {
-                "error": (
-                    f"Position check failed for {ticker}; trade skipped to avoid "
-                    f"acting on an unverified position: {e}"
-                )
-            }
-            return
-        print(f"[TRADE] Current position for {ticker}: {current_position}")
-
-        # Execute the typed intent when present; fall back to legacy signal execution
-        # for older runs or providers that could not produce structured output.
+        # Typed intents go through the broker-neutral snapshot, deterministic
+        # planner, safety validation, execution gateway, and journal pipeline.
         if trade_intent:
-            risk_params = (
-                dict(DEFAULT_CONFIG.get("risk_sizing_params") or {})
-                if DEFAULT_CONFIG.get("risk_sizing_enabled")
-                else None
-            )
-            result = AlpacaUtils.execute_trade_intent(
-                symbol=ticker,
-                current_position=current_position,
-                trade_intent=trade_intent,
-                dollar_amount=trade_amount,
-                allow_shorts=allow_shorts,
-                risk_params=risk_params,
+            result = execute_autonomous_trade(
+                ticker,
+                trade_intent,
+                trade_amount,
+                run_id=state.get("run_id"),
             )
         else:
+            # Older unstructured runs retain the fail-closed legacy path.
+            try:
+                current_position = AlpacaUtils.get_current_position_state(ticker, strict=True)
+            except Exception as e:
+                print(
+                    f"[TRADE] Could not verify current position for {ticker} ({e}); "
+                    "skipping trade execution rather than guessing NEUTRAL"
+                )
+                state["trading_results"] = {
+                    "error": (
+                        f"Position check failed for {ticker}; trade skipped to avoid "
+                        f"acting on an unverified position: {e}"
+                    )
+                }
+                return
             result = AlpacaUtils.execute_trading_action(
                 symbol=ticker,
                 current_position=current_position,
@@ -287,12 +276,13 @@ def run_analysis(
         graph = TradingAgentsGraph(selected_analysts, config=config, debug=True)
         graph._resolve_memory_log_outcomes(ticker, current_date)
         init_agent_state = graph.propagator.create_initial_state(ticker, current_date)
-        run_logger.start_run(
+        run_id = run_logger.start_run(
             symbol=ticker,
             trade_date=current_date,
             config=config,
             metadata={"debug": True, "source": "webui_stream"},
         )
+        current_state["run_id"] = run_id
         run_started = True
         run_logger.log_state_snapshot(
             stage="initial_state",
