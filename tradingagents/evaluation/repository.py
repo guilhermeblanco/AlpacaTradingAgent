@@ -87,20 +87,14 @@ class EvaluationRepository:
             ).fetchone()
         if row is None:
             return None
-        return EvaluationEpisode(
-            decision_id=row["decision_id"], symbol=row["symbol"], action=row["action"],
-            decision_at=row["decision_at"], data_as_of=row["data_as_of"],
-            reference_price=row["reference_price"], benchmark_symbol=row["benchmark_symbol"],
-            benchmark_price=row["benchmark_price"], confidence=row["confidence"],
-            experiment_id=row["experiment_id"], metadata=json.loads(row["metadata_json"]),
-        )
+        return self._episode(row)
 
     def record_outcome(self, outcome: EvaluationOutcome) -> None:
         if self.get_episode(outcome.decision_id) is None:
             raise KeyError(f"Unknown evaluation episode {outcome.decision_id}")
         with self._lock, self._connect() as connection:
             connection.execute(
-                """INSERT OR REPLACE INTO evaluation_outcomes VALUES
+                """INSERT OR IGNORE INTO evaluation_outcomes VALUES
                    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     outcome.decision_id, outcome.horizon, outcome.outcome_at.isoformat(),
@@ -109,6 +103,20 @@ class EvaluationRepository:
                     int(outcome.directionally_correct), outcome.estimated_cost_pct,
                 ),
             )
+
+    def pending_episodes(
+        self, *, horizon: str, due_before: datetime
+    ) -> list[EvaluationEpisode]:
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                """SELECT e.* FROM evaluation_episodes e
+                   LEFT JOIN evaluation_outcomes o
+                     ON o.decision_id = e.decision_id AND o.horizon = ?
+                   WHERE o.decision_id IS NULL AND e.decision_at <= ?
+                   ORDER BY e.decision_at, e.decision_id""",
+                (horizon, due_before.isoformat()),
+            ).fetchall()
+        return [self._episode(row) for row in rows]
 
     def outcomes(self, *, experiment_id: Optional[str] = None) -> list[EvaluationOutcome]:
         query = """SELECT o.* FROM evaluation_outcomes o
@@ -131,3 +139,13 @@ class EvaluationRepository:
                 estimated_cost_pct=row["estimated_cost_pct"],
             ) for row in rows
         ]
+
+    @staticmethod
+    def _episode(row: sqlite3.Row) -> EvaluationEpisode:
+        return EvaluationEpisode(
+            decision_id=row["decision_id"], symbol=row["symbol"], action=row["action"],
+            decision_at=row["decision_at"], data_as_of=row["data_as_of"],
+            reference_price=row["reference_price"], benchmark_symbol=row["benchmark_symbol"],
+            benchmark_price=row["benchmark_price"], confidence=row["confidence"],
+            experiment_id=row["experiment_id"], metadata=json.loads(row["metadata_json"]),
+        )

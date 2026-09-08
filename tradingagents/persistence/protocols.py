@@ -60,6 +60,10 @@ class EvaluationRepositoryPort(Protocol):
 
     def record_outcome(self, outcome: EvaluationOutcome) -> None: ...
 
+    def pending_episodes(
+        self, *, horizon: str, due_before: datetime
+    ) -> list[EvaluationEpisode]: ...
+
     def outcomes(
         self, *, experiment_id: Optional[str] = None
     ) -> list[EvaluationOutcome]: ...

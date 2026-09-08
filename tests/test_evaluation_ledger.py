@@ -44,11 +44,15 @@ class EvaluationLedgerTests(unittest.TestCase):
                 asset_price=102, benchmark_price=505,
             )
             repository.record_outcome(outcome)
+            repository.record_outcome(
+                outcome.model_copy(update={"asset_return_pct": -99.0})
+            )
             rows = repository.outcomes(experiment_id="gpt-test")
             summary = summarize_outcomes(rows)
             self.assertEqual(len(rows), 1)
             self.assertEqual(summary["count"], 1)
             self.assertEqual(summary["hit_rate_pct"], 100.0)
+            self.assertAlmostEqual(rows[0].asset_return_pct, 2.0)
 
 
 if __name__ == "__main__":
