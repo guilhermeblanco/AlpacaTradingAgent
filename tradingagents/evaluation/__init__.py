@@ -16,6 +16,7 @@ from .attribution import (
     HistoricalPriceProvider,
     OutcomeAttributor,
     PriceObservation,
+    attribute_episode_outcome,
 )
 from .alpaca_prices import (
     AlpacaHistoricalPriceProvider,
@@ -43,6 +44,7 @@ __all__ = [
     "PromotionPolicy",
     "PromotionStatus",
     "assess_promotion",
+    "attribute_episode_outcome",
     "calculate_outcome",
     "default_historical_price_registry",
 ]

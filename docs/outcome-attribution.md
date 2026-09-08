@@ -35,3 +35,17 @@ Historical prices are configured independently from order execution through
 the same attribution path and may use the Alpaca market-data source. Selecting
 an unknown source fails at startup; the execution broker name is never used as
 an implicit price-provider fallback.
+
+## Recurring worker
+
+Run `python -m tradingagents.evaluation.worker` with PostgreSQL persistence to
+resolve all due horizons and expire untouched portfolio reservations. Add
+`--once` for a single operational cycle. Price API calls happen after the due
+episode query transaction closes; each outcome then commits in its own short
+transaction. A missing price fails only that episode and is retried on the next
+cycle.
+
+Docker Compose runs this worker as a separate service. Configure
+`EVALUATION_PRICE_PROVIDER`, `EVALUATION_HORIZONS_DAYS`,
+`EVALUATION_ESTIMATED_COST_PCT`, and `EVALUATION_WORKER_INTERVAL_SECONDS`.
+Provider selection is unrelated to `execution_broker`.
