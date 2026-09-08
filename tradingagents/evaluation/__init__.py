@@ -11,12 +11,14 @@ from .promotion import (
     assess_promotion,
 )
 from .attribution import (
+    EntryFill,
     EvaluationHorizon,
     FilledEpisodeAttributor,
     HistoricalPriceProvider,
     OutcomeAttributor,
     PriceObservation,
     attribute_episode_outcome,
+    build_filled_episode,
 )
 from .alpaca_prices import (
     AlpacaHistoricalPriceProvider,
@@ -30,6 +32,7 @@ from .price_registry import (
 __all__ = [
     "AlpacaHistoricalPriceProvider",
     "EvaluationEpisode",
+    "EntryFill",
     "EvaluationHorizon",
     "EvaluationOutcome",
     "EvaluationRepository",
@@ -45,6 +48,7 @@ __all__ = [
     "PromotionStatus",
     "assess_promotion",
     "attribute_episode_outcome",
+    "build_filled_episode",
     "calculate_outcome",
     "default_historical_price_registry",
 ]

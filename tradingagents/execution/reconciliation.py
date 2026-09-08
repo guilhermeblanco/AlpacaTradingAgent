@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable, Optional, Protocol
 
@@ -121,11 +122,19 @@ class PersistentExecutionReconciler:
         unit_of_work_factory: Callable[[], Any],
         *,
         quantity_tolerance: float = 1e-6,
+        evaluation_prices=None,
+        evaluation_benchmark_symbol: str = "SPY",
+        evaluation_experiment_id: str = "default",
+        evaluation_confidence: Optional[float] = None,
     ):
         self.reconciler = ExecutionReconciler(
             gateway, quantity_tolerance=quantity_tolerance
         )
         self.unit_of_work_factory = unit_of_work_factory
+        self.evaluation_prices = evaluation_prices
+        self.evaluation_benchmark_symbol = evaluation_benchmark_symbol
+        self.evaluation_experiment_id = evaluation_experiment_id
+        self.evaluation_confidence = evaluation_confidence
 
     def reconcile(
         self, plan: ExecutionPlan, actions: list[dict], *, run_id: Optional[str] = None
@@ -147,6 +156,53 @@ class PersistentExecutionReconciler:
         else:
             lifecycle_status = LifecycleStatus.SUBMITTED
 
+        episode = None
+        evaluation_error = None
+        if self.evaluation_prices is not None:
+            from tradingagents.evaluation import EntryFill, build_filled_episode
+
+            observed_at = datetime.now(timezone.utc)
+            entry_fills = []
+            for leg_index, snapshot in snapshots:
+                leg = plan.legs[leg_index]
+                if (
+                    leg.risk_reducing
+                    or snapshot.filled_quantity <= 0
+                    or snapshot.filled_avg_price is None
+                    or snapshot.status
+                    not in {
+                        BrokerOrderStatus.FILLED,
+                        BrokerOrderStatus.CANCELED,
+                        BrokerOrderStatus.EXPIRED,
+                    }
+                ):
+                    continue
+                entry_fills.append(
+                    EntryFill(
+                        symbol=snapshot.symbol,
+                        side=snapshot.side,
+                        quantity=snapshot.filled_quantity,
+                        average_price=snapshot.filled_avg_price,
+                        observed_at=observed_at,
+                    )
+                )
+            if entry_fills:
+                sides = {fill.side.lower() for fill in entry_fills}
+                action = "SHORT" if sides == {"sell"} else "BUY"
+                try:
+                    episode = build_filled_episode(
+                        plan.decision_id,
+                        entry_fills,
+                        action=action,
+                        prices=self.evaluation_prices,
+                        benchmark_symbol=self.evaluation_benchmark_symbol,
+                        confidence=self.evaluation_confidence,
+                        experiment_id=self.evaluation_experiment_id,
+                        metadata={"entry_time_source": "reconciliation_observed_at"},
+                    )
+                except Exception as exc:
+                    evaluation_error = str(exc)
+
         with self.unit_of_work_factory() as uow:
             for leg_index, snapshot in snapshots:
                 uow.orders.apply_snapshot(
@@ -155,12 +211,19 @@ class PersistentExecutionReconciler:
                     snapshot=snapshot,
                 )
             uow.lifecycle.transition(plan.decision_id, lifecycle_status)
+            if episode is not None:
+                uow.evaluation.record_episode(episode)
+            payload = {"report": report.model_dump(mode="json")}
+            if episode is not None:
+                payload["evaluation_episode"] = episode.model_dump(mode="json")
+            elif evaluation_error is not None:
+                payload["evaluation_error"] = evaluation_error
             uow.journal.append(
                 "orders_reconciled",
                 symbol=plan.symbol,
                 decision_id=plan.decision_id,
                 run_id=run_id,
-                payload={"report": report.model_dump(mode="json")},
+                payload=payload,
             )
             uow.commit()
         return report

@@ -49,3 +49,9 @@ Docker Compose runs this worker as a separate service. Configure
 `EVALUATION_PRICE_PROVIDER`, `EVALUATION_HORIZONS_DAYS`,
 `EVALUATION_ESTIMATED_COST_PCT`, and `EVALUATION_WORKER_INTERVAL_SECONDS`.
 Provider selection is unrelated to `execution_broker`.
+
+`PersistentExecutionReconciler` can receive the configured historical price
+provider and capture an episode in the same transaction as the reconciled order
+and lifecycle event. This hook is broker-neutral and uses the actual terminal
+fill price. It excludes risk-reducing legs. Benchmark lookup failures are stored
+on the reconciliation event and never roll back order or lifecycle state.
