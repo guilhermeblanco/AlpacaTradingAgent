@@ -8,6 +8,10 @@ from urllib.request import Request, urlopen
 
 from tradingagents.agents.schemas import TradeIntent
 from tradingagents.execution.models import ExecutionPlan, ExecutionResult, PlanAction
+from tradingagents.execution.reconciliation import (
+    BrokerOrderSnapshot,
+    BrokerOrderStatus,
+)
 
 from .models import AccountSnapshot, PortfolioSnapshot, PositionSnapshot, QuoteSnapshot
 
@@ -99,6 +103,102 @@ class TradierExecutionGateway:
 
     def __init__(self, client: TradierClient):
         self.client = client
+
+    def get_order_snapshot(
+        self, *, order_id=None, client_order_id=None
+    ) -> BrokerOrderSnapshot:
+        if order_id:
+            response = self.client.request(
+                "GET",
+                f"/accounts/{self.client.account_id}/orders/{order_id}",
+            )
+            raw = response.get("order") or {}
+        elif client_order_id:
+            response = self.client.request(
+                "GET",
+                f"/accounts/{self.client.account_id}/orders",
+                params={"includeTags": "true", "limit": 1500},
+            )
+            container = response.get("orders") or {}
+            orders = _as_list(
+                container.get("order") if isinstance(container, dict) else None
+            )
+            raw = next(
+                (
+                    row
+                    for row in orders
+                    if str(row.get("tag") or "") == str(client_order_id)
+                ),
+                None,
+            )
+            if raw is None:
+                raise KeyError(f"Tradier order tag {client_order_id} was not found")
+        else:
+            raise ValueError("order_id or client_order_id is required")
+        if not isinstance(raw, dict) or not raw.get("id"):
+            raise RuntimeError("Tradier order response is missing an order")
+        statuses = {
+            "pending": BrokerOrderStatus.NEW,
+            "open": BrokerOrderStatus.NEW,
+            "partially_filled": BrokerOrderStatus.PARTIALLY_FILLED,
+            "filled": BrokerOrderStatus.FILLED,
+            "canceled": BrokerOrderStatus.CANCELED,
+            "cancelled": BrokerOrderStatus.CANCELED,
+            "rejected": BrokerOrderStatus.REJECTED,
+            "error": BrokerOrderStatus.REJECTED,
+            "expired": BrokerOrderStatus.EXPIRED,
+        }
+        raw_side = str(raw.get("side") or "").lower()
+        side = "buy" if raw_side in {"buy", "buy_to_cover"} else "sell"
+        filled_quantity = float(
+            raw.get("exec_quantity") or raw.get("executed_quantity") or 0
+        )
+        fill_price = float(raw.get("avg_fill_price") or 0) or None
+        return BrokerOrderSnapshot(
+            order_id=str(raw["id"]),
+            client_order_id=raw.get("tag"),
+            symbol=str(raw.get("symbol") or ""),
+            side=side,
+            status=statuses.get(
+                str(raw.get("status") or "").lower(), BrokerOrderStatus.UNKNOWN
+            ),
+            requested_quantity=(
+                float(raw["quantity"]) if raw.get("quantity") is not None else None
+            ),
+            filled_quantity=filled_quantity,
+            filled_avg_price=fill_price,
+            child_orders=[
+                self._snapshot_from_child(child)
+                for child in _as_list(raw.get("leg"))
+            ],
+        )
+
+    @staticmethod
+    def _snapshot_from_child(raw: dict) -> BrokerOrderSnapshot:
+        statuses = {
+            "open": BrokerOrderStatus.NEW,
+            "partially_filled": BrokerOrderStatus.PARTIALLY_FILLED,
+            "filled": BrokerOrderStatus.FILLED,
+            "canceled": BrokerOrderStatus.CANCELED,
+            "expired": BrokerOrderStatus.EXPIRED,
+            "rejected": BrokerOrderStatus.REJECTED,
+        }
+        side = "buy" if str(raw.get("side") or "").lower().startswith("buy") else "sell"
+        return BrokerOrderSnapshot(
+            order_id=str(raw.get("id") or ""),
+            symbol=str(raw.get("symbol") or raw.get("option_symbol") or ""),
+            side=side,
+            status=statuses.get(
+                str(raw.get("status") or "").lower(), BrokerOrderStatus.UNKNOWN
+            ),
+            requested_quantity=(
+                float(raw["quantity"]) if raw.get("quantity") is not None else None
+            ),
+            filled_quantity=float(
+                raw.get("exec_quantity") or raw.get("executed_quantity") or 0
+            ),
+            filled_avg_price=float(raw.get("avg_fill_price") or 0) or None,
+        )
 
     def submit_plan(self, plan: ExecutionPlan, intent: TradeIntent) -> ExecutionResult:
         actions = []

@@ -55,3 +55,10 @@ provider and capture an episode in the same transaction as the reconciled order
 and lifecycle event. This hook is broker-neutral and uses the actual terminal
 fill price. It excludes risk-reducing legs. Benchmark lookup failures are stored
 on the reconciliation event and never roll back order or lifecycle state.
+
+All live broker adapters implement the reconciliation gateway. Alpaca reads a
+specific order through its trading SDK. Tradier reads its documented account
+order endpoint and maps cumulative `exec_quantity` and `avg_fill_price`.
+Robinhood reads official `get_equity_orders` MCP history and matches either the
+broker order ID or submitted `ref_id`. Unknown broker statuses remain `unknown`
+and cannot be mistaken for a successful terminal fill.
