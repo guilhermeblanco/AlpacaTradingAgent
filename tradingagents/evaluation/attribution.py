@@ -143,32 +143,46 @@ class OutcomeAttributor:
             for episode in self.evaluation.pending_episodes(
                 horizon=horizon.name, due_before=due_before
             ):
-                target = episode.decision_at + horizon.after
-                asset = self.prices.price_at_or_after(episode.symbol, target)
-                benchmark = self.prices.price_at_or_after(
-                    episode.benchmark_symbol, target
-                )
-                self._validate_outcome_observation(asset, target, now)
-                self._validate_outcome_observation(benchmark, target, now)
-                outcome = calculate_outcome(
+                outcome = attribute_episode_outcome(
                     episode,
-                    horizon=horizon.name,
-                    outcome_at=max(asset.observed_at, benchmark.observed_at),
-                    asset_price=asset.price,
-                    benchmark_price=benchmark.price,
-                    estimated_cost_pct=horizon.estimated_cost_pct,
+                    horizon=horizon,
+                    prices=self.prices,
+                    now=now,
                 )
                 self.evaluation.record_outcome(outcome)
                 resolved.append(outcome)
         return resolved
 
-    @staticmethod
-    def _validate_outcome_observation(
-        observation: PriceObservation, target: datetime, now: datetime
-    ) -> None:
-        ensure_aware(observation.observed_at, "price observed_at")
-        observed = observation.observed_at.astimezone(timezone.utc)
-        if observed < target.astimezone(timezone.utc):
-            raise PointInTimeViolation("outcome observation precedes its horizon")
-        if observed > now.astimezone(timezone.utc):
-            raise PointInTimeViolation("outcome observation is in the future")
+
+def attribute_episode_outcome(
+    episode: EvaluationEpisode,
+    *,
+    horizon: EvaluationHorizon,
+    prices: HistoricalPriceProvider,
+    now: datetime,
+) -> EvaluationOutcome:
+    ensure_aware(now, "now")
+    target = episode.decision_at + horizon.after
+    asset = prices.price_at_or_after(episode.symbol, target)
+    benchmark = prices.price_at_or_after(episode.benchmark_symbol, target)
+    _validate_outcome_observation(asset, target, now)
+    _validate_outcome_observation(benchmark, target, now)
+    return calculate_outcome(
+        episode,
+        horizon=horizon.name,
+        outcome_at=max(asset.observed_at, benchmark.observed_at),
+        asset_price=asset.price,
+        benchmark_price=benchmark.price,
+        estimated_cost_pct=horizon.estimated_cost_pct,
+    )
+
+
+def _validate_outcome_observation(
+    observation: PriceObservation, target: datetime, now: datetime
+) -> None:
+    ensure_aware(observation.observed_at, "price observed_at")
+    observed = observation.observed_at.astimezone(timezone.utc)
+    if observed < target.astimezone(timezone.utc):
+        raise PointInTimeViolation("outcome observation precedes its horizon")
+    if observed > now.astimezone(timezone.utc):
+        raise PointInTimeViolation("outcome observation is in the future")

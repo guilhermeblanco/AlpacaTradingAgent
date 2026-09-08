@@ -44,6 +44,29 @@ services:
         condition: service_healthy
     restart: "no"
 
+  evaluation-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: alpaca-trading-agent:web
+    env_file:
+      - ${ENV_FILE:-.env}
+    environment:
+      DATABASE_URL: "postgresql+psycopg://${POSTGRES_USER:-tradingagents}:${POSTGRES_PASSWORD:-tradingagents}@postgres:5432/${POSTGRES_DB:-tradingagents}"
+      PERSISTENCE_BACKEND: "postgres"
+      EVALUATION_PRICE_PROVIDER: "${EVALUATION_PRICE_PROVIDER:-alpaca}"
+      EVALUATION_HORIZONS_DAYS: "${EVALUATION_HORIZONS_DAYS:-1,5,20}"
+      EVALUATION_ESTIMATED_COST_PCT: "${EVALUATION_ESTIMATED_COST_PCT:-0.10}"
+      EVALUATION_WORKER_INTERVAL_SECONDS: "${EVALUATION_WORKER_INTERVAL_SECONDS:-300}"
+    command: ["python", "-m", "tradingagents.evaluation.worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+
   postgres:
     image: postgres:17-alpine
     container_name: alpaca-trading-agent-postgres
