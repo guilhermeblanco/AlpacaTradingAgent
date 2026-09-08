@@ -304,13 +304,21 @@ from .batch import (
     PortfolioIntentRequest,
     allocate_intent_batch,
 )
+from .reservations import (
+    AllocationReservationState,
+    PortfolioReservation,
+    ReservationStatus,
+)
 
 
 __all__ = [
     "BatchAllocationStatus",
+    "AllocationReservationState",
     "PortfolioAllocation",
     "PortfolioDecisionBatch",
     "PortfolioIntentRequest",
+    "PortfolioReservation",
+    "ReservationStatus",
     "PortfolioLimitsConfig",
     "PortfolioVerdict",
     "adjust_new_position_notional",

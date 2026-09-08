@@ -18,6 +18,12 @@ from tradingagents.persistence.events import EventEnvelope
 from tradingagents.execution.models import ExecutionResult, PlanAction
 from tradingagents.execution.order_ledger import BrokerOrderRecord
 from tradingagents.execution.reconciliation import BrokerOrderSnapshot, BrokerOrderStatus
+from tradingagents.portfolio.batch import BatchAllocationStatus, PortfolioDecisionBatch
+from tradingagents.portfolio.reservations import (
+    AllocationReservationState,
+    PortfolioReservation,
+    ReservationStatus,
+)
 
 from .models import (
     AnalysisAdmissionRow,
@@ -30,12 +36,19 @@ from .models import (
     LifecycleRow,
     LifecycleTransitionRow,
     OutboxRow,
+    PortfolioReservationAllocationRow,
+    PortfolioReservationRow,
+    PortfolioReservationTransitionRow,
 )
 from tradingagents.persistence.outbox import OutboxLeaseLost, OutboxMessage
 
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _symbol_key(symbol: str) -> str:
+    return (symbol or "").upper().replace("/", "").strip()
 
 
 class PostgresEventJournal:
@@ -714,4 +727,291 @@ class PostgresOrderLedger:
             submitted_at=row.submitted_at,
             updated_at=row.updated_at,
             terminal_at=row.terminal_at,
+        )
+
+
+class PostgresPortfolioReservationRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def reserve(
+        self,
+        batch: PortfolioDecisionBatch,
+        *,
+        account_key: str,
+        ttl_seconds: int = 300,
+        now: Optional[datetime] = None,
+    ) -> PortfolioReservation:
+        now = now or _utcnow()
+        self._lock_account(account_key)
+        existing = self.session.scalar(
+            select(PortfolioReservationRow).where(
+                PortfolioReservationRow.batch_id == batch.batch_id
+            )
+        )
+        if existing is not None:
+            if existing.account_key != account_key:
+                raise ValueError("portfolio batch is already reserved for another account")
+            return self._record(existing)
+        self._expire_due(account_key=account_key, now=now)
+        outstanding = self.session.scalar(
+            select(
+                func.coalesce(func.sum(PortfolioReservationRow.reserved_notional), 0.0)
+            ).where(
+                PortfolioReservationRow.account_key == account_key,
+                PortfolioReservationRow.status.in_(
+                    [ReservationStatus.RESERVED.value, ReservationStatus.CONSUMED.value]
+                ),
+            )
+        ) or 0.0
+        available = (
+            max(0.0, batch.gross_limit_usd - batch.starting_gross_exposure_usd - outstanding)
+            if batch.gross_limit_usd is not None
+            else float("inf")
+        )
+        outstanding_by_symbol = dict(
+            self.session.execute(
+                select(
+                    PortfolioReservationAllocationRow.symbol_key,
+                    func.sum(PortfolioReservationAllocationRow.approved_notional),
+                )
+                .join(
+                    PortfolioReservationRow,
+                    PortfolioReservationRow.reservation_id
+                    == PortfolioReservationAllocationRow.reservation_id,
+                )
+                .where(
+                    PortfolioReservationRow.account_key == account_key,
+                    PortfolioReservationRow.status.in_(
+                        [
+                            ReservationStatus.RESERVED.value,
+                            ReservationStatus.CONSUMED.value,
+                        ]
+                    ),
+                    PortfolioReservationAllocationRow.state.in_(
+                        [
+                            AllocationReservationState.RESERVED.value,
+                            AllocationReservationState.CONSUMED.value,
+                        ]
+                    ),
+                )
+                .group_by(PortfolioReservationAllocationRow.symbol_key)
+            ).all()
+        )
+        adjusted = batch.model_copy(deep=True)
+        additions = sorted(
+            (
+                row
+                for row in adjusted.allocations
+                if row.status == BatchAllocationStatus.APPROVED
+            ),
+            key=lambda row: (row.priority, row.symbol, row.decision_id),
+        )
+        reserved = 0.0
+        for allocation in additions:
+            symbol_key = _symbol_key(allocation.symbol)
+            symbol_available = float("inf")
+            if adjusted.max_symbol_concentration_pct is not None:
+                symbol_limit = (
+                    adjusted.account_equity_usd
+                    * adjusted.max_symbol_concentration_pct
+                    / 100.0
+                )
+                symbol_available = max(
+                    0.0,
+                    symbol_limit
+                    - adjusted.starting_symbol_exposure_usd.get(symbol_key, 0.0)
+                    - outstanding_by_symbol.get(symbol_key, 0.0),
+                )
+            approved = min(
+                allocation.approved_notional_usd,
+                max(0.0, available),
+                symbol_available,
+            )
+            if approved < allocation.approved_notional_usd:
+                allocation.reasons.append(
+                    "Outstanding portfolio or symbol reservations clipped this allocation."
+                )
+            allocation.approved_notional_usd = approved
+            if approved <= 0:
+                allocation.status = BatchAllocationStatus.BLOCKED
+            available -= approved
+            outstanding_by_symbol[symbol_key] = (
+                outstanding_by_symbol.get(symbol_key, 0.0) + approved
+            )
+            reserved += approved
+        adjusted.ending_reserved_exposure_usd = (
+            adjusted.starting_gross_exposure_usd + reserved
+        )
+        expires_at = now + timedelta(seconds=max(1, int(ttl_seconds)))
+        row = PortfolioReservationRow(
+            reservation_id=str(uuid4()),
+            batch_id=adjusted.batch_id,
+            account_key=account_key,
+            snapshot_hash=adjusted.snapshot_hash,
+            status=ReservationStatus.RESERVED.value,
+            starting_gross_exposure=adjusted.starting_gross_exposure_usd,
+            gross_limit=adjusted.gross_limit_usd,
+            reserved_notional=reserved,
+            created_at=now,
+            updated_at=now,
+            expires_at=expires_at,
+            payload=adjusted.model_dump(mode="json"),
+        )
+        self.session.add(row)
+        self.session.flush()
+        self.session.add(
+            PortfolioReservationTransitionRow(
+                reservation_id=row.reservation_id,
+                recorded_at=now,
+                from_status=None,
+                to_status=ReservationStatus.RESERVED.value,
+                payload={"reserved_notional_usd": reserved},
+            )
+        )
+        for allocation in additions:
+            if allocation.approved_notional_usd <= 0:
+                continue
+            self.session.add(
+                PortfolioReservationAllocationRow(
+                    allocation_id=str(uuid4()),
+                    reservation_id=row.reservation_id,
+                    decision_id=allocation.decision_id,
+                    symbol=allocation.symbol,
+                    symbol_key=_symbol_key(allocation.symbol),
+                    priority=allocation.priority,
+                    state=AllocationReservationState.RESERVED.value,
+                    approved_notional=allocation.approved_notional_usd,
+                )
+            )
+        self.session.flush()
+        return self._record(row)
+
+    def consume(
+        self,
+        reservation_id: str,
+        *,
+        decision_id: str,
+        now: Optional[datetime] = None,
+    ) -> PortfolioReservation:
+        now = now or _utcnow()
+        row = self._locked(reservation_id)
+        allocation = self.session.scalar(
+            select(PortfolioReservationAllocationRow).where(
+                PortfolioReservationAllocationRow.reservation_id == reservation_id,
+                PortfolioReservationAllocationRow.decision_id == decision_id,
+            )
+        )
+        if allocation is None:
+            raise KeyError(f"Decision {decision_id} is not reserved by {reservation_id}")
+        if allocation.state == AllocationReservationState.RELEASED.value:
+            raise ValueError("released allocation cannot be consumed")
+        if allocation.state == AllocationReservationState.CONSUMED.value:
+            return self._record(row)
+        allocation.state = AllocationReservationState.CONSUMED.value
+        allocation.consumed_at = allocation.consumed_at or now
+        self.session.flush()
+        remaining = self.session.scalar(
+            select(func.count()).select_from(PortfolioReservationAllocationRow).where(
+                PortfolioReservationAllocationRow.reservation_id == reservation_id,
+                PortfolioReservationAllocationRow.state
+                == AllocationReservationState.RESERVED.value,
+            )
+        ) or 0
+        if remaining == 0:
+            self._transition(row, ReservationStatus.CONSUMED, now)
+        self.session.flush()
+        return self._record(row)
+
+    def release(
+        self, reservation_id: str, *, now: Optional[datetime] = None
+    ) -> PortfolioReservation:
+        now = now or _utcnow()
+        row = self._locked(reservation_id)
+        if row.status in {ReservationStatus.RELEASED.value, ReservationStatus.EXPIRED.value}:
+            return self._record(row)
+        allocations = self.session.scalars(
+            select(PortfolioReservationAllocationRow).where(
+                PortfolioReservationAllocationRow.reservation_id == reservation_id
+            )
+        ).all()
+        for allocation in allocations:
+            allocation.state = AllocationReservationState.RELEASED.value
+        row.released_at = now
+        self._transition(row, ReservationStatus.RELEASED, now)
+        self.session.flush()
+        return self._record(row)
+
+    def expire_due(self, now: Optional[datetime] = None) -> int:
+        return self._expire_due(account_key=None, now=now or _utcnow())
+
+    def _expire_due(self, *, account_key: Optional[str], now: datetime) -> int:
+        statement = select(PortfolioReservationRow).where(
+            PortfolioReservationRow.status == ReservationStatus.RESERVED.value,
+            PortfolioReservationRow.expires_at <= now,
+        )
+        if account_key is not None:
+            statement = statement.where(
+                PortfolioReservationRow.account_key == account_key
+            )
+        rows = self.session.scalars(statement.with_for_update()).all()
+        for row in rows:
+            allocations = self.session.scalars(
+                select(PortfolioReservationAllocationRow).where(
+                    PortfolioReservationAllocationRow.reservation_id
+                    == row.reservation_id
+                )
+            ).all()
+            for allocation in allocations:
+                if allocation.state == AllocationReservationState.RESERVED.value:
+                    allocation.state = AllocationReservationState.RELEASED.value
+            self._transition(row, ReservationStatus.EXPIRED, now)
+        self.session.flush()
+        return len(rows)
+
+    def _lock_account(self, account_key: str) -> None:
+        if self.session.bind is not None and self.session.bind.dialect.name == "postgresql":
+            self.session.execute(
+                select(
+                    func.pg_advisory_xact_lock(func.hashtextextended(account_key, 17))
+                )
+            )
+
+    def _locked(self, reservation_id: str) -> PortfolioReservationRow:
+        row = self.session.scalar(
+            select(PortfolioReservationRow)
+            .where(PortfolioReservationRow.reservation_id == reservation_id)
+            .with_for_update()
+        )
+        if row is None:
+            raise KeyError(f"Unknown portfolio reservation {reservation_id}")
+        return row
+
+    def _transition(
+        self, row: PortfolioReservationRow, status: ReservationStatus, now: datetime
+    ) -> None:
+        previous = row.status
+        row.status = status.value
+        row.updated_at = now
+        self.session.add(
+            PortfolioReservationTransitionRow(
+                reservation_id=row.reservation_id,
+                recorded_at=now,
+                from_status=previous,
+                to_status=status.value,
+                payload={},
+            )
+        )
+
+    @staticmethod
+    def _record(row: PortfolioReservationRow) -> PortfolioReservation:
+        return PortfolioReservation(
+            reservation_id=row.reservation_id,
+            account_key=row.account_key,
+            status=ReservationStatus(row.status),
+            reserved_notional_usd=row.reserved_notional,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+            expires_at=row.expires_at,
+            batch=PortfolioDecisionBatch.model_validate(row.payload),
         )

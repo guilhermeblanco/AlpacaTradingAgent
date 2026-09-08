@@ -14,6 +14,7 @@ from .repositories import (
     PostgresLifecycleRepository,
     PostgresOutboxRepository,
     PostgresOrderLedger,
+    PostgresPortfolioReservationRepository,
 )
 
 
@@ -38,6 +39,9 @@ class PostgresUnitOfWork:
         self.journal = PostgresEventJournal(self.session)
         self.outbox = PostgresOutboxRepository(self.session)
         self.orders = PostgresOrderLedger(self.session)
+        self.portfolio_reservations = PostgresPortfolioReservationRepository(
+            self.session
+        )
         return self
 
     def __exit__(
