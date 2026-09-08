@@ -8,6 +8,10 @@ import requests
 
 from tradingagents.agents.schemas import TradeIntent
 from tradingagents.execution.models import ExecutionPlan, ExecutionResult, PlanAction
+from tradingagents.execution.reconciliation import (
+    BrokerOrderSnapshot,
+    BrokerOrderStatus,
+)
 
 from .models import AccountSnapshot, PortfolioSnapshot, PositionSnapshot, QuoteSnapshot
 
@@ -183,6 +187,90 @@ class RobinhoodExecutionGateway:
         self.provider = RobinhoodSnapshotProvider(client, account_number=account_number)
         self.review_only = review_only
         self.live_orders_enabled = live_orders_enabled
+
+    def get_order_snapshot(
+        self, *, order_id=None, client_order_id=None
+    ) -> BrokerOrderSnapshot:
+        if not order_id and not client_order_id:
+            raise ValueError("order_id or client_order_id is required")
+        account = self.provider._account()
+        response = self.client.call_tool(
+            "get_equity_orders",
+            {"account_number": account["account_number"]},
+        )
+        orders = _rows(response, "orders", "results")
+        raw = next(
+            (
+                row
+                for row in orders
+                if (
+                    order_id
+                    and str(row.get("order_id") or row.get("id") or "")
+                    == str(order_id)
+                )
+                or (
+                    client_order_id
+                    and str(
+                        row.get("ref_id")
+                        or row.get("client_order_id")
+                        or row.get("client_id")
+                        or ""
+                    )
+                    == str(client_order_id)
+                )
+            ),
+            None,
+        )
+        if raw is None:
+            key = order_id or client_order_id
+            raise KeyError(f"Robinhood equity order {key} was not found")
+        statuses = {
+            "queued": BrokerOrderStatus.NEW,
+            "pending": BrokerOrderStatus.NEW,
+            "confirmed": BrokerOrderStatus.NEW,
+            "open": BrokerOrderStatus.NEW,
+            "partially_filled": BrokerOrderStatus.PARTIALLY_FILLED,
+            "filled": BrokerOrderStatus.FILLED,
+            "canceled": BrokerOrderStatus.CANCELED,
+            "cancelled": BrokerOrderStatus.CANCELED,
+            "rejected": BrokerOrderStatus.REJECTED,
+            "failed": BrokerOrderStatus.REJECTED,
+            "expired": BrokerOrderStatus.EXPIRED,
+        }
+        filled_quantity = float(
+            raw.get("filled_quantity")
+            or raw.get("executed_quantity")
+            or raw.get("cumulative_quantity")
+            or 0
+        )
+        fill_price = float(
+            raw.get("filled_avg_price")
+            or raw.get("average_fill_price")
+            or raw.get("average_price")
+            or 0
+        ) or None
+        return BrokerOrderSnapshot(
+            order_id=str(raw.get("order_id") or raw.get("id")),
+            client_order_id=(
+                raw.get("ref_id")
+                or raw.get("client_order_id")
+                or raw.get("client_id")
+            ),
+            symbol=str(raw.get("symbol") or ""),
+            side=str(raw.get("side") or "").lower(),
+            status=statuses.get(
+                str(raw.get("status") or raw.get("state") or "").lower(),
+                BrokerOrderStatus.UNKNOWN,
+            ),
+            requested_quantity=(
+                float(raw.get("quantity") or raw.get("asset_quantity"))
+                if raw.get("quantity") is not None
+                or raw.get("asset_quantity") is not None
+                else None
+            ),
+            filled_quantity=filled_quantity,
+            filled_avg_price=fill_price,
+        )
 
     def submit_plan(self, plan: ExecutionPlan, intent: TradeIntent) -> ExecutionResult:
         account = self.provider._account()

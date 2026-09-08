@@ -24,6 +24,11 @@ class FakeTradierTransport:
             return {"quotes": {"quote": {"symbol": "AAPL", "bid": 99, "ask": 101, "last": 100}}}
         if path.endswith("/orders"):
             return {"order": {"id": 123, "status": "ok"}}
+        if path.endswith("/orders/123"):
+            return {"order": {"id": 123, "symbol": "AAPL", "side": "buy",
+                               "quantity": 10, "status": "filled",
+                               "exec_quantity": 10, "avg_fill_price": 100.5,
+                               "tag": "ata-d1-0"}}
         raise AssertionError(path)
 
 
@@ -48,6 +53,11 @@ class FakeRobinhoodClient:
             return {"estimated_total": "1000"}
         if name == "place_equity_order":
             return {"order_id": "rh-order-1"}
+        if name == "get_equity_orders":
+            return {"orders": [{"order_id": "rh-order-1", "ref_id": "ata-d1-0",
+                                 "symbol": "AAPL", "side": "buy", "status": "filled",
+                                 "quantity": "10", "filled_quantity": "10",
+                                 "average_fill_price": "100.75"}]}
         raise AssertionError(name)
 
 
@@ -102,6 +112,15 @@ class MultiBrokerTests(unittest.TestCase):
         self.assertEqual(order_call[3]["tag"], "ata-d1-0")
         self.assertEqual(order_call[3]["quantity"], 10)
 
+    def test_tradier_gateway_reconciles_cumulative_fill(self):
+        gateway = TradierExecutionGateway(TradierClient(
+            token="token", account_id="account", transport=FakeTradierTransport(),
+        ))
+        snapshot = gateway.get_order_snapshot(order_id="123")
+        self.assertEqual(snapshot.status.value, "filled")
+        self.assertEqual(snapshot.filled_quantity, 10)
+        self.assertEqual(snapshot.filled_avg_price, 100.5)
+
     def test_tradier_rejects_fractional_only_plan(self):
         gateway = TradierExecutionGateway(TradierClient(
             token="token", account_id="account", transport=FakeTradierTransport(),
@@ -133,6 +152,14 @@ class MultiBrokerTests(unittest.TestCase):
         self.assertFalse(blocked.success)
         self.assertTrue(allowed.success)
         self.assertEqual(allowed.actions[0]["result"]["order_id"], "rh-order-1")
+
+    def test_robinhood_gateway_reconciles_order_history(self):
+        gateway = RobinhoodExecutionGateway(FakeRobinhoodClient())
+        snapshot = gateway.get_order_snapshot(client_order_id="ata-d1-0")
+        self.assertEqual(snapshot.order_id, "rh-order-1")
+        self.assertEqual(snapshot.status.value, "filled")
+        self.assertEqual(snapshot.filled_quantity, 10)
+        self.assertEqual(snapshot.filled_avg_price, 100.75)
 
 
 if __name__ == "__main__":
