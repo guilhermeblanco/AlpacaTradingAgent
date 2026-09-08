@@ -42,13 +42,18 @@ def default_historical_price_registry() -> HistoricalPriceProviderRegistry:
     from .alpaca_prices import AlpacaHistoricalPriceProvider
     from .tradier_prices import TradierHistoricalPriceProvider
     from tradingagents.broker.tradier import TradierClient
+    from tradingagents.dataflows.config import get_api_key
 
     registry = HistoricalPriceProviderRegistry()
     registry.register("alpaca", lambda config: AlpacaHistoricalPriceProvider())
 
     def tradier(config: dict):
-        token = os.getenv("TRADIER_ACCESS_TOKEN") or config.get("tradier_access_token")
-        account_id = os.getenv("TRADIER_ACCOUNT_ID") or config.get("tradier_account_id")
+        token = get_api_key(
+            "tradier_access_token", "TRADIER_ACCESS_TOKEN"
+        ) or config.get("tradier_access_token")
+        account_id = get_api_key(
+            "tradier_account_id", "TRADIER_ACCOUNT_ID"
+        ) or config.get("tradier_account_id")
         sandbox = str(
             os.getenv("TRADIER_USE_SANDBOX", config.get("tradier_use_sandbox", True))
         ).lower() in {"1", "true", "yes", "on"}

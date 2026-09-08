@@ -127,6 +127,11 @@ For full functionality including real-time trading, you'll need to set up the fo
    cp env.sample .env
    ```
 
+   Provider keys may instead be entered through the server-side encrypted
+   integration vault after startup. See
+   [docs/integration-vault.md](docs/integration-vault.md). Environment variables
+   remain available for automated deployments.
+
 2. **Edit the `.env` file** with your API keys:
 
 #### Essential APIs

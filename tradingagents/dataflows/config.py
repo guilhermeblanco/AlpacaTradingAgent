@@ -11,7 +11,7 @@ load_dotenv()
 _config: Optional[Dict] = None
 DATA_DIR: Optional[str] = None
 
-# Runtime API keys (set from WebUI, takes precedence over .env)
+# Optional process-local overrides used by callers and tests.
 _runtime_api_keys: Dict[str, str] = {}
 
 
@@ -41,8 +41,9 @@ def get_config() -> Dict:
 
 def set_runtime_api_keys(api_keys: Dict[str, str]):
     """
-    Set API keys at runtime from the WebUI.
-    These take precedence over .env file values.
+    Set process-local API key overrides.
+
+    These take precedence over the encrypted vault and environment values.
     """
     global _runtime_api_keys
     _runtime_api_keys.update(api_keys)
@@ -63,12 +64,23 @@ def get_api_key(key_name: str, env_var_name: str) -> str:
     """
     Get API key with priority:
     1. Runtime API keys (set from WebUI)
-    2. Environment variables (.env file)
-    3. Config defaults
+    2. Encrypted integration vault
+    3. Environment variables (.env file)
+    4. Config defaults
     """
-    # First check runtime API keys (from WebUI localStorage)
-    if key_name in _runtime_api_keys and _runtime_api_keys[key_name] is not None and _runtime_api_keys[key_name] != "":
+    # First check explicit process-local overrides.
+    if (
+        key_name in _runtime_api_keys
+        and _runtime_api_keys[key_name] is not None
+        and _runtime_api_keys[key_name] != ""
+    ):
         return _runtime_api_keys[key_name]
+
+    from tradingagents.integrations import get_configured_credential
+
+    vaulted_value = get_configured_credential(key_name)
+    if vaulted_value:
+        return vaulted_value
     
     # Then check environment variables
     api_key = os.getenv(env_var_name)
