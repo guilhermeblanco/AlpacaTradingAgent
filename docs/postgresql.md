@@ -66,6 +66,27 @@ backoff. Run the service with
 
 ## Operations
 
+Shared worker controls and heartbeats live in PostgreSQL. Pause only new
+autonomous discovery and analysis with:
+
+```bash
+python -m tradingagents.operations.control_plane pause autonomous-worker --reason "operator review"
+```
+
+Resume it with the corresponding `resume` command. Reconciliation and
+evaluation workers continue while autonomous discovery is paused, allowing
+open orders and due outcomes to settle. Inspect controls, per-instance
+heartbeat freshness, reconciliation lag, outbox backlog, in-flight analyses,
+active reservations, and active executions with:
+
+```bash
+python -m tradingagents.operations.control_plane status
+```
+
+The database pause is separate from the safety kill switch. Pause prevents new
+autonomous cycles; the kill switch remains the final pre-order control for all
+execution paths.
+
 - Back up both the database and application secrets before a production deploy.
 - Use a managed PostgreSQL service with encryption, automated backups, and
   point-in-time recovery for live trading.

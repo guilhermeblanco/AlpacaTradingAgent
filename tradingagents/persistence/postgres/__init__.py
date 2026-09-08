@@ -6,6 +6,7 @@ from .unit_of_work import PostgresUnitOfWork
 from .repositories import (
     PostgresOrderLedger,
     PostgresOutboxRepository,
+    PostgresOperationalRepository,
     PostgresPortfolioReservationRepository,
     PostgresReconciliationQueue,
 )
@@ -15,6 +16,7 @@ __all__ = [
     "DatabaseSettings",
     "PostgresUnitOfWork",
     "PostgresOutboxRepository",
+    "PostgresOperationalRepository",
     "PostgresOrderLedger",
     "PostgresPortfolioReservationRepository",
     "PostgresReconciliationQueue",

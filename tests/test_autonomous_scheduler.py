@@ -204,3 +204,39 @@ def test_shadow_experiment_is_recorded_but_never_dispatched(session_factory) -> 
     allocation = result.portfolio_run.decision_batch.allocations[0]
     assert allocation.approved_notional_usd == 0
     assert "not execution eligible" in allocation.reasons[-1]
+
+
+def test_durable_pause_stops_new_discovery(session_factory) -> None:
+    called = []
+    with PostgresUnitOfWork(session_factory) as uow:
+        uow.operations.set_paused("autonomous-worker", paused=True)
+        uow.commit()
+
+    class AlwaysOpen:
+        def is_open(self, asset_class, *, now):
+            return True
+
+    scheduler = AutonomousCycleScheduler(
+        snapshot_provider=Snapshots(),
+        candidate_source=lambda snapshot: called.append(snapshot) or [],
+        analysis_handler=lambda candidate: _intent(candidate.symbol),
+        price_history_loader=lambda symbols: {},
+        requested_notional=lambda candidate, intent: 1_000,
+        execution_coordinator=ReservationAwareExecutionCoordinator(
+            lambda: PostgresUnitOfWork(session_factory), lambda *args, **kwargs: {}
+        ),
+        unit_of_work_factory=lambda: PostgresUnitOfWork(session_factory),
+        account_key="alpaca:test",
+        analysis_provider="openai",
+        allowed_asset_classes={"equity"},
+        session_gate=AlwaysOpen(),
+    )
+
+    result = scheduler.run_once()
+
+    assert result.paused
+    assert called == []
+    with PostgresUnitOfWork(session_factory) as uow:
+        health = uow.operations.health()
+        uow.rollback()
+    assert health.heartbeats[0].status == "paused"

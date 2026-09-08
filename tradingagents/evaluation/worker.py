@@ -10,6 +10,7 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
+from uuid import uuid4
 
 from .attribution import EvaluationHorizon, attribute_episode_outcome
 from .price_registry import default_historical_price_registry
@@ -33,10 +34,12 @@ class EvaluationWorker:
         unit_of_work_factory: Callable[[], Any],
         prices,
         horizons: list[EvaluationHorizon],
+        worker_id: Optional[str] = None,
     ):
         self.unit_of_work_factory = unit_of_work_factory
         self.prices = prices
         self.horizons = tuple(horizons)
+        self.worker_id = worker_id or f"evaluation-{uuid4()}"
 
     def run_once(self, *, now: Optional[datetime] = None) -> EvaluationWorkerResult:
         now = now or datetime.now(timezone.utc)
@@ -72,6 +75,25 @@ class EvaluationWorker:
                 message = f"{episode.decision_id}/{horizon.name}: {exc}"
                 result.errors.append(message)
                 LOGGER.exception("Evaluation attribution failed for %s", message)
+        try:
+            with self.unit_of_work_factory() as uow:
+                operations = getattr(uow, "operations", None)
+                if operations is not None:
+                    operations.beat(
+                        "evaluation-worker",
+                        instance_id=self.worker_id,
+                        status="degraded" if result.failed else "healthy",
+                        details={
+                            "pending": result.pending,
+                            "resolved": result.resolved,
+                            "failed": result.failed,
+                            "expired_reservations": result.expired_reservations,
+                        },
+                        now=now,
+                    )
+                uow.commit()
+        except Exception:
+            LOGGER.exception("Failed to record evaluation heartbeat")
         return result
 
     def run_forever(
