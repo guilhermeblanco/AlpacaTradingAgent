@@ -15,6 +15,7 @@ from .repositories import (
     PostgresOutboxRepository,
     PostgresOrderLedger,
     PostgresPortfolioReservationRepository,
+    PostgresReconciliationQueue,
 )
 
 
@@ -42,6 +43,7 @@ class PostgresUnitOfWork:
         self.portfolio_reservations = PostgresPortfolioReservationRepository(
             self.session
         )
+        self.reconciliation_queue = PostgresReconciliationQueue(self.session)
         return self
 
     def __exit__(

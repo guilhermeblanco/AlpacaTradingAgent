@@ -240,6 +240,30 @@ class BrokerFillRow(Base):
     source: Mapped[str] = mapped_column(String(80), nullable=False)
 
 
+class ReconciliationLeaseRow(Base):
+    __tablename__ = "reconciliation_leases"
+    __table_args__ = (
+        Index(
+            "ix_reconciliation_leases_available",
+            "completed_at",
+            "available_at",
+            "locked_until",
+        ),
+    )
+
+    decision_id: Mapped[str] = mapped_column(
+        ForeignKey("lifecycle.decision_id", ondelete="CASCADE"), primary_key=True
+    )
+    broker: Mapped[str] = mapped_column(String(80), nullable=False)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    locked_by: Mapped[Optional[str]] = mapped_column(String(160))
+    locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[Optional[str]] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class PortfolioReservationRow(Base):
     __tablename__ = "portfolio_reservations"
     __table_args__ = (

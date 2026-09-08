@@ -57,6 +57,13 @@ submission moves the execution to `submitted`; reconciliation advances it to
 available, the ledger derives each newly observed fill quantity and effective
 price from successive snapshots.
 
+Every recorded remote submission also creates a reconciliation lease. Separate
+workers claim due decisions with `FOR UPDATE SKIP LOCKED`, poll the broker named
+on the durable order, and either complete terminal decisions or reschedule open
+orders. Leases expire after a worker crash, and failures use bounded exponential
+backoff. Run the service with
+`python -m tradingagents.execution.reconciliation_worker` or Docker Compose.
+
 ## Operations
 
 - Back up both the database and application secrets before a production deploy.

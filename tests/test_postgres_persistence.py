@@ -180,6 +180,7 @@ def test_initial_migration_creates_all_persistence_tables(postgres_engine) -> No
         "portfolio_reservations",
         "portfolio_reservation_allocations",
         "portfolio_reservation_transitions",
+        "reconciliation_leases",
     }.issubset(inspect(postgres_engine).get_table_names())
 
 
