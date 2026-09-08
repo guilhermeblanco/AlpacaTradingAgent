@@ -28,6 +28,14 @@ class HistoricalPriceProvider(Protocol):
     def price_at_or_after(self, symbol: str, at: datetime) -> PriceObservation: ...
 
 
+class EntryFill(BaseModel):
+    symbol: str
+    side: str
+    quantity: float = Field(gt=0)
+    average_price: float = Field(gt=0)
+    observed_at: datetime
+
+
 @dataclass(frozen=True)
 class EvaluationHorizon:
     name: str
@@ -83,41 +91,84 @@ class FilledEpisodeAttributor:
         ]
         if not fills:
             raise ValueError(f"decision {decision_id} has no terminal entry fills")
-        symbols = {row.symbol.upper().replace("/", "") for row in fills}
-        if len(symbols) != 1:
-            raise ValueError("one evaluation episode cannot combine multiple symbols")
-        quantity = sum(row.filled_quantity for row in fills)
-        reference_price = sum(
-            row.filled_quantity * float(row.filled_avg_price) for row in fills
-        ) / quantity
-        entry_at = max(row.terminal_at or row.updated_at for row in fills)
-        ensure_aware(entry_at, "entry_at")
-        benchmark = self.prices.price_at_or_before(benchmark_symbol, entry_at)
-        ensure_aware(benchmark.observed_at, "benchmark observed_at")
-        if benchmark.observed_at.astimezone(timezone.utc) > entry_at.astimezone(
-            timezone.utc
-        ):
-            raise PointInTimeViolation("benchmark reference observation is after entry")
-        episode = EvaluationEpisode(
-            decision_id=decision_id,
-            symbol=fills[0].symbol,
+        return build_filled_episode(
+            decision_id,
+            [
+                EntryFill(
+                    symbol=row.symbol,
+                    side=row.side,
+                    quantity=row.filled_quantity,
+                    average_price=float(row.filled_avg_price),
+                    observed_at=row.terminal_at or row.updated_at,
+                )
+                for row in fills
+            ],
             action=action_key,
-            decision_at=entry_at,
-            data_as_of=benchmark.observed_at,
-            reference_price=reference_price,
+            prices=self.prices,
             benchmark_symbol=benchmark_symbol,
-            benchmark_price=benchmark.price,
             confidence=confidence,
             experiment_id=experiment_id,
-            metadata={
-                **(metadata or {}),
-                "source": "terminal_fills",
-                "filled_quantity": quantity,
-                "fill_count": len(fills),
-            },
+            metadata=metadata,
+            persist=self.evaluation.record_episode,
         )
-        self.evaluation.record_episode(episode)
-        return episode
+
+
+def build_filled_episode(
+    decision_id: str,
+    fills: list[EntryFill],
+    *,
+    action: str,
+    prices: HistoricalPriceProvider,
+    benchmark_symbol: str = "SPY",
+    confidence: Optional[float] = None,
+    experiment_id: str = "default",
+    metadata: Optional[dict] = None,
+    persist=None,
+) -> EvaluationEpisode:
+    if not fills:
+        raise ValueError(f"decision {decision_id} has no terminal entry fills")
+    action_key = action.upper().strip()
+    if action_key not in {"BUY", "OPEN", "INCREASE", "LONG", "SHORT"}:
+        raise ValueError("only exposure-adding decisions can create fill episodes")
+    expected_side = "sell" if action_key == "SHORT" else "buy"
+    if any(fill.side.lower() != expected_side for fill in fills):
+        raise ValueError("entry fill side does not match evaluation action")
+    symbols = {row.symbol.upper().replace("/", "") for row in fills}
+    if len(symbols) != 1:
+        raise ValueError("one evaluation episode cannot combine multiple symbols")
+    quantity = sum(row.quantity for row in fills)
+    reference_price = sum(
+        row.quantity * row.average_price for row in fills
+    ) / quantity
+    entry_at = max(row.observed_at for row in fills)
+    ensure_aware(entry_at, "entry_at")
+    benchmark = prices.price_at_or_before(benchmark_symbol, entry_at)
+    ensure_aware(benchmark.observed_at, "benchmark observed_at")
+    if benchmark.observed_at.astimezone(timezone.utc) > entry_at.astimezone(
+        timezone.utc
+    ):
+        raise PointInTimeViolation("benchmark reference observation is after entry")
+    episode = EvaluationEpisode(
+        decision_id=decision_id,
+        symbol=fills[0].symbol,
+        action=action_key,
+        decision_at=entry_at,
+        data_as_of=benchmark.observed_at,
+        reference_price=reference_price,
+        benchmark_symbol=benchmark_symbol,
+        benchmark_price=benchmark.price,
+        confidence=confidence,
+        experiment_id=experiment_id,
+        metadata={
+            **(metadata or {}),
+            "source": "terminal_fills",
+            "filled_quantity": quantity,
+            "fill_count": len(fills),
+        },
+    )
+    if persist is not None:
+        persist(episode)
+    return episode
 
 
 class OutcomeAttributor:

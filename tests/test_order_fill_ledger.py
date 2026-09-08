@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import create_engine, func, select
@@ -73,13 +73,13 @@ def _plan() -> ExecutionPlan:
     )
 
 
-def _seed_submission(session_factory) -> ExecutionPlan:
+def _seed_submission(session_factory, gateway="alpaca-paper") -> ExecutionPlan:
     plan = _plan()
     result = ExecutionResult(
         success=True,
         decision_id=plan.decision_id,
         symbol=plan.symbol,
-        gateway="alpaca-paper",
+        gateway=gateway,
         plan=plan,
         actions=[{"result": {"success": True, "order_id": "broker-order-1", "status": "new"}}],
     )
@@ -167,6 +167,114 @@ def test_persistent_reconciler_updates_order_lifecycle_and_event(session_factory
     with session_factory() as session:
         assert session.get(LifecycleRow, plan.decision_id).status == "filled"
         assert session.scalar(select(func.count()).select_from(BrokerFillRow)) == 1
+
+
+@pytest.mark.parametrize("broker", ["alpaca", "tradier", "robinhood"])
+def test_reconciliation_captures_fill_episode_for_every_broker(
+    session_factory, broker
+) -> None:
+    plan = _seed_submission(session_factory, gateway=broker)
+
+    class FilledGateway:
+        def get_order_snapshot(self, **kwargs):
+            return BrokerOrderSnapshot(
+                order_id="broker-order-1",
+                symbol="AAPL",
+                side="buy",
+                status=BrokerOrderStatus.FILLED,
+                requested_quantity=10,
+                filled_quantity=10,
+                filled_avg_price=101,
+            )
+
+    class Prices:
+        def price_at_or_before(self, symbol, at):
+            from tradingagents.evaluation import PriceObservation
+
+            return PriceObservation(
+                symbol=symbol,
+                price=500,
+                observed_at=at - timedelta(minutes=1),
+            )
+
+    report = PersistentExecutionReconciler(
+        FilledGateway(),
+        lambda: PostgresUnitOfWork(session_factory),
+        evaluation_prices=Prices(),
+    ).reconcile(plan, [{"result": {"order_id": "broker-order-1"}}])
+
+    assert report.complete
+    with PostgresUnitOfWork(session_factory) as uow:
+        episode = uow.evaluation.get_episode(plan.decision_id)
+        uow.rollback()
+    assert episode is not None
+    assert episode.reference_price == 101
+    assert episode.metadata["entry_time_source"] == "reconciliation_observed_at"
+
+
+def test_evaluation_price_failure_does_not_block_reconciliation(
+    session_factory,
+) -> None:
+    plan = _seed_submission(session_factory)
+
+    class FilledGateway:
+        def get_order_snapshot(self, **kwargs):
+            return BrokerOrderSnapshot(
+                order_id="broker-order-1",
+                symbol="AAPL",
+                side="buy",
+                status=BrokerOrderStatus.FILLED,
+                filled_quantity=10,
+                filled_avg_price=101,
+            )
+
+    class MissingPrices:
+        def price_at_or_before(self, symbol, at):
+            raise LookupError("benchmark unavailable")
+
+    report = PersistentExecutionReconciler(
+        FilledGateway(),
+        lambda: PostgresUnitOfWork(session_factory),
+        evaluation_prices=MissingPrices(),
+    ).reconcile(plan, [{"result": {"order_id": "broker-order-1"}}])
+
+    assert report.complete
+    with PostgresUnitOfWork(session_factory) as uow:
+        assert uow.lifecycle.get(plan.decision_id).status is LifecycleStatus.FILLED
+        assert uow.evaluation.get_episode(plan.decision_id) is None
+        uow.rollback()
+
+
+def test_risk_reducing_fill_does_not_create_episode(session_factory) -> None:
+    plan = _seed_submission(session_factory)
+    plan.legs[0].risk_reducing = True
+    plan.legs[0].action = PlanAction.CLOSE
+    plan.legs[0].side = "sell"
+
+    class FilledGateway:
+        def get_order_snapshot(self, **kwargs):
+            return BrokerOrderSnapshot(
+                order_id="broker-order-1",
+                symbol="AAPL",
+                side="sell",
+                status=BrokerOrderStatus.FILLED,
+                filled_quantity=10,
+                filled_avg_price=101,
+            )
+
+    class Prices:
+        def price_at_or_before(self, symbol, at):
+            raise AssertionError("risk-reducing fills must not request evaluation prices")
+
+    PersistentExecutionReconciler(
+        FilledGateway(),
+        lambda: PostgresUnitOfWork(session_factory),
+        evaluation_prices=Prices(),
+    ).reconcile(plan, [{"result": {"order_id": "broker-order-1"}}])
+
+    with PostgresUnitOfWork(session_factory) as uow:
+        assert uow.evaluation.get_episode(plan.decision_id) is None
+        uow.rollback()
 
 
 def test_pipeline_persists_remote_acceptance_as_submitted(
