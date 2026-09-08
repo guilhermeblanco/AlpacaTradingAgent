@@ -1,0 +1,225 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
+import pytest
+from sqlalchemy import create_engine, func, select
+
+from tradingagents.agents.schemas import (
+    ExecutableAction,
+    RiskDecision,
+    build_trade_intent_from_risk_decision,
+)
+from tradingagents.broker.models import AccountSnapshot, PortfolioSnapshot, QuoteSnapshot
+from tradingagents.execution.journal import ExecutionJournal
+from tradingagents.execution.pipeline import ExecutionPipeline
+
+from tradingagents.execution.models import (
+    ExecutionLeg,
+    ExecutionPlan,
+    ExecutionResult,
+    PlanAction,
+)
+from tradingagents.execution.reconciliation import (
+    BrokerOrderSnapshot,
+    BrokerOrderStatus,
+    PersistentExecutionReconciler,
+)
+from tradingagents.lifecycle import LifecycleStatus
+from tradingagents.persistence.postgres import (
+    Base,
+    PostgresUnitOfWork,
+    create_session_factory,
+)
+from tradingagents.persistence.postgres.models import (
+    BrokerFillRow,
+    BrokerOrderRow,
+    LifecycleRow,
+)
+from tradingagents.safety import SafetyGuard
+
+
+@pytest.fixture
+def session_factory():
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    try:
+        yield create_session_factory(engine)
+    finally:
+        engine.dispose()
+
+
+def _plan() -> ExecutionPlan:
+    return ExecutionPlan(
+        decision_id="decision-order-ledger",
+        symbol="AAPL",
+        intent_schema_version="1.0",
+        current_allocation_pct=0,
+        target_allocation_pct=1,
+        current_notional_usd=0,
+        target_notional_usd=1000,
+        delta_notional_usd=1000,
+        reference_price=100,
+        legs=[
+            ExecutionLeg(
+                action=PlanAction.BUY,
+                side="buy",
+                notional_usd=1000,
+                quantity=10,
+                reason="test",
+            )
+        ],
+        metadata={"leg_idempotency_keys": ["client-order-1"]},
+    )
+
+
+def _seed_submission(session_factory) -> ExecutionPlan:
+    plan = _plan()
+    result = ExecutionResult(
+        success=True,
+        decision_id=plan.decision_id,
+        symbol=plan.symbol,
+        gateway="alpaca-paper",
+        plan=plan,
+        actions=[{"result": {"success": True, "order_id": "broker-order-1", "status": "new"}}],
+    )
+    with PostgresUnitOfWork(session_factory) as uow:
+        uow.lifecycle.create(
+            decision_id=plan.decision_id,
+            symbol=plan.symbol,
+            idempotency_key="decision-key",
+        )
+        uow.orders.record_submission(result)
+        uow.lifecycle.transition(plan.decision_id, LifecycleStatus.SUBMITTED)
+        uow.commit()
+    return plan
+
+
+def test_order_ledger_derives_incremental_fills_from_cumulative_snapshots(
+    session_factory,
+) -> None:
+    plan = _seed_submission(session_factory)
+    now = datetime.now(timezone.utc)
+    with PostgresUnitOfWork(session_factory) as uow:
+        partial = uow.orders.apply_snapshot(
+            decision_id=plan.decision_id,
+            leg_index=0,
+            snapshot=BrokerOrderSnapshot(
+                order_id="broker-order-1",
+                client_order_id="client-order-1",
+                symbol="AAPL",
+                side="buy",
+                status=BrokerOrderStatus.PARTIALLY_FILLED,
+                requested_quantity=10,
+                filled_quantity=4,
+                filled_avg_price=100,
+            ),
+            observed_at=now,
+        )
+        filled = uow.orders.apply_snapshot(
+            decision_id=plan.decision_id,
+            leg_index=0,
+            snapshot=BrokerOrderSnapshot(
+                order_id="broker-order-1",
+                client_order_id="client-order-1",
+                symbol="AAPL",
+                side="buy",
+                status=BrokerOrderStatus.FILLED,
+                requested_quantity=10,
+                filled_quantity=10,
+                filled_avg_price=102,
+            ),
+            observed_at=now,
+        )
+        uow.commit()
+
+    assert partial.filled_quantity == 4
+    assert filled.status == BrokerOrderStatus.FILLED.value
+    with session_factory() as session:
+        fills = session.scalars(
+            select(BrokerFillRow).order_by(BrokerFillRow.fill_sequence)
+        ).all()
+        assert [fill.quantity for fill in fills] == [4, 6]
+        assert fills[0].price == pytest.approx(100)
+        assert fills[1].price == pytest.approx(103.3333333)
+
+
+def test_persistent_reconciler_updates_order_lifecycle_and_event(session_factory) -> None:
+    plan = _seed_submission(session_factory)
+
+    class FilledGateway:
+        def get_order_snapshot(self, **kwargs):
+            return BrokerOrderSnapshot(
+                order_id="broker-order-1",
+                symbol="AAPL",
+                side="buy",
+                status=BrokerOrderStatus.FILLED,
+                requested_quantity=10,
+                filled_quantity=10,
+                filled_avg_price=101,
+            )
+
+    report = PersistentExecutionReconciler(
+        FilledGateway(), lambda: PostgresUnitOfWork(session_factory)
+    ).reconcile(plan, [{"result": {"order_id": "broker-order-1"}}])
+
+    assert report.complete
+    with session_factory() as session:
+        assert session.get(LifecycleRow, plan.decision_id).status == "filled"
+        assert session.scalar(select(func.count()).select_from(BrokerFillRow)) == 1
+
+
+def test_pipeline_persists_remote_acceptance_as_submitted(
+    session_factory, tmp_path
+) -> None:
+    intent = build_trade_intent_from_risk_decision(
+        symbol="AAPL",
+        trading_mode="investment",
+        current_position="NEUTRAL",
+        decision=RiskDecision(
+            action=ExecutableAction.BUY,
+            confidence="high",
+            risk_rationale="test",
+            required_controls="test",
+            target_portfolio_pct=1,
+        ),
+    )
+
+    class Provider:
+        def get_portfolio_snapshot(self):
+            return PortfolioSnapshot(account=AccountSnapshot(equity=100_000))
+
+        def get_quote_snapshot(self, symbol):
+            return QuoteSnapshot(symbol=symbol, bid_price=99, ask_price=101)
+
+    class Gateway:
+        name = "test-paper"
+
+        def submit_plan(self, plan, submitted_intent):
+            return ExecutionResult(
+                success=True,
+                decision_id=plan.decision_id,
+                symbol=plan.symbol,
+                gateway=self.name,
+                plan=plan,
+                actions=[
+                    {"result": {"success": True, "order_id": "remote-1", "status": "accepted"}}
+                ],
+            )
+
+    result = ExecutionPipeline(
+        Provider(),
+        Gateway(),
+        journal=ExecutionJournal(tmp_path),
+        unit_of_work_factory=lambda: PostgresUnitOfWork(session_factory),
+        safety_guard=SafetyGuard(
+            {"safety_enabled": False},
+            state_path=tmp_path / "safety.json",
+            kill_switch_path=tmp_path / "KILL_SWITCH",
+        ),
+    ).execute("AAPL", intent, 1_000)
+
+    assert result["success"]
+    with session_factory() as session:
+        assert session.get(LifecycleRow, intent.decision_id).status == "submitted"
+        assert session.scalar(select(func.count()).select_from(BrokerOrderRow)) == 1

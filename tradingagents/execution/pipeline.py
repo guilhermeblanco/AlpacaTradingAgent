@@ -58,6 +58,7 @@ class ExecutionPipeline:
         status: Optional[LifecycleStatus] = None,
         error: Optional[str] = None,
         result: Optional[dict[str, Any]] = None,
+        execution_result: Optional[ExecutionResult] = None,
     ) -> str:
         return self.persistence.record(
             event_type,
@@ -68,6 +69,7 @@ class ExecutionPipeline:
             status=status,
             error=error,
             result=result,
+            execution_result=execution_result,
         )
 
     def execute(
@@ -328,7 +330,18 @@ class ExecutionPipeline:
         result = self.gateway.submit_plan(plan, parsed)
         result.validations = validations
         result.journal_path = journal_path
-        event = "execution_completed" if result.success else "broker_rejected"
+        has_remote_order = any(
+            (action.get("result", action) or {}).get("order_id")
+            for action in result.actions
+        )
+        submission_only = result.success and not plan.is_noop and bool(has_remote_order)
+        event = (
+            "execution_submitted"
+            if submission_only
+            else "execution_completed"
+            if result.success
+            else "broker_rejected"
+        )
         if guard is not None and guard.enabled and not plan.is_noop:
             guard.record_order_result(result.success)
         result_payload = result.model_dump(mode="json")
@@ -338,12 +351,15 @@ class ExecutionPipeline:
             run_id,
             payload={"result": result_payload},
             status=(
-                LifecycleStatus.SUCCEEDED
+                LifecycleStatus.SUBMITTED
+                if submission_only
+                else LifecycleStatus.SUCCEEDED
                 if result.success
                 else LifecycleStatus.FAILED
             ),
             error=result.error,
             result=result_payload,
+            execution_result=result if has_remote_order else None,
         )
         return result_payload
 

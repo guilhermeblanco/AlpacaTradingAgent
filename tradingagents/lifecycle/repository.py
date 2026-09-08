@@ -182,6 +182,7 @@ class LifecycleRepository:
         candidates: list[str]
         terminal = tuple(status.value for status in (
             LifecycleStatus.SUCCEEDED,
+            LifecycleStatus.FILLED,
             LifecycleStatus.BLOCKED,
             LifecycleStatus.FAILED,
             LifecycleStatus.EXPIRED,

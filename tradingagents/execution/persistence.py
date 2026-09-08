@@ -7,6 +7,7 @@ from typing import Any, Callable, Optional
 from tradingagents.lifecycle import LifecycleService, LifecycleStatus
 from tradingagents.lifecycle.models import LifecycleRecord
 from tradingagents.persistence.protocols import EventJournalPort
+from .models import ExecutionResult
 
 
 class ExecutionPersistence:
@@ -78,6 +79,7 @@ class ExecutionPersistence:
         status: Optional[LifecycleStatus] = None,
         error: Optional[str] = None,
         result: Optional[dict[str, Any]] = None,
+        execution_result: Optional[ExecutionResult] = None,
     ) -> str:
         transition_args = {}
         if error is not None:
@@ -101,6 +103,8 @@ class ExecutionPersistence:
         with self.unit_of_work_factory() as uow:
             if status is not None and self.lifecycle_enabled:
                 uow.lifecycle.transition(decision_id, status, **transition_args)
+            if execution_result is not None and self.lifecycle_enabled:
+                uow.orders.record_submission(execution_result)
             reference = uow.journal.append(
                 event_type,
                 symbol=symbol,
