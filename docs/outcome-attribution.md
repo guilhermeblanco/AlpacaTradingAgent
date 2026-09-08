@@ -19,3 +19,19 @@ makes delayed market opens explicit rather than silently using an earlier close.
 Only `BUY`, `OPEN`, `INCREASE`, `LONG`, and `SHORT` decisions create episodes.
 Risk-reducing orders are excluded because their success is measured by the
 position they close, not by treating the closing order as a new directional bet.
+
+## Alpaca price observations
+
+`AlpacaHistoricalPriceProvider` implements the historical-price port with strict
+Alpaca minute bars. A close is considered observable one minute after the bar's
+timestamp. Descending requests select the latest close available at entry;
+ascending requests select the first close available at or after an outcome
+horizon. The adapter uses IEX for equities and Alpaca crypto bars for slash-form
+symbols. Missing data raises `PriceObservationUnavailable`; evaluation never
+falls back to a different source silently.
+
+Historical prices are configured independently from order execution through
+`HistoricalPriceProviderRegistry`. Alpaca, Tradier, and Robinhood fills all use
+the same attribution path and may use the Alpaca market-data source. Selecting
+an unknown source fails at startup; the execution broker name is never used as
+an implicit price-provider fallback.

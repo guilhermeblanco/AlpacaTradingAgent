@@ -17,8 +17,17 @@ from .attribution import (
     OutcomeAttributor,
     PriceObservation,
 )
+from .alpaca_prices import (
+    AlpacaHistoricalPriceProvider,
+    PriceObservationUnavailable,
+)
+from .price_registry import (
+    HistoricalPriceProviderRegistry,
+    default_historical_price_registry,
+)
 
 __all__ = [
+    "AlpacaHistoricalPriceProvider",
     "EvaluationEpisode",
     "EvaluationHorizon",
     "EvaluationOutcome",
@@ -26,11 +35,14 @@ __all__ = [
     "ExperimentScorecard",
     "FilledEpisodeAttributor",
     "HistoricalPriceProvider",
+    "HistoricalPriceProviderRegistry",
     "OutcomeAttributor",
     "PriceObservation",
+    "PriceObservationUnavailable",
     "PromotionDecision",
     "PromotionPolicy",
     "PromotionStatus",
     "assess_promotion",
     "calculate_outcome",
+    "default_historical_price_registry",
 ]
