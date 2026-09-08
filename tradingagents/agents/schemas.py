@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -196,6 +196,7 @@ class TradeIntent(BaseModel):
     risk_controls: RiskControls = Field(default_factory=RiskControls)
     execution_constraints: ExecutionConstraints
     rationale_summary: str = Field(description="Compact rationale suitable for audit logs.")
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class ResearchPlan(BaseModel):

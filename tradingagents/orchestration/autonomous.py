@@ -13,7 +13,13 @@ import pandas as pd
 from tradingagents.agents.schemas import TradeIntent
 from tradingagents.broker.models import PortfolioSnapshot
 from tradingagents.broker.snapshot import SnapshotProvider
+from tradingagents.evaluation.experiments import (
+    DeterministicExperimentAssigner,
+    ExperimentAssignment,
+    ExperimentVariant,
+)
 from tradingagents.portfolio import PortfolioLimitsConfig
+from tradingagents.portfolio.batch import BatchAllocationStatus
 
 from .batch import BatchOrchestrator, Candidate
 from .execution_coordinator import PortfolioDispatchResult, ReservationAwareExecutionCoordinator
@@ -48,6 +54,7 @@ class AutonomousCycleResult:
     session_blocked: int = 0
     capability_blocked: int = 0
     admission_blocked: int = 0
+    shadow_recorded: int = 0
     portfolio_run: Optional[PortfolioBatchRun] = None
     dispatch: Optional[PortfolioDispatchResult] = None
     errors: list[str] = field(default_factory=list)
@@ -74,6 +81,10 @@ class AutonomousCycleScheduler:
         session_gate: Optional[MarketSessionGate] = None,
         estimated_tokens_per_analysis: int = 0,
         reservation_ttl_seconds: int = 300,
+        experiment_assigner: Optional[DeterministicExperimentAssigner] = None,
+        shadow_episode_recorder: Optional[
+            Callable[[TradeIntent, ExperimentAssignment], Any]
+        ] = None,
     ):
         if not account_key.strip():
             raise ValueError("account_key is required for durable portfolio reservations")
@@ -96,6 +107,15 @@ class AutonomousCycleScheduler:
         self.session_gate = session_gate or MarketSessionGate()
         self.estimated_tokens_per_analysis = max(0, int(estimated_tokens_per_analysis))
         self.reservation_ttl_seconds = max(1, int(reservation_ttl_seconds))
+        self.experiment_assigner = experiment_assigner or DeterministicExperimentAssigner(
+            [
+                ExperimentVariant(
+                    experiment_id="default",
+                    execution_eligible=True,
+                )
+            ]
+        )
+        self.shadow_episode_recorder = shadow_episode_recorder
         self._stop = threading.Event()
 
     @staticmethod
@@ -127,7 +147,19 @@ class AutonomousCycleScheduler:
                 if not self.session_gate.is_open(asset_class, now=started_at):
                     result.session_blocked += 1
                     continue
-                eligible.append(candidate)
+                assignment = self.experiment_assigner.assign(
+                    f"{candidate.symbol.upper()}:{started_at.date().isoformat()}"
+                )
+                eligible.append(
+                    candidate.model_copy(
+                        update={
+                            "provenance": {
+                                **candidate.provenance,
+                                "experiment": assignment.model_dump(mode="json"),
+                            }
+                        }
+                    )
+                )
 
             for candidate in eligible[: self.max_candidates]:
                 price = candidate.provenance.get("price")
@@ -167,6 +199,7 @@ class AutonomousCycleScheduler:
             )
             result.portfolio_run = portfolio_run
             intents: dict[str, TradeIntent] = {}
+            shadow_decisions: set[str] = set()
             for analysis in portfolio_run.analysis_results:
                 if not analysis.success or analysis.cancelled:
                     continue
@@ -174,7 +207,45 @@ class AutonomousCycleScheduler:
                 if isinstance(value, dict) and ("trade_intent" in value or "intent" in value):
                     value = value.get("trade_intent", value.get("intent"))
                 intent = value if isinstance(value, TradeIntent) else TradeIntent.model_validate(value)
-                intents[intent.decision_id] = intent
+                assignment = ExperimentAssignment.model_validate(
+                    analysis.candidate.provenance["experiment"]
+                )
+                intent = intent.model_copy(
+                    update={
+                        "metadata": {
+                            **intent.metadata,
+                            "experiment_id": assignment.experiment_id,
+                            "experiment_execution_eligible": assignment.execution_eligible,
+                        }
+                    }
+                )
+                if assignment.execution_eligible:
+                    intents[intent.decision_id] = intent
+                    continue
+                shadow_decisions.add(intent.decision_id)
+                if self.shadow_episode_recorder is None:
+                    result.errors.append(
+                        f"shadow recorder unavailable for {intent.decision_id}"
+                    )
+                    continue
+                try:
+                    if self.shadow_episode_recorder(intent, assignment) is not None:
+                        result.shadow_recorded += 1
+                except Exception as exc:
+                    result.errors.append(
+                        f"shadow episode failed for {intent.decision_id}: {exc}"
+                    )
+            for allocation in portfolio_run.decision_batch.allocations:
+                if allocation.decision_id not in shadow_decisions:
+                    continue
+                portfolio_run.decision_batch.ending_reserved_exposure_usd -= (
+                    allocation.approved_notional_usd
+                )
+                allocation.approved_notional_usd = 0
+                allocation.status = BatchAllocationStatus.NOOP
+                allocation.reasons.append(
+                    "Shadow experiment assignment is not execution eligible."
+                )
             if not intents:
                 return result
             result.dispatch = self.execution_coordinator.execute(

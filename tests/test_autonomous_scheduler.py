@@ -18,6 +18,10 @@ from tradingagents.orchestration import (
     MarketSessionGate,
     ReservationAwareExecutionCoordinator,
 )
+from tradingagents.evaluation import (
+    DeterministicExperimentAssigner,
+    ExperimentVariant,
+)
 from tradingagents.persistence.postgres import (
     Base,
     PostgresUnitOfWork,
@@ -152,3 +156,51 @@ def test_cycle_completes_admission_after_analysis_failure(session_factory) -> No
         )
         uow.rollback()
     assert decision.allowed
+
+
+def test_shadow_experiment_is_recorded_but_never_dispatched(session_factory) -> None:
+    calls = []
+    recorded = []
+
+    class AlwaysOpen:
+        def is_open(self, asset_class, *, now):
+            return True
+
+    intent = _intent("MSFT")
+    scheduler = AutonomousCycleScheduler(
+        snapshot_provider=Snapshots(),
+        candidate_source=lambda snapshot: [
+            Candidate(symbol="MSFT", score=9, source="test")
+        ],
+        analysis_handler=lambda candidate: intent,
+        price_history_loader=lambda symbols: {},
+        requested_notional=lambda candidate, intent: 1_000,
+        execution_coordinator=ReservationAwareExecutionCoordinator(
+            lambda: PostgresUnitOfWork(session_factory),
+            lambda *args, **kwargs: calls.append(args),
+        ),
+        unit_of_work_factory=lambda: PostgresUnitOfWork(session_factory),
+        account_key="alpaca:test",
+        analysis_provider="openai",
+        allowed_asset_classes={"equity"},
+        session_gate=AlwaysOpen(),
+        experiment_assigner=DeterministicExperimentAssigner(
+            [ExperimentVariant(experiment_id="challenger", execution_eligible=False)]
+        ),
+        shadow_episode_recorder=lambda intent, assignment: recorded.append(
+            (intent, assignment)
+        )
+        or True,
+    )
+
+    result = scheduler.run_once(
+        now=datetime(2026, 9, 8, 15, tzinfo=timezone.utc)
+    )
+
+    assert result.shadow_recorded == 1
+    assert result.dispatch is None
+    assert calls == []
+    assert recorded[0][0].metadata["experiment_id"] == "challenger"
+    allocation = result.portfolio_run.decision_batch.allocations[0]
+    assert allocation.approved_notional_usd == 0
+    assert "not execution eligible" in allocation.reasons[-1]

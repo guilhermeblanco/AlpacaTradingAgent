@@ -19,6 +19,12 @@ from .attribution import (
     PriceObservation,
     attribute_episode_outcome,
     build_filled_episode,
+    build_signal_episode,
+)
+from .experiments import (
+    DeterministicExperimentAssigner,
+    ExperimentAssignment,
+    ExperimentVariant,
 )
 from .alpaca_prices import (
     AlpacaHistoricalPriceProvider,
@@ -35,8 +41,11 @@ __all__ = [
     "EntryFill",
     "EvaluationHorizon",
     "EvaluationOutcome",
+    "DeterministicExperimentAssigner",
     "EvaluationRepository",
     "ExperimentScorecard",
+    "ExperimentAssignment",
+    "ExperimentVariant",
     "FilledEpisodeAttributor",
     "HistoricalPriceProvider",
     "HistoricalPriceProviderRegistry",
@@ -49,6 +58,7 @@ __all__ = [
     "assess_promotion",
     "attribute_episode_outcome",
     "build_filled_episode",
+    "build_signal_episode",
     "calculate_outcome",
     "default_historical_price_registry",
 ]

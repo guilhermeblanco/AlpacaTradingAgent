@@ -104,6 +104,16 @@ class ExecutionPlannerTests(unittest.TestCase):
         self.assertEqual(plan.legs[0].notional_usd, 1_250)
         self.assertTrue(plan.warnings)
 
+    def test_intent_metadata_is_copied_to_execution_plan(self):
+        trade_intent = intent()
+        trade_intent.metadata["experiment_id"] = "champion"
+
+        plan = self.planner.build_plan(
+            trade_intent, portfolio(0), self.quote, 1_250
+        )
+
+        self.assertEqual(plan.metadata["experiment_id"], "champion")
+
 
 if __name__ == "__main__":
     unittest.main()

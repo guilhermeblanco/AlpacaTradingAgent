@@ -39,7 +39,7 @@ class ExecutionPlanner:
                 delta_notional_usd=0.0,
                 reference_price=reference_price,
                 legs=[ExecutionLeg(action=PlanAction.HOLD, reason="Portfolio intent requested HOLD.")],
-                metadata={"intent_type": intent.intent_type.value},
+                metadata={"intent_type": intent.intent_type.value, **intent.metadata},
             )
 
         if intent.target_portfolio_pct is None:
@@ -84,7 +84,7 @@ class ExecutionPlanner:
             reference_price=reference_price,
             legs=legs,
             warnings=warnings,
-            metadata={"intent_type": intent.intent_type.value},
+            metadata={"intent_type": intent.intent_type.value, **intent.metadata},
         )
 
     def _target_legs(self, current, target, delta, price):
@@ -157,5 +157,9 @@ class ExecutionPlanner:
             reference_price=price,
             legs=legs,
             warnings=["Intent has no target_portfolio_pct; legacy notional semantics applied."],
-            metadata={"intent_type": intent.intent_type.value, "legacy_action": action},
+            metadata={
+                "intent_type": intent.intent_type.value,
+                "legacy_action": action,
+                **intent.metadata,
+            },
         )
