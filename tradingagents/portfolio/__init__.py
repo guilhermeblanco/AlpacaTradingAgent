@@ -297,10 +297,24 @@ def gather_portfolio_state_via_alpaca(
     return equity, open_positions, price_history
 
 
+from .batch import (
+    BatchAllocationStatus,
+    PortfolioAllocation,
+    PortfolioDecisionBatch,
+    PortfolioIntentRequest,
+    allocate_intent_batch,
+)
+
+
 __all__ = [
+    "BatchAllocationStatus",
+    "PortfolioAllocation",
+    "PortfolioDecisionBatch",
+    "PortfolioIntentRequest",
     "PortfolioLimitsConfig",
     "PortfolioVerdict",
     "adjust_new_position_notional",
+    "allocate_intent_batch",
     "assess_new_position",
     "daily_returns",
     "gather_portfolio_state_via_alpaca",
