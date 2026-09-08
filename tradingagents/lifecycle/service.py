@@ -33,11 +33,27 @@ class LifecycleService:
         valid_until: Optional[datetime] = None,
         metadata: Optional[dict[str, Any]] = None,
     ) -> LifecycleRecord:
+        if valid_until is None:
+            valid_until = datetime.now(timezone.utc) + timedelta(
+                seconds=self.default_ttl_seconds
+            )
+        create_once = getattr(self.repository, "create_once", None)
+        if callable(create_once):
+            record, created = create_once(
+                decision_id=decision_id,
+                symbol=symbol,
+                idempotency_key=self.idempotency_key(decision_id, symbol),
+                valid_until=valid_until,
+                run_id=run_id,
+                metadata=metadata,
+            )
+            if not created:
+                raise DuplicateExecution(record)
+            return record
+
         existing = self.repository.get(decision_id)
         if existing is not None:
             raise DuplicateExecution(existing)
-        if valid_until is None:
-            valid_until = datetime.now(timezone.utc) + timedelta(seconds=self.default_ttl_seconds)
         return self.repository.create(
             decision_id=decision_id,
             symbol=symbol,

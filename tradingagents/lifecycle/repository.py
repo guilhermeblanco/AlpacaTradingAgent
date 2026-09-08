@@ -78,9 +78,29 @@ class LifecycleRepository:
         run_id: Optional[str] = None,
         metadata: Optional[dict[str, Any]] = None,
     ) -> LifecycleRecord:
+        record, _ = self.create_once(
+            decision_id=decision_id,
+            symbol=symbol,
+            idempotency_key=idempotency_key,
+            valid_until=valid_until,
+            run_id=run_id,
+            metadata=metadata,
+        )
+        return record
+
+    def create_once(
+        self,
+        *,
+        decision_id: str,
+        symbol: str,
+        idempotency_key: str,
+        valid_until: Optional[datetime] = None,
+        run_id: Optional[str] = None,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> tuple[LifecycleRecord, bool]:
         now = _utcnow()
         with self._lock, self._connect() as connection:
-            connection.execute(
+            cursor = connection.execute(
                 """INSERT OR IGNORE INTO lifecycle
                    (decision_id, symbol, status, idempotency_key, created_at,
                     updated_at, valid_until, run_id, metadata_json)
@@ -97,17 +117,20 @@ class LifecycleRepository:
                     json.dumps(metadata or {}, sort_keys=True),
                 ),
             )
-            if connection.total_changes:
+            created = cursor.rowcount == 1
+            if created:
                 connection.execute(
                     """INSERT INTO lifecycle_transitions
                        (decision_id, recorded_at, from_status, to_status, payload_json)
                        VALUES (?, ?, NULL, ?, '{}')""",
                     (decision_id, now.isoformat(), LifecycleStatus.RECEIVED.value),
                 )
-        record = self.get(decision_id)
-        if record is None:
-            raise RuntimeError(f"Unable to create lifecycle record {decision_id}")
-        return record
+            row = connection.execute(
+                "SELECT * FROM lifecycle WHERE decision_id = ?", (decision_id,)
+            ).fetchone()
+            if row is None:
+                raise RuntimeError(f"Unable to create lifecycle record {decision_id}")
+            return self._record(row), created
 
     def transition(
         self,

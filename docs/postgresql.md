@@ -40,6 +40,11 @@ commit in one transaction. If either write fails, both roll back. Keep lifecycle
 tracking enabled for autonomous execution because it supplies duplicate-decision
 protection and broker idempotency keys.
 
+Concurrent workers serialize lifecycle creation with a transaction-scoped
+advisory lock derived from the decision ID. Only the worker that creates the
+lifecycle may proceed; later workers receive the existing record and cannot
+submit the same decision again.
+
 The `outbox` table makes local state changes and queued external work one
 transaction. Dispatch is at least once: workers use leases and `SKIP LOCKED`,
 retry failures with exponential backoff, and dead-letter exhausted messages.
