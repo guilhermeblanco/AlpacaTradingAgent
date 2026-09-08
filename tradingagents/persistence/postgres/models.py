@@ -238,3 +238,63 @@ class BrokerFillRow(Base):
     price: Mapped[float] = mapped_column(Float, nullable=False)
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     source: Mapped[str] = mapped_column(String(80), nullable=False)
+
+
+class PortfolioReservationRow(Base):
+    __tablename__ = "portfolio_reservations"
+    __table_args__ = (
+        Index("ix_portfolio_reservations_account_status", "account_key", "status"),
+    )
+
+    reservation_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    batch_id: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
+    account_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    snapshot_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(40), nullable=False)
+    starting_gross_exposure: Mapped[float] = mapped_column(Float, nullable=False)
+    gross_limit: Mapped[Optional[float]] = mapped_column(Float)
+    reserved_notional: Mapped[float] = mapped_column(Float, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    released_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, nullable=False)
+
+
+class PortfolioReservationAllocationRow(Base):
+    __tablename__ = "portfolio_reservation_allocations"
+    __table_args__ = (
+        UniqueConstraint("reservation_id", "decision_id", name="uq_reservation_decision"),
+        Index("ix_reservation_allocations_state", "reservation_id", "state"),
+        Index("ix_reservation_allocations_symbol_state", "symbol_key", "state"),
+    )
+
+    allocation_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    reservation_id: Mapped[str] = mapped_column(
+        ForeignKey("portfolio_reservations.reservation_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    decision_id: Mapped[str] = mapped_column(String(160), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(80), nullable=False)
+    symbol_key: Mapped[str] = mapped_column(String(80), nullable=False)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False)
+    state: Mapped[str] = mapped_column(String(40), nullable=False)
+    approved_notional: Mapped[float] = mapped_column(Float, nullable=False)
+    consumed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+
+class PortfolioReservationTransitionRow(Base):
+    __tablename__ = "portfolio_reservation_transitions"
+    __table_args__ = (
+        Index("ix_reservation_transitions_reservation", "reservation_id", "transition_id"),
+    )
+
+    transition_id: Mapped[int] = mapped_column(SEQUENCE_ID, primary_key=True, autoincrement=True)
+    reservation_id: Mapped[str] = mapped_column(
+        ForeignKey("portfolio_reservations.reservation_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    from_status: Mapped[Optional[str]] = mapped_column(String(40))
+    to_status: Mapped[str] = mapped_column(String(40), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, nullable=False, default=dict)

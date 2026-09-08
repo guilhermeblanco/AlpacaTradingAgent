@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from enum import Enum
+from datetime import datetime, timezone
 from typing import Dict, Optional
+from uuid import uuid4
 
 import pandas as pd
 from pydantic import BaseModel, Field
@@ -39,10 +41,15 @@ class PortfolioAllocation(BaseModel):
 
 
 class PortfolioDecisionBatch(BaseModel):
+    batch_id: str = Field(default_factory=lambda: str(uuid4()))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     snapshot_hash: str
     snapshot_captured_at: str
+    account_equity_usd: float
     starting_gross_exposure_usd: float
+    starting_symbol_exposure_usd: dict[str, float] = Field(default_factory=dict)
     gross_limit_usd: Optional[float] = None
+    max_symbol_concentration_pct: Optional[float] = None
     ending_reserved_exposure_usd: float
     allocations: list[PortfolioAllocation]
 
@@ -73,6 +80,7 @@ def allocate_intent_batch(
         _symbol_key(symbol): frame for symbol, frame in price_history.items()
     }
     starting_gross = sum(open_positions.values())
+    starting_symbol_exposure = dict(open_positions)
     configured_gross_limit = (
         equity * limits.max_gross_exposure_pct / 100.0
         if limits.enabled and limits.max_gross_exposure_pct > 0
@@ -175,8 +183,15 @@ def allocate_intent_batch(
     return PortfolioDecisionBatch(
         snapshot_hash=snapshot_hash(snapshot),
         snapshot_captured_at=snapshot.captured_at,
+        account_equity_usd=equity,
         starting_gross_exposure_usd=starting_gross,
+        starting_symbol_exposure_usd=starting_symbol_exposure,
         gross_limit_usd=configured_gross_limit,
+        max_symbol_concentration_pct=(
+            max_symbol_concentration_pct
+            if max_symbol_concentration_pct > 0
+            else None
+        ),
         ending_reserved_exposure_usd=reserved,
         allocations=allocations,
     )

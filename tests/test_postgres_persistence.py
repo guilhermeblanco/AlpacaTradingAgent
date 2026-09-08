@@ -168,6 +168,9 @@ def test_initial_migration_creates_all_persistence_tables(postgres_engine) -> No
         "broker_orders",
         "broker_order_transitions",
         "broker_fills",
+        "portfolio_reservations",
+        "portfolio_reservation_allocations",
+        "portfolio_reservation_transitions",
     }.issubset(inspect(postgres_engine).get_table_names())
 
 

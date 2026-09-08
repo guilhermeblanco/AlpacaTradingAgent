@@ -29,3 +29,17 @@ block.
 The batch is an approval artifact, not an execution shortcut. Call the normal
 execution pipeline for approved allocations so intent validation, safety checks,
 idempotency, lifecycle recording, and broker reconciliation remain mandatory.
+
+## Durable reservations
+
+Before dispatching approved allocations to execution, persist the batch through
+`PostgresPortfolioReservationRepository.reserve`. Reservations serialize by
+broker account and recheck both gross and per-symbol capacity against other
+active workers. The operation is idempotent by batch ID and may further clip a
+stale approval.
+
+Consume each allocation when execution accepts responsibility for its decision.
+Consumed capacity remains unavailable until reconciliation releases the whole
+reservation. An untouched reservation expires after its TTL; a partially or
+fully consumed reservation never expires automatically. Every state change is
+recorded in `portfolio_reservation_transitions` for audit and recovery.
