@@ -24,6 +24,9 @@ AlpacaTradingAgent introduces powerful new capabilities specifically designed fo
 - **Margin Trading**: Full support for margin accounts, including short selling capabilities
 - **Portfolio Management**: Real-time portfolio tracking, position monitoring, and order management
 
+Software-managed protective exits are opt-in and independently gated for live
+accounts. See [docs/virtual-stops.md](docs/virtual-stops.md).
+
 ### 📈 **Dual Asset Support: Stocks & Crypto**
 - **Multi-Asset Analysis**: Analyze both traditional stocks and cryptocurrencies in a single session
 - **Crypto Format**: Use proper crypto format (e.g., `BTC/USD`, `ETH/USD`) for cryptocurrency analysis

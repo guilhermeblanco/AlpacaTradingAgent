@@ -22,7 +22,15 @@ class VirtualStopsManager:
 
     _instance_lock = threading.Lock()
     _daemon_running = False
+    _daemon_thread: Optional[threading.Thread] = None
     _db_initialized = False
+
+    @staticmethod
+    def _env_enabled(name: str, default: bool = False) -> bool:
+        value = os.getenv(name)
+        if value is None:
+            return default
+        return value.strip().lower() in {"1", "true", "yes", "on"}
 
     @staticmethod
     def _get_db_connection() -> sqlite3.Connection:
@@ -169,6 +177,52 @@ class VirtualStopsManager:
             return count
 
     @classmethod
+    def _set_stop_status(cls, stop_id: int, status: str) -> bool:
+        now = datetime.now(timezone.utc).isoformat()
+        with cls._get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE virtual_stops SET status = ?, updated_at = ? WHERE id = ? AND status = 'ACTIVE'",
+                (status, now, stop_id),
+            )
+            conn.commit()
+            return cursor.rowcount == 1
+
+    @classmethod
+    def reconcile_active_stops(cls) -> Dict[str, int]:
+        """Cancel stops that no longer correspond to an open Alpaca position.
+
+        Broker errors propagate so startup fails closed instead of treating an
+        unavailable account as empty and silently discarding protection.
+        """
+        active = cls.get_active_virtual_stops()
+        if not active:
+            return {"active": 0, "cancelled_orphans": 0}
+
+        from tradingagents.dataflows.alpaca_utils import get_alpaca_trading_client
+
+        client = get_alpaca_trading_client()
+        positions = client.get_all_positions()
+        open_symbols = {
+            str(position.symbol).upper().replace("/", "")
+            for position in positions
+            if float(position.qty) != 0
+        }
+        cancelled = 0
+        for stop in active:
+            symbol_key = str(stop["symbol"]).upper().replace("/", "")
+            if symbol_key not in open_symbols and cls._set_stop_status(
+                int(stop["id"]), "CANCELLED"
+            ):
+                cancelled += 1
+                logger.warning(
+                    "Cancelled orphaned Virtual Stop #%s for %s during startup reconciliation.",
+                    stop["id"],
+                    stop["symbol"],
+                )
+        return {"active": len(active) - cancelled, "cancelled_orphans": cancelled}
+
+    @classmethod
     def check_and_trigger_stops(cls, symbol: str, current_price: float) -> List[Dict[str, Any]]:
         """Check active virtual stops against a new price tick and trigger market close
         if threshold is breached.
@@ -197,7 +251,55 @@ class VirtualStopsManager:
                 reason = f"Virtual Take Profit triggered: current price ${current_price:.2f} >= TP ${tp:.2f}"
 
             if reason:
-                logger.warning(f"🚨 TRIGGERING VIRTUAL STOP #{stop_id} for {sym}: {reason}")
+                # Confirm the position still exists immediately before any close.
+                # A stale local stop must never create broker activity by itself.
+                try:
+                    position_state = AlpacaUtils.get_current_position_state(
+                        sym, strict=True
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "Cannot verify position for Virtual Stop #%s (%s): %s",
+                        stop_id,
+                        sym,
+                        exc,
+                    )
+                    continue
+                if position_state == "NEUTRAL":
+                    cls._set_stop_status(stop_id, "CANCELLED")
+                    logger.warning(
+                        "Cancelled orphaned Virtual Stop #%s for %s before trigger.",
+                        stop_id,
+                        sym,
+                    )
+                    continue
+
+                try:
+                    from tradingagents.safety import get_safety_guard
+
+                    verdict = get_safety_guard().check_order(
+                        sym, 0.0, risk_reducing=True
+                    )
+                    if not verdict.allowed:
+                        logger.error(
+                            "Safety layer blocked Virtual Stop #%s for %s: %s",
+                            stop_id,
+                            sym,
+                            " ".join(verdict.reasons),
+                        )
+                        continue
+                except Exception as exc:
+                    logger.error(
+                        "Cannot verify safety state for Virtual Stop #%s (%s): %s",
+                        stop_id,
+                        sym,
+                        exc,
+                    )
+                    continue
+
+                logger.warning(
+                    "TRIGGERING VIRTUAL STOP #%s for %s: %s", stop_id, sym, reason
+                )
                 now = datetime.now(timezone.utc).isoformat()
 
                 # Optimistic lock: only mark TRIGGERED if still ACTIVE (prevents double-trigger)
@@ -216,6 +318,13 @@ class VirtualStopsManager:
                 # Execute position close via Alpaca
                 try:
                     close_result = AlpacaUtils.close_position(sym)
+                    if not isinstance(close_result, dict) or not close_result.get("success"):
+                        error = (
+                            close_result.get("error", "broker rejected close")
+                            if isinstance(close_result, dict)
+                            else "broker returned an invalid close result"
+                        )
+                        raise RuntimeError(error)
                 except Exception as e:
                     # If close fails, restore stop to ACTIVE so it can be retried
                     logger.error(f"Failed to close position for {sym} after stop trigger: {e}. Restoring stop to ACTIVE.")
@@ -241,14 +350,49 @@ class VirtualStopsManager:
         return triggered
 
     @classmethod
-    def start_realtime_daemon(cls) -> None:
-        """Start background thread monitoring price ticks via periodic polling."""
+    def start_realtime_daemon(cls) -> Dict[str, Any]:
+        """Start monitoring only after explicit enablement and reconciliation."""
+        if not cls._env_enabled("VIRTUAL_STOPS_DAEMON_ENABLED"):
+            logger.info(
+                "VirtualStops daemon is disabled; set VIRTUAL_STOPS_DAEMON_ENABLED=true to enable it."
+            )
+            return {"started": False, "reason": "disabled"}
+
+        from tradingagents.dataflows.config import get_alpaca_use_paper
+
+        paper_value = get_alpaca_use_paper()
+        is_paper = str(paper_value or "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if not is_paper and not cls._env_enabled("VIRTUAL_STOPS_LIVE_ENABLED"):
+            logger.error(
+                "VirtualStops daemon refused to start for a live Alpaca account. "
+                "Set VIRTUAL_STOPS_LIVE_ENABLED=true only after operator review."
+            )
+            return {"started": False, "reason": "live_not_enabled"}
+
         with cls._instance_lock:
             if cls._daemon_running:
-                return
-            cls._daemon_running = True
+                return {"started": True, "reason": "already_running"}
 
         cls.init_db()
+        try:
+            reconciliation = cls.reconcile_active_stops()
+        except Exception as exc:
+            logger.error("VirtualStops startup reconciliation failed: %s", exc)
+            return {
+                "started": False,
+                "reason": "reconciliation_failed",
+                "error": str(exc),
+            }
+
+        with cls._instance_lock:
+            if cls._daemon_running:
+                return {"started": True, "reason": "already_running"}
+            cls._daemon_running = True
 
         def _daemon_loop():
             logger.info("Starting VirtualStops Real-Time Monitoring Daemon...")
@@ -278,4 +422,16 @@ class VirtualStopsManager:
 
         thread = threading.Thread(target=_daemon_loop, daemon=True, name="VirtualStopsDaemon")
         thread.start()
+        cls._daemon_thread = thread
         logger.info("VirtualStops Real-Time Monitoring Daemon initialized.")
+        return {"started": True, "reason": "started", **reconciliation}
+
+    @classmethod
+    def stop_realtime_daemon(cls, timeout: float = 5.0) -> None:
+        """Stop the process-local monitoring thread."""
+        with cls._instance_lock:
+            cls._daemon_running = False
+            thread = cls._daemon_thread
+            cls._daemon_thread = None
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=max(0.0, timeout))

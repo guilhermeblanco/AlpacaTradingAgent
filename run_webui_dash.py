@@ -81,10 +81,12 @@ def main():
     
     print(f"Starting TradingAgents Dash Web UI on port {port}...")
     
-    # Initialize VirtualStopsManager real-time monitoring daemon for fractional orders
+    # The manager is disabled by default and independently gates live accounts.
     try:
         from tradingagents.dataflows.virtual_stops_manager import VirtualStopsManager
-        VirtualStopsManager.start_realtime_daemon()
+        daemon_status = VirtualStopsManager.start_realtime_daemon()
+        if not daemon_status.get("started") and daemon_status.get("reason") != "disabled":
+            print(f"VirtualStops daemon did not start: {daemon_status.get('reason')}")
     except Exception as e:
         print(f"Warning: Could not start VirtualStopsManager daemon: {e}")
 
@@ -99,4 +101,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main() 
+    main()
