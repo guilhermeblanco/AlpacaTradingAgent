@@ -6,6 +6,7 @@ from tradingagents.agents.schemas import TradeIntent
 from tradingagents.broker.snapshot import SnapshotProvider
 from tradingagents.lifecycle import LifecycleService, LifecycleStatus
 from tradingagents.lifecycle.service import DuplicateExecution
+from tradingagents.persistence.protocols import EventJournalPort
 
 from .gateway import ExecutionGateway
 from .journal import ExecutionJournal, snapshot_hash
@@ -23,7 +24,7 @@ class ExecutionPipeline:
         gateway: ExecutionGateway,
         *,
         planner: Optional[ExecutionPlanner] = None,
-        journal: Optional[ExecutionJournal] = None,
+        journal: Optional[EventJournalPort] = None,
         safety_guard=None,
         risk_sizer: Optional[Callable[..., Any]] = None,
         lifecycle: Optional[LifecycleService] = None,

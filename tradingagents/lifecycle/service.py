@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from .models import LifecycleRecord, LifecycleStatus
-from .repository import LifecycleRepository
+from tradingagents.persistence.protocols import LifecycleRepositoryPort
 
 
 class DuplicateExecution(RuntimeError):
@@ -15,7 +15,7 @@ class DuplicateExecution(RuntimeError):
 
 
 class LifecycleService:
-    def __init__(self, repository: LifecycleRepository, *, default_ttl_seconds: int = 900):
+    def __init__(self, repository: LifecycleRepositoryPort, *, default_ttl_seconds: int = 900):
         self.repository = repository
         self.default_ttl_seconds = max(1, int(default_ttl_seconds))
 
