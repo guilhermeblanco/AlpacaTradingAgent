@@ -21,6 +21,12 @@ class SignalProcessorTests(unittest.TestCase):
             "SHORT",
         )
 
+    def test_unparseable_final_decision_requires_review(self):
+        processor = SignalProcessor(FailingLLM())
+
+        self.assertEqual(processor.process_signal("Ambiguous prose only."), "REVIEW")
+        self.assertEqual(processor.process_signal("The buyer is still holding."), "REVIEW")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -55,6 +55,28 @@ class TradingMemoryLogTests(unittest.TestCase):
             self.assertEqual(len(entries), 2)
             self.assertEqual(len([entry for entry in entries if entry["pending"]]), 1)
 
+    def test_historical_context_only_uses_lessons_known_by_as_of_date(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "memory.md"
+            log = TradingMemoryLog({"memory_log_path": str(path)})
+
+            log.store_decision("AAPL", "2026-01-01", FINAL_BUY)
+            log.update_with_outcome(
+                "AAPL",
+                "2026-01-01",
+                0.02,
+                0.01,
+                5,
+                "Known later.",
+                resolution_date="2026-01-12",
+            )
+
+            self.assertEqual(log.get_past_context("AAPL", as_of="2026-01-10"), "")
+            self.assertIn(
+                "Known later.",
+                log.get_past_context("AAPL", as_of="2026-01-12"),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

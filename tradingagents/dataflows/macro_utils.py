@@ -1,6 +1,7 @@
 import requests
 import json
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from typing import Annotated, Dict, List, Optional
 from .config import get_api_key, DATA_DIR
 import os
@@ -17,6 +18,12 @@ def get_fred_api_key():
     if not api_key:
         api_key = os.getenv("FRED_API_KEY")
     return api_key
+
+
+def _fred_vintage_date(as_of: str) -> str:
+    """Clamp an as-of date to FRED's current Central-time calendar date."""
+    fred_today = datetime.now(ZoneInfo("America/Chicago")).strftime("%Y-%m-%d")
+    return min(as_of, fred_today)
 
 
 def get_fred_data(series_id: str, start_date: str, end_date: str) -> Dict:
@@ -36,6 +43,7 @@ def get_fred_data(series_id: str, start_date: str, end_date: str) -> Dict:
         return {"error": "FRED API key not found. Please set FRED_API_KEY environment variable."}
     
     url = "https://api.stlouisfed.org/fred/series/observations"
+    vintage_date = _fred_vintage_date(end_date)
     params = {
         'series_id': series_id,
         'api_key': api_key,
@@ -43,11 +51,13 @@ def get_fred_data(series_id: str, start_date: str, end_date: str) -> Dict:
         'observation_start': start_date,
         'observation_end': end_date,
         'sort_order': 'desc',
-        'limit': 100
+        'limit': 100,
+        'realtime_start': vintage_date,
+        'realtime_end': vintage_date,
     }
     
     try:
-        response = requests.get(url, params=params)
+        response = requests.get(url, params=params, timeout=30)
         response.raise_for_status()
         return response.json()
     except Exception as e:
@@ -394,4 +404,4 @@ def get_macro_economic_summary(curr_date: str) -> str:
     result += "- **Low VIX**: Risk of complacency\n"
     result += "- **Vol Regime Change**: Adjust position sizing\n\n"
     
-    return result 
+    return result

@@ -173,6 +173,7 @@ class TradingAgentsGraph:
         self.curr_state = None
         self.ticker = None
         self.log_states_dict = {}  # date to full state dict
+        self.selected_analysts = tuple(selected_analysts)
 
         # Set up the graph
         self.workflow = self.graph_setup.setup_graph(selected_analysts)
@@ -201,11 +202,23 @@ class TradingAgentsGraph:
         checkpointer = checkpointer_ctx.__enter__()
         return self.workflow.compile(checkpointer=checkpointer), checkpointer_ctx
 
+    def _run_signature(self, ticker: str) -> str:
+        """Identify graph-shaping inputs that make checkpoints incompatible."""
+        asset_type = "crypto" if is_crypto_ticker(ticker) else "stock"
+        return "|".join(
+            [
+                "analysts=" + ",".join(self.selected_analysts),
+                f"debate={self.config.get('max_debate_rounds', 2)}",
+                f"risk={self.config.get('max_risk_discuss_rounds', 2)}",
+                f"asset={asset_type}",
+            ]
+        )
+
     def _graph_args_for_run(self, ticker: str, trade_date: str) -> Dict[str, Any]:
         args = self.propagator.get_graph_args()
         if self.config.get("checkpoint_enabled", False):
             args["config"].setdefault("configurable", {})["thread_id"] = thread_id(
-                ticker, str(trade_date)
+                ticker, str(trade_date), self._run_signature(ticker)
             )
         return args
 
@@ -302,6 +315,7 @@ class TradingAgentsGraph:
                 alpha_return=alpha_return,
                 holding_days=holding_days,
                 reflection=reflection,
+                resolution_date=str(trade_date),
             )
             self._reflect_agents_on_outcome(
                 ticker, entry_date_text, raw_return, alpha_return, holding_days
@@ -512,7 +526,12 @@ class TradingAgentsGraph:
                 ),
             )
             if self.config.get("checkpoint_enabled", False):
-                clear_checkpoint(self.config["data_cache_dir"], company_name, str(trade_date))
+                clear_checkpoint(
+                    self.config["data_cache_dir"],
+                    company_name,
+                    str(trade_date),
+                    self._run_signature(company_name),
+                )
             return final_state, final_signal
         except Exception as e:
             run_logger.finish_run(

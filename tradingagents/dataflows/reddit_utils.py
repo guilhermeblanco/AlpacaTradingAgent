@@ -7,6 +7,8 @@ from typing import Annotated, List
 import os
 import re
 
+from .date_window import in_window
+
 REDDIT_USER_AGENT = "TradingAgents/1.0"
 REDDIT_CATEGORY_SUBREDDITS = {
     "global_news": [
@@ -315,7 +317,7 @@ def fetch_top_from_category_online(
             if not created_utc:
                 continue
             post_date = datetime.utcfromtimestamp(created_utc)
-            if post_date < start_dt or post_date > (end_dt + timedelta(days=1)):
+            if not in_window(post_date, start_dt, end_dt):
                 continue
 
             title = data.get("title", "")

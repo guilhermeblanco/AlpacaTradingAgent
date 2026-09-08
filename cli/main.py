@@ -1071,6 +1071,7 @@ def run_analysis():
                     config["data_cache_dir"],
                     selections["ticker"],
                     selections["analysis_date"],
+                    graph._run_signature(selections["ticker"]),
                 )
             run_started = False
         except Exception as e:
