@@ -432,7 +432,7 @@ class PostgresAdmissionPolicy:
                 allowed=False, reason="daily token budget exceeded", symbol=symbol
             )
         if row is not None and row.last_admitted_at:
-            cooling_down = now < row.last_admitted_at + timedelta(
+            cooling_down = _as_utc(now) < _as_utc(row.last_admitted_at) + timedelta(
                 seconds=self.cooldown_seconds
             )
             material_move = bool(

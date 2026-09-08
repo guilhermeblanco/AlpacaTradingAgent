@@ -1,6 +1,7 @@
 """Provider-aware candidate and analysis orchestration."""
 
 from .batch import BatchOrchestrator, BatchResult, Candidate, ProviderPolicy
+from .autonomous import AutonomousCycleResult, AutonomousCycleScheduler, MarketSessionGate
 from .execution_coordinator import (
     AllocationDispatchResult,
     AllocationDispatchStatus,
@@ -13,6 +14,9 @@ __all__ = [
     "BatchOrchestrator",
     "BatchResult",
     "Candidate",
+    "AutonomousCycleResult",
+    "AutonomousCycleScheduler",
+    "MarketSessionGate",
     "AllocationDispatchResult",
     "AllocationDispatchStatus",
     "PortfolioDispatchResult",
