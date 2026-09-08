@@ -67,6 +67,29 @@ services:
     restart: unless-stopped
     stop_grace_period: 30s
 
+  reconciliation-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: alpaca-trading-agent:web
+    env_file:
+      - ${ENV_FILE:-.env}
+    environment:
+      DATABASE_URL: "postgresql+psycopg://${POSTGRES_USER:-tradingagents}:${POSTGRES_PASSWORD:-tradingagents}@postgres:5432/${POSTGRES_DB:-tradingagents}"
+      PERSISTENCE_BACKEND: "postgres"
+      EVALUATION_PRICE_PROVIDER: "${EVALUATION_PRICE_PROVIDER:-alpaca}"
+      RECONCILIATION_WORKER_INTERVAL_SECONDS: "${RECONCILIATION_WORKER_INTERVAL_SECONDS:-5}"
+      RECONCILIATION_LEASE_SECONDS: "${RECONCILIATION_LEASE_SECONDS:-60}"
+      RECONCILIATION_POLL_SECONDS: "${RECONCILIATION_POLL_SECONDS:-5}"
+    command: ["python", "-m", "tradingagents.execution.reconciliation_worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+
   postgres:
     image: postgres:17-alpine
     container_name: alpaca-trading-agent-postgres

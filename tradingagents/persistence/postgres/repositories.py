@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from uuid import uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -18,6 +18,10 @@ from tradingagents.persistence.events import EventEnvelope
 from tradingagents.execution.models import ExecutionResult, PlanAction
 from tradingagents.execution.order_ledger import BrokerOrderRecord
 from tradingagents.execution.reconciliation import BrokerOrderSnapshot, BrokerOrderStatus
+from tradingagents.execution.reconciliation_queue import (
+    ReconciliationLeaseLost,
+    ReconciliationTask,
+)
 from tradingagents.portfolio.batch import BatchAllocationStatus, PortfolioDecisionBatch
 from tradingagents.portfolio.reservations import (
     AllocationReservationState,
@@ -39,6 +43,7 @@ from .models import (
     PortfolioReservationAllocationRow,
     PortfolioReservationRow,
     PortfolioReservationTransitionRow,
+    ReconciliationLeaseRow,
 )
 from tradingagents.persistence.outbox import OutboxLeaseLost, OutboxMessage
 
@@ -668,6 +673,16 @@ class PostgresOrderLedger:
                 )
             )
             records.append(self._record(row))
+        if self.session.get(ReconciliationLeaseRow, result.decision_id) is None:
+            self.session.add(
+                ReconciliationLeaseRow(
+                    decision_id=result.decision_id,
+                    broker=result.gateway,
+                    available_at=now,
+                    attempts=0,
+                    updated_at=now,
+                )
+            )
         self.session.flush()
         return records
 
@@ -765,6 +780,101 @@ class PostgresOrderLedger:
             updated_at=row.updated_at,
             terminal_at=row.terminal_at,
         )
+
+
+class PostgresReconciliationQueue:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def claim(
+        self,
+        *,
+        worker_id: str,
+        limit: int = 25,
+        lease_seconds: int = 60,
+        now: Optional[datetime] = None,
+    ) -> list[ReconciliationTask]:
+        now = now or _utcnow()
+        rows = self.session.scalars(
+            select(ReconciliationLeaseRow)
+            .where(
+                ReconciliationLeaseRow.completed_at.is_(None),
+                ReconciliationLeaseRow.available_at <= now,
+                or_(
+                    ReconciliationLeaseRow.locked_until.is_(None),
+                    ReconciliationLeaseRow.locked_until < now,
+                ),
+            )
+            .order_by(
+                ReconciliationLeaseRow.available_at,
+                ReconciliationLeaseRow.decision_id,
+            )
+            .limit(max(1, int(limit)))
+            .with_for_update(skip_locked=True)
+        ).all()
+        tasks = []
+        for row in rows:
+            lifecycle = self.session.get(LifecycleRow, row.decision_id)
+            row.locked_by = worker_id
+            row.locked_until = now + timedelta(seconds=max(1, int(lease_seconds)))
+            row.attempts += 1
+            row.updated_at = now
+            tasks.append(
+                ReconciliationTask(
+                    decision_id=row.decision_id,
+                    broker=row.broker,
+                    attempts=row.attempts,
+                    execution_result=(lifecycle.result or {}) if lifecycle else {},
+                )
+            )
+        self.session.flush()
+        return tasks
+
+    def complete(
+        self,
+        decision_id: str,
+        *,
+        worker_id: str,
+        now: Optional[datetime] = None,
+    ) -> None:
+        row = self._locked(decision_id, worker_id)
+        now = now or _utcnow()
+        row.completed_at = now
+        row.updated_at = now
+        row.locked_by = None
+        row.locked_until = None
+        row.last_error = None
+        self.session.flush()
+
+    def retry(
+        self,
+        decision_id: str,
+        *,
+        worker_id: str,
+        retry_at: datetime,
+        error: Optional[str] = None,
+    ) -> None:
+        row = self._locked(decision_id, worker_id)
+        row.available_at = retry_at
+        row.updated_at = _utcnow()
+        row.locked_by = None
+        row.locked_until = None
+        row.last_error = (error or "")[:4000] or None
+        self.session.flush()
+
+    def _locked(
+        self, decision_id: str, worker_id: str
+    ) -> ReconciliationLeaseRow:
+        row = self.session.scalar(
+            select(ReconciliationLeaseRow)
+            .where(ReconciliationLeaseRow.decision_id == decision_id)
+            .with_for_update()
+        )
+        if row is None or row.locked_by != worker_id:
+            raise ReconciliationLeaseLost(
+                f"Worker {worker_id} no longer owns reconciliation {decision_id}"
+            )
+        return row
 
 
 class PostgresPortfolioReservationRepository:

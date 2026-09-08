@@ -7,6 +7,7 @@ from .repositories import (
     PostgresOrderLedger,
     PostgresOutboxRepository,
     PostgresPortfolioReservationRepository,
+    PostgresReconciliationQueue,
 )
 
 __all__ = [
@@ -16,6 +17,7 @@ __all__ = [
     "PostgresOutboxRepository",
     "PostgresOrderLedger",
     "PostgresPortfolioReservationRepository",
+    "PostgresReconciliationQueue",
     "create_database_engine",
     "create_session_factory",
 ]

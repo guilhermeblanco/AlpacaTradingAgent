@@ -11,6 +11,7 @@ from .reconciliation import (
     PersistentExecutionReconciler,
     ReconciliationReport,
 )
+from .reconciliation_queue import ReconciliationLeaseLost, ReconciliationTask
 
 __all__ = [
     "ExecutionGateway",
@@ -26,5 +27,7 @@ __all__ = [
     "ExecutionReconciler",
     "PersistentExecutionReconciler",
     "ReconciliationReport",
+    "ReconciliationLeaseLost",
+    "ReconciliationTask",
     "execute_autonomous_trade",
 ]

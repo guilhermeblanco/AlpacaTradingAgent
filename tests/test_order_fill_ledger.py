@@ -25,6 +25,7 @@ from tradingagents.execution.reconciliation import (
     BrokerOrderStatus,
     PersistentExecutionReconciler,
 )
+from tradingagents.execution.reconciliation_worker import ReconciliationWorker
 from tradingagents.lifecycle import LifecycleStatus
 from tradingagents.persistence.postgres import (
     Base,
@@ -90,7 +91,11 @@ def _seed_submission(session_factory, gateway="alpaca-paper") -> ExecutionPlan:
             idempotency_key="decision-key",
         )
         uow.orders.record_submission(result)
-        uow.lifecycle.transition(plan.decision_id, LifecycleStatus.SUBMITTED)
+        uow.lifecycle.transition(
+            plan.decision_id,
+            LifecycleStatus.SUBMITTED,
+            result=result.model_dump(mode="json"),
+        )
         uow.commit()
     return plan
 
@@ -142,6 +147,89 @@ def test_order_ledger_derives_incremental_fills_from_cumulative_snapshots(
         assert [fill.quantity for fill in fills] == [4, 6]
         assert fills[0].price == pytest.approx(100)
         assert fills[1].price == pytest.approx(103.3333333)
+
+
+def test_reconciliation_queue_uses_exclusive_durable_leases(session_factory) -> None:
+    plan = _seed_submission(session_factory)
+    now = datetime.now(timezone.utc)
+    with PostgresUnitOfWork(session_factory) as uow:
+        first = uow.reconciliation_queue.claim(
+            worker_id="worker-a", now=now, lease_seconds=30
+        )
+        uow.commit()
+    with PostgresUnitOfWork(session_factory) as uow:
+        blocked = uow.reconciliation_queue.claim(worker_id="worker-b", now=now)
+        uow.rollback()
+
+    assert [task.decision_id for task in first] == [plan.decision_id]
+    assert first[0].execution_result["decision_id"] == plan.decision_id
+    assert blocked == []
+
+    with PostgresUnitOfWork(session_factory) as uow:
+        uow.reconciliation_queue.retry(
+            plan.decision_id,
+            worker_id="worker-a",
+            retry_at=now + timedelta(seconds=10),
+            error="still open",
+        )
+        uow.commit()
+    with PostgresUnitOfWork(session_factory) as uow:
+        assert uow.reconciliation_queue.claim(
+            worker_id="worker-b", now=now + timedelta(seconds=9)
+        ) == []
+        due = uow.reconciliation_queue.claim(
+            worker_id="worker-b", now=now + timedelta(seconds=10)
+        )
+        uow.commit()
+    assert len(due) == 1
+
+
+def test_reconciliation_worker_completes_filled_order(session_factory) -> None:
+    plan = _seed_submission(session_factory, gateway="tradier")
+
+    class FilledGateway:
+        def get_order_snapshot(self, **kwargs):
+            return BrokerOrderSnapshot(
+                order_id="broker-order-1",
+                symbol="AAPL",
+                side="buy",
+                status=BrokerOrderStatus.FILLED,
+                requested_quantity=10,
+                filled_quantity=10,
+                filled_avg_price=101,
+            )
+
+    class Prices:
+        def price_at_or_before(self, symbol, at):
+            from tradingagents.evaluation import PriceObservation
+
+            return PriceObservation(
+                symbol=symbol,
+                price=500,
+                observed_at=at - timedelta(minutes=1),
+            )
+
+    brokers = []
+
+    def gateway_factory(broker):
+        brokers.append(broker)
+        return FilledGateway()
+
+    result = ReconciliationWorker(
+        lambda: PostgresUnitOfWork(session_factory),
+        gateway_factory,
+        evaluation_prices=Prices(),
+        worker_id="test-worker",
+    ).run_once()
+
+    assert result.claimed == 1
+    assert result.completed == 1
+    assert result.failed == 0
+    assert brokers == ["tradier"]
+    with PostgresUnitOfWork(session_factory) as uow:
+        assert uow.lifecycle.get(plan.decision_id).status is LifecycleStatus.FILLED
+        assert uow.reconciliation_queue.claim(worker_id="other") == []
+        uow.rollback()
 
 
 def test_persistent_reconciler_updates_order_lifecycle_and_event(session_factory) -> None:
