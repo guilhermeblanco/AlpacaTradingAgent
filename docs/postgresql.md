@@ -2,14 +2,19 @@
 
 PostgreSQL provides the durable decision event log and transactional projections
 used by lifecycle, evaluation, and analysis admission. Existing local storage
-remains the application default until the persistence cutover is enabled.
+remains available by setting `PERSISTENCE_BACKEND=local`.
 
 ## Local setup
 
 1. Copy `env.sample` to `.env` and replace the PostgreSQL password.
-2. Start the database with `docker compose up -d postgres`.
-3. Apply the schema with `alembic upgrade head`.
-4. Start the application with `docker compose up -d --build`.
+2. Start the application with `docker compose up -d --build`.
+
+Compose waits for PostgreSQL, applies `alembic upgrade head` in a one-shot
+migration service, and starts the web process only after migration succeeds.
+For a host installation, apply the schema directly with `alembic upgrade head`.
+Compose defaults to `PERSISTENCE_BACKEND=postgres`. Host installations must set
+that value explicitly after configuring `DATABASE_URL`; otherwise they retain
+the local SQLite/JSONL backend.
 
 When Alembic runs on the host, use a host URL:
 
@@ -29,6 +34,11 @@ current revision, run `alembic current`.
 The `decision_events` table is append-only. PostgreSQL rejects updates and
 deletes through a database trigger, preserving the audit trail even if an
 application code path attempts a mutation.
+
+For equity execution, each lifecycle transition and its matching decision event
+commit in one transaction. If either write fails, both roll back. Keep lifecycle
+tracking enabled for autonomous execution because it supplies duplicate-decision
+protection and broker idempotency keys.
 
 The `outbox` table makes local state changes and queued external work one
 transaction. Dispatch is at least once: workers use leases and `SKIP LOCKED`,

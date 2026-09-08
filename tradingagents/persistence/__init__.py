@@ -15,6 +15,7 @@ from .outbox import (
     OutboxPort,
 )
 from .unit_of_work import OutboxUnitOfWork, PassthroughUnitOfWork, UnitOfWork
+from .runtime import PersistenceRuntime, build_persistence_runtime
 
 __all__ = [
     "AdmissionPolicyPort",
@@ -29,6 +30,8 @@ __all__ = [
     "OutboxMessage",
     "OutboxPort",
     "OutboxUnitOfWork",
+    "PersistenceRuntime",
     "UnitOfWork",
     "payload_hash",
+    "build_persistence_runtime",
 ]

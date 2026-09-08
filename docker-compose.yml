@@ -16,9 +16,10 @@ services:
       TRADINGAGENTS_RESULTS_DIR: /app/eval_results
       TRADINGAGENTS_MEMORY_LOG_PATH: /app/.tradingagents/memory/trading_memory.md
       DATABASE_URL: "postgresql+psycopg://${POSTGRES_USER:-tradingagents}:${POSTGRES_PASSWORD:-tradingagents}@postgres:5432/${POSTGRES_DB:-tradingagents}"
+      PERSISTENCE_BACKEND: "${PERSISTENCE_BACKEND:-postgres}"
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     ports:
       - "127.0.0.1:${HOST_PORT:-7860}:7860"
     restart: unless-stopped
@@ -27,6 +28,21 @@ services:
       - data-cache:/app/tradingagents/dataflows/data_cache
       - eval-results:/app/eval_results
       - trading-state:/app/.tradingagents
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: alpaca-trading-agent:web
+    env_file:
+      - ${ENV_FILE:-.env}
+    environment:
+      DATABASE_URL: "postgresql+psycopg://${POSTGRES_USER:-tradingagents}:${POSTGRES_PASSWORD:-tradingagents}@postgres:5432/${POSTGRES_DB:-tradingagents}"
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
 
   postgres:
     image: postgres:17-alpine
