@@ -12,6 +12,7 @@ from .repositories import (
     PostgresEvaluationRepository,
     PostgresEventJournal,
     PostgresLifecycleRepository,
+    PostgresOutboxRepository,
 )
 
 
@@ -34,6 +35,7 @@ class PostgresUnitOfWork:
             self.session, **self.admission_options
         )
         self.journal = PostgresEventJournal(self.session)
+        self.outbox = PostgresOutboxRepository(self.session)
         return self
 
     def __exit__(

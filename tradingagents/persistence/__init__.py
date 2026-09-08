@@ -7,7 +7,14 @@ from .protocols import (
     EventJournalPort,
     LifecycleRepositoryPort,
 )
-from .unit_of_work import PassthroughUnitOfWork, UnitOfWork
+from .outbox import (
+    OutboxDispatchResult,
+    OutboxDispatcher,
+    OutboxLeaseLost,
+    OutboxMessage,
+    OutboxPort,
+)
+from .unit_of_work import OutboxUnitOfWork, PassthroughUnitOfWork, UnitOfWork
 
 __all__ = [
     "AdmissionPolicyPort",
@@ -16,6 +23,12 @@ __all__ = [
     "EventJournalPort",
     "LifecycleRepositoryPort",
     "PassthroughUnitOfWork",
+    "OutboxDispatchResult",
+    "OutboxDispatcher",
+    "OutboxLeaseLost",
+    "OutboxMessage",
+    "OutboxPort",
+    "OutboxUnitOfWork",
     "UnitOfWork",
     "payload_hash",
 ]

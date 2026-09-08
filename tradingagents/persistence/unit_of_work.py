@@ -14,6 +14,7 @@ from .protocols import (
     EventJournalPort,
     LifecycleRepositoryPort,
 )
+from .outbox import OutboxPort
 
 
 class UnitOfWork(Protocol):
@@ -34,6 +35,10 @@ class UnitOfWork(Protocol):
     def commit(self) -> None: ...
 
     def rollback(self) -> None: ...
+
+
+class OutboxUnitOfWork(UnitOfWork, Protocol):
+    outbox: OutboxPort
 
 
 @dataclass
