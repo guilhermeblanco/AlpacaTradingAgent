@@ -384,11 +384,11 @@ class TradingAgentsGraph:
             "market": ToolNode(
                 [
                     # online tools
-                    self.toolkit.get_alpaca_data,
+                    self.toolkit.get_market_data,
                     self.toolkit.get_stockstats_indicators_report_online,
                     # offline tools
                     self.toolkit.get_stockstats_indicators_report,
-                    self.toolkit.get_alpaca_data_report,
+                    self.toolkit.get_market_data_report,
                 ]
             ),
             "social": ToolNode(

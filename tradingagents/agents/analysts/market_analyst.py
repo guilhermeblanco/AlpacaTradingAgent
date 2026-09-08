@@ -60,25 +60,25 @@ def create_market_analyst(llm, toolkit):
         ticker = state["company_of_interest"]
         company_name = state["company_of_interest"]
         is_crypto = "/" in ticker or "USD" in ticker.upper() or "USDT" in ticker.upper()
-        alpaca_available = is_crypto or toolkit.has_alpaca_credentials()
+        market_data_available = toolkit.has_research_market_data(ticker)
 
-        if toolkit.config["online_tools"] and alpaca_available:
+        if toolkit.config["online_tools"] and market_data_available:
             tools = [
                 toolkit.get_technical_brief,
-                toolkit.get_alpaca_data_report,
+                toolkit.get_market_data_report,
                 toolkit.get_stockstats_indicators_report_online,
             ]
-        elif toolkit.config["online_tools"] and not alpaca_available:
-            # Keep running with offline stockstats fallback when Alpaca credentials are unavailable.
+        elif toolkit.config["online_tools"] and not market_data_available:
+            # Keep running with offline stockstats fallback when provider data is unavailable.
             tools = [
                 toolkit.get_stockstats_indicators_report,
             ]
         else:
             tools = [toolkit.get_stockstats_indicators_report]
-            if alpaca_available:
-                tools.insert(0, toolkit.get_alpaca_data_report)
+            if market_data_available:
+                tools.insert(0, toolkit.get_market_data_report)
 
-        technical_brief_available = toolkit.config["online_tools"] and alpaca_available
+        technical_brief_available = toolkit.config["online_tools"] and market_data_available
         indicator_tool_name = (
             "get_stockstats_indicators_report_online"
             if technical_brief_available
@@ -89,8 +89,8 @@ def create_market_analyst(llm, toolkit):
             evidence_sources.append(
                 "   - `get_technical_brief` for compact synthesized confirmation"
             )
-        if alpaca_available:
-            evidence_sources.append("   - `get_alpaca_data_report` for OHLCV context")
+        if market_data_available:
+            evidence_sources.append("   - `get_market_data_report` for OHLCV context")
         evidence_sources.append(f"   - `{indicator_tool_name}` for indicator history")
 
         workflow_intro = (
@@ -123,9 +123,9 @@ def create_market_analyst(llm, toolkit):
             "   - Run at least 3 indicator-history calls across different indicators and at least 2 timeframes when the tool supports it.\n"
             "   - Example flow: momentum (`rsi_14`/`macd`) -> trend (`close_8_ema`, `close_21_ema`, `close_50_sma`) -> volatility/risk (`atr_14`, Bollinger).\n"
             + (
-                "   - Cross-check indicator history against price levels from Alpaca.\n"
-                if alpaca_available
-                else "   - Do not request unavailable Alpaca data; rely on indicator history and explicitly state that limitation.\n"
+                "   - Cross-check indicator history against provider price levels.\n"
+                if market_data_available
+                else "   - Do not request unavailable market data; rely on indicator history and explicitly state that limitation.\n"
             )
         )
 
@@ -135,9 +135,9 @@ def create_market_analyst(llm, toolkit):
             else "analysts/market_intro_without_brief"
         )
         anchor_guidance = (
-            "**Important**: Anchor your thesis in both Alpaca price action and Stockstats indicators."
-            if alpaca_available
-            else "**Important**: Anchor your thesis in the available Stockstats evidence and explicitly note that Alpaca price data is unavailable."
+            "**Important**: Anchor your thesis in both provider price action and Stockstats indicators."
+            if market_data_available
+            else "**Important**: Anchor your thesis in the available Stockstats evidence and explicitly note that research price data is unavailable."
         )
 
         system_message = render_prompt(

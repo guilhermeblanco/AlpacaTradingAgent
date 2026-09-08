@@ -76,6 +76,9 @@ DEFAULT_CONFIG = {
     "protective_bracket_orders_enabled": True,  # Submit stop-loss/take-profit as real bracket/OTO child orders on equity entries (crypto unsupported by Alpaca)
     "execution_gateway": "alpaca",  # alpaca or dry-run; Alpaca paper/live is controlled separately below
     "execution_broker": "alpaca",  # alpaca, tradier, or robinhood
+    "research_market_data_provider": os.getenv(
+        "RESEARCH_MARKET_DATA_PROVIDER", "alpaca"
+    ),  # alpaca or tradier; independent of execution_broker
     "lifecycle_enabled": True,
     "lifecycle_db_path": None,  # Defaults to <results_dir>/execution_lifecycle.sqlite3
     "lifecycle_intent_ttl_seconds": 900,

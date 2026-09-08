@@ -579,6 +579,17 @@ class Toolkit:
             "alpaca_secret_key", "ALPACA_SECRET_KEY"
         )
 
+    def has_research_market_data(self, symbol: str = "AAPL") -> bool:
+        try:
+            from tradingagents.marketdata import get_research_market_data_provider
+
+            provider = get_research_market_data_provider(self.config)
+            if provider.name == "alpaca" and not self.has_alpaca_credentials():
+                return False
+            return provider.supports(symbol)
+        except Exception:
+            return False
+
     def has_fred(self) -> bool:
         return self._has_key("fred_api_key", "FRED_API_KEY")
 
@@ -720,14 +731,14 @@ class Toolkit:
     @staticmethod
     @tool
     @timing_wrapper("MARKET")
-    def get_alpaca_data(
+    def get_market_data(
         symbol: Annotated[str, "ticker symbol (stocks: AAPL, TSM; crypto: ETH/USD, BTC/USD)"],
         start_date: Annotated[str, "Start date in yyyy-mm-dd format"],
         end_date: Annotated[str, "End date in yyyy-mm-dd format"],
         timeframe: Annotated[str, "Timeframe for data: 1Min, 5Min, 15Min, 1Hour, 1Day"] = "1Day",
     ) -> str:
         """
-        Retrieve stock and cryptocurrency price data from Alpaca.
+        Retrieve stock and cryptocurrency price data from the configured provider.
         For crypto symbols, use format with slash: ETH/USD, BTC/USD, SOL/USD
         For stock symbols, use standard format: AAPL, TSM, NVDA
         Args:
@@ -739,7 +750,7 @@ class Toolkit:
             str: A formatted dataframe containing the price data for the specified ticker symbol in the specified date range.
         """
 
-        result_data = interface.get_alpaca_data(symbol, start_date, end_date, timeframe)
+        result_data = interface.get_market_data(symbol, start_date, end_date, timeframe)
 
         return result_data
 
@@ -1226,28 +1237,28 @@ class Toolkit:
     @staticmethod
     @tool
     @timing_wrapper("MARKET")
-    def get_alpaca_data_report(
+    def get_market_data_report(
         symbol: Annotated[str, "ticker symbol of the company"],
         curr_date: Annotated[str, "Start date in yyyy-mm-dd format"],
         look_back_days: Annotated[int, "how many days to look back"],
         timeframe: Annotated[str, "Timeframe for data: 1Min, 5Min, 15Min, 1Hour, 1Day"] = "1Day",
     ) -> str:
         """
-        Retrieve Alpaca data for a given ticker symbol.
+        Retrieve research market data for a given ticker symbol.
         Args:
             symbol (str): Ticker symbol of the company, e.g. AAPL, TSM
             curr_date (str): The current trading date in YYYY-mm-dd format
             look_back_days (int): How many days to look back
             timeframe (str): Timeframe for data (1Min, 5Min, 15Min, 1Hour, 1Day)
         Returns:
-            str: A formatted dataframe containing the Alpaca data for the specified ticker symbol.
+            str: A formatted dataframe containing provider market data for the specified ticker symbol.
         """
 
-        result_alpaca = interface.get_alpaca_data_window(
+        result_data = interface.get_market_data_window(
             symbol, curr_date, look_back_days, timeframe
         )
 
-        return result_alpaca
+        return result_data
 
     @staticmethod
     @tool
@@ -1273,7 +1284,7 @@ class Toolkit:
         """
 
         # Get the raw data from the interface
-        raw_result = interface.get_alpaca_data_window(
+        raw_result = interface.get_market_data_window(
             symbol, curr_date, look_back_days, timeframe
         )
         
@@ -1391,14 +1402,15 @@ class Toolkit:
         
         # Get raw stock data first to calculate all indicators at once
         try:
-            from tradingagents.dataflows.alpaca_utils import AlpacaUtils
+            from tradingagents.marketdata import get_research_market_data_provider
             import pandas as pd
             
             # Get extended data for proper indicator calculation (need more history)
             start_date_extended = curr_dt - pd.Timedelta(days=200)  # More history for proper indicators
             
             # Get stock data
-            stock_data = AlpacaUtils.get_stock_data(
+            provider = get_research_market_data_provider()
+            stock_data = provider.get_bars(
                 symbol=symbol,
                 start_date=start_date_extended.strftime('%Y-%m-%d'),
                 end_date=curr_date,

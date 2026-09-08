@@ -16,7 +16,6 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from .alpaca_utils import AlpacaUtils
 from .ta_schema import (
     Direction,
     KeyLevel,
@@ -144,7 +143,7 @@ def compute_indicators(
     timeframe_key: str,
 ) -> Optional[pd.DataFrame]:
     """
-    Fetch OHLCV from Alpaca and add derived indicator columns.
+    Fetch OHLCV from the configured research provider and add indicators.
 
     Returns a DataFrame with at least columns:
         open, high, low, close, volume, vwap,
@@ -156,7 +155,10 @@ def compute_indicators(
     curr_dt = pd.to_datetime(curr_date)
     start_dt = curr_dt - timedelta(days=lookback_days)
 
-    df = AlpacaUtils.get_stock_data(
+    from tradingagents.marketdata import get_research_market_data_provider
+
+    provider = get_research_market_data_provider()
+    df = provider.get_bars(
         symbol=symbol,
         start_date=start_dt.strftime("%Y-%m-%d"),
         end_date=curr_date,
