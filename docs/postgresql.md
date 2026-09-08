@@ -7,6 +7,13 @@ remains available by setting `PERSISTENCE_BACKEND=local`.
 PostgreSQL also stores encrypted provider credentials when the optional
 integration vault is enabled. See [integration-vault.md](integration-vault.md).
 
+When `PERSISTENCE_BACKEND=postgres`, the deterministic safety guard also stores
+its kill switch, equity high-water mark, broker rejection streak, and daily LLM
+token usage in PostgreSQL. Set `SAFETY_STATE_SCOPE` to a stable broker-account or
+workspace identifier. All web and worker processes using that scope observe the
+same halt and circuit-breaker state. The local `~/.tradingagents/safety/KILL_SWITCH`
+file remains an emergency host-level halt and is combined with shared state.
+
 ## Local setup
 
 1. Copy `env.sample` to `.env` and replace the PostgreSQL password.

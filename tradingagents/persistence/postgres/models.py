@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Optional
 
 from sqlalchemy import (
@@ -11,6 +11,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
+    Date,
     Float,
     ForeignKey,
     Index,
@@ -345,6 +346,26 @@ class ServiceHeartbeatRow(Base):
     status: Mapped[str] = mapped_column(String(40), nullable=False)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     details: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, nullable=False, default=dict)
+
+
+class SafetyStateRow(Base):
+    __tablename__ = "safety_state"
+
+    scope: Mapped[str] = mapped_column(String(200), primary_key=True)
+    kill_switch_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    kill_switch_reason: Mapped[Optional[str]] = mapped_column(Text)
+    kill_switch_changed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    high_water_mark: Mapped[Optional[float]] = mapped_column(Float)
+    consecutive_rejections: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class SafetyTokenUsageRow(Base):
+    __tablename__ = "safety_token_usage"
+
+    scope: Mapped[str] = mapped_column(String(200), primary_key=True)
+    usage_day: Mapped[date] = mapped_column(Date, primary_key=True)
+    tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
 
 
 class IntegrationCredentialRow(Base):

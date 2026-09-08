@@ -8,8 +8,13 @@ LLM. Each guard is exercised on both sides of its threshold.
 import json
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
+from sqlalchemy import create_engine
+
+from tradingagents.persistence.postgres import Base, create_session_factory
 
 from tradingagents.safety import (
     DEFAULT_SAFETY_CONFIG,
@@ -18,6 +23,7 @@ from tradingagents.safety import (
     get_safety_guard,
     reset_safety_guard,
 )
+from tradingagents.safety.state import PostgresSafetyStateStore
 
 
 def make_guard(tmp, **overrides):
@@ -56,6 +62,47 @@ class KillSwitchTests(unittest.TestCase):
             guard = make_guard(tmp)
             self.assertTrue(guard.kill_switch_active())
             self.assertFalse(guard.check_order("AAPL", 100.0).allowed)
+
+
+class SharedSafetyStateTests(unittest.TestCase):
+    def setUp(self):
+        self.engine = create_engine("sqlite+pysqlite:///:memory:")
+        Base.metadata.create_all(self.engine)
+        self.sessions = create_session_factory(self.engine)
+
+    def tearDown(self):
+        self.engine.dispose()
+
+    def store(self):
+        return PostgresSafetyStateStore(self.sessions, scope="alpaca:paper-test")
+
+    def test_kill_switch_is_visible_across_guard_instances(self):
+        first = SafetyGuard(state_store=self.store())
+        second = SafetyGuard(state_store=self.store())
+        first.engage_kill_switch("shared halt")
+        self.assertTrue(second.kill_switch_active())
+        self.assertIn("shared halt", second.kill_switch_reason())
+        second.release_kill_switch()
+        self.assertFalse(first.kill_switch_active())
+
+    def test_rejection_streak_is_shared(self):
+        first = SafetyGuard(state_store=self.store())
+        second = SafetyGuard(state_store=self.store())
+        first.record_order_result(False)
+        second.record_order_result(False)
+        self.assertEqual(first.consecutive_rejections(), 2)
+        second.record_order_result(True)
+        self.assertEqual(first.consecutive_rejections(), 0)
+
+    def test_token_usage_and_high_water_mark_are_shared(self):
+        first = self.store()
+        second = self.store()
+        first.record_llm_tokens(date(2026, 9, 8), 400)
+        second.record_llm_tokens(date(2026, 9, 8), 600)
+        self.assertEqual(first.llm_tokens_used(date(2026, 9, 8)), 1000)
+        self.assertEqual(first.update_high_water_mark(100_000), 100_000)
+        self.assertEqual(second.update_high_water_mark(90_000), 100_000)
+        self.assertEqual(second.update_high_water_mark(110_000), 110_000)
 
 
 class PreTradeCheckTests(unittest.TestCase):
@@ -213,6 +260,21 @@ class StatusAndTogglesTests(unittest.TestCase):
         self.assertIsInstance(guard, SafetyGuard)
         self.assertIs(guard, get_safety_guard())
         reset_safety_guard()
+
+    def test_singleton_selects_shared_store_for_postgres(self):
+        reset_safety_guard()
+        store = MagicMock()
+        with patch(
+            "tradingagents.dataflows.config.get_config",
+            return_value={"persistence_backend": "postgres"},
+        ), patch(
+            "tradingagents.safety.state.build_postgres_safety_store",
+            return_value=store,
+        ):
+            guard = get_safety_guard()
+        self.assertIs(guard.state_store, store)
+        reset_safety_guard()
+        store.close.assert_called_once_with()
 
 
 class ExecutionIntegrationTests(unittest.TestCase):

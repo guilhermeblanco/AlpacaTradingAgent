@@ -82,6 +82,7 @@ DEFAULT_CONFIG = {
     "lifecycle_poll_interval_seconds": 30,
     "persistence_backend": os.getenv("PERSISTENCE_BACKEND", "local"),
     "database_url": os.getenv("DATABASE_URL"),
+    "safety_state_scope": os.getenv("SAFETY_STATE_SCOPE"),
     "evaluation_enabled": True,
     "evaluation_db_path": None,  # Defaults to <results_dir>/evaluation.sqlite3
     "evaluation_benchmark_symbol": "SPY",

@@ -7,8 +7,8 @@ a model and keeps working when providers misbehave. Three stages:
 - pre-trade checks: per-order notional cap, per-symbol concentration cap
 - circuit breakers: daily loss halt, drawdown-from-high-water-mark halt,
   consecutive-rejection halt (a data/connectivity glitch signal)
-- kill switch: a flag file that stops all order flow no matter what the
-  agents decide (ops can engage it by touching the file, no Python needed)
+- kill switch: shared PostgreSQL state for coordinated deployments plus a
+  host-local emergency flag file
 
 A daily LLM token budget rides along: run logs already count tokens, the
 guard accumulates them per day and can refuse to start new analyses.
@@ -23,7 +23,10 @@ import threading
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from .state import SafetyStateStore
 
 DEFAULT_SAFETY_CONFIG: Dict[str, Any] = {
     "safety_enabled": True,
@@ -69,11 +72,11 @@ def _finite_float(value) -> Optional[float]:
 
 
 class SafetyGuard:
-    """Thread-safe guard with a small JSON state file.
+    """Thread-safe guard backed by local files or shared PostgreSQL state.
 
     Persisted state: equity high-water mark, current rejection streak, and
-    per-day LLM token counts. The kill switch is a separate flag file so a
-    human (or cron job) can engage it with `touch`.
+    per-day LLM token counts. A local kill-switch file remains available so a
+    human or host monitor can engage an emergency halt without database access.
     """
 
     def __init__(
@@ -81,6 +84,7 @@ class SafetyGuard:
         config: Optional[Dict[str, Any]] = None,
         state_path: Optional[Path] = None,
         kill_switch_path: Optional[Path] = None,
+        state_store: Optional["SafetyStateStore"] = None,
     ):
         merged = dict(DEFAULT_SAFETY_CONFIG)
         for key in merged:
@@ -91,6 +95,7 @@ class SafetyGuard:
         self.kill_switch_path = Path(
             kill_switch_path or (_SAFETY_HOME / "KILL_SWITCH")
         )
+        self.state_store = state_store
         self._lock = threading.RLock()
         self._state = self._load_state()
 
@@ -118,18 +123,29 @@ class SafetyGuard:
         return bool(self.config.get("safety_enabled", True))
 
     def kill_switch_active(self) -> bool:
+        if self.state_store is not None:
+            active, _ = self.state_store.kill_switch()
+            return active or self.kill_switch_path.exists()
         return self.kill_switch_path.exists()
 
     def kill_switch_reason(self) -> str:
+        if self.state_store is not None:
+            active, reason = self.state_store.kill_switch()
+            if active:
+                return reason
         try:
             return self.kill_switch_path.read_text(encoding="utf-8").strip()
         except OSError:
             return ""
 
     def engage_kill_switch(self, reason: str = "manual halt") -> None:
-        self.kill_switch_path.parent.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(timezone.utc).isoformat()
-        self.kill_switch_path.write_text(f"{reason} (engaged {stamp})", encoding="utf-8")
+        persisted_reason = f"{reason} (engaged {stamp})"
+        if self.state_store is not None:
+            self.state_store.set_kill_switch(True, persisted_reason)
+        else:
+            self.kill_switch_path.parent.mkdir(parents=True, exist_ok=True)
+            self.kill_switch_path.write_text(persisted_reason, encoding="utf-8")
         # Ops alert; imported lazily and failure-isolated so the safety
         # layer keeps zero hard dependencies.
         try:
@@ -140,6 +156,8 @@ class SafetyGuard:
             pass
 
     def release_kill_switch(self) -> None:
+        if self.state_store is not None:
+            self.state_store.set_kill_switch(False)
         try:
             self.kill_switch_path.unlink()
         except FileNotFoundError:
@@ -148,6 +166,9 @@ class SafetyGuard:
     # ----- order/rejection tracking -------------------------------------------
 
     def record_order_result(self, success: bool) -> None:
+        if self.state_store is not None:
+            self.state_store.record_order_result(success)
+            return
         with self._lock:
             if success:
                 self._state["consecutive_rejections"] = 0
@@ -158,6 +179,8 @@ class SafetyGuard:
             self._save_state()
 
     def consecutive_rejections(self) -> int:
+        if self.state_store is not None:
+            return self.state_store.consecutive_rejections()
         with self._lock:
             return int(self._state.get("consecutive_rejections", 0))
 
@@ -167,6 +190,9 @@ class SafetyGuard:
         if not tokens:
             return
         day = _today(when)
+        if self.state_store is not None:
+            self.state_store.record_llm_tokens(date.fromisoformat(day), int(tokens))
+            return
         with self._lock:
             counts = self._state.setdefault("llm_tokens", {})
             counts[day] = int(counts.get(day, 0)) + int(tokens)
@@ -177,6 +203,8 @@ class SafetyGuard:
 
     def llm_tokens_used(self, when: Optional[str] = None) -> int:
         day = _today(when)
+        if self.state_store is not None:
+            return self.state_store.llm_tokens_used(date.fromisoformat(day))
         with self._lock:
             return int(self._state.get("llm_tokens", {}).get(day, 0))
 
@@ -314,12 +342,15 @@ class SafetyGuard:
         # Circuit breaker: drawdown from persisted high-water mark.
         dd_pct = float(self.config.get("max_drawdown_halt_pct", 0) or 0)
         if equity:
-            with self._lock:
-                hwm = self._state.get("high_water_mark")
-                if hwm is None or equity > float(hwm):
-                    self._state["high_water_mark"] = equity
-                    self._save_state()
-                    hwm = equity
+            if self.state_store is not None:
+                hwm = self.state_store.update_high_water_mark(equity)
+            else:
+                with self._lock:
+                    hwm = self._state.get("high_water_mark")
+                    if hwm is None or equity > float(hwm):
+                        self._state["high_water_mark"] = equity
+                        self._save_state()
+                        hwm = equity
             hwm = float(hwm)
             if dd_pct > 0 and hwm > 0:
                 drawdown_pct = (hwm - equity) / hwm * 100.0
@@ -395,12 +426,25 @@ def get_safety_guard() -> SafetyGuard:
 
                 config = dict(get_config() or {})
             except Exception:
-                config = {}
-            _GUARD = SafetyGuard(config=config)
+                config = {
+                    "persistence_backend": os.getenv("PERSISTENCE_BACKEND", "local"),
+                    "database_url": os.getenv("DATABASE_URL"),
+                    "safety_state_scope": os.getenv("SAFETY_STATE_SCOPE"),
+                }
+            if str(config.get("persistence_backend") or "local").lower() == "postgres":
+                from .state import build_postgres_safety_store
+
+                _GUARD = SafetyGuard(
+                    config=config, state_store=build_postgres_safety_store(config)
+                )
+            else:
+                _GUARD = SafetyGuard(config=config)
         return _GUARD
 
 
 def reset_safety_guard() -> None:
     global _GUARD
     with _GUARD_LOCK:
+        if _GUARD is not None and _GUARD.state_store is not None:
+            _GUARD.state_store.close()
         _GUARD = None
