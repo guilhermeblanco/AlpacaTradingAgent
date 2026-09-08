@@ -183,6 +183,8 @@ def test_initial_migration_creates_all_persistence_tables(postgres_engine) -> No
         "reconciliation_leases",
         "service_controls",
         "service_heartbeats",
+        "integration_credentials",
+        "integration_credential_audit",
     }.issubset(inspect(postgres_engine).get_table_names())
 
 

@@ -4,6 +4,9 @@ PostgreSQL provides the durable decision event log and transactional projections
 used by lifecycle, evaluation, and analysis admission. Existing local storage
 remains available by setting `PERSISTENCE_BACKEND=local`.
 
+PostgreSQL also stores encrypted provider credentials when the optional
+integration vault is enabled. See [integration-vault.md](integration-vault.md).
+
 ## Local setup
 
 1. Copy `env.sample` to `.env` and replace the PostgreSQL password.

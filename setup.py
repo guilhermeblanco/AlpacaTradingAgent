@@ -31,6 +31,7 @@ setup(
         "SQLAlchemy>=2.0,<3.0",
         "alembic>=1.13,<2.0",
         "psycopg[binary]>=3.2,<4.0",
+        "cryptography>=42",
         "numpy>=1.24.0",
         "pandas>=2.0.0",
         "exchange-calendars>=4.5,<5.0",

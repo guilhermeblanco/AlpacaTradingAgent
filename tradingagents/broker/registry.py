@@ -73,9 +73,14 @@ def default_broker_registry() -> BrokerRegistry:
 
     def tradier(config: dict) -> BrokerRuntime:
         import os
+        from tradingagents.dataflows.config import get_api_key
 
-        token = os.getenv("TRADIER_ACCESS_TOKEN") or config.get("tradier_access_token")
-        account_id = os.getenv("TRADIER_ACCOUNT_ID") or config.get("tradier_account_id")
+        token = get_api_key(
+            "tradier_access_token", "TRADIER_ACCESS_TOKEN"
+        ) or config.get("tradier_access_token")
+        account_id = get_api_key(
+            "tradier_account_id", "TRADIER_ACCOUNT_ID"
+        ) or config.get("tradier_account_id")
         sandbox = str(os.getenv("TRADIER_USE_SANDBOX", config.get("tradier_use_sandbox", True))).lower() in {
             "1", "true", "yes", "on",
         }
@@ -96,9 +101,13 @@ def default_broker_registry() -> BrokerRegistry:
     registry.register("tradier", tradier)
     def robinhood(config: dict) -> BrokerRuntime:
         import os
+        from tradingagents.dataflows.config import get_api_key
 
         access_token = load_robinhood_access_token(
-            access_token=os.getenv("ROBINHOOD_MCP_ACCESS_TOKEN") or config.get("robinhood_mcp_access_token"),
+            access_token=get_api_key(
+                "robinhood_mcp_access_token", "ROBINHOOD_MCP_ACCESS_TOKEN"
+            )
+            or config.get("robinhood_mcp_access_token"),
             token_path=os.getenv("ROBINHOOD_MCP_TOKEN_PATH") or config.get("robinhood_mcp_token_path"),
         )
         client = RobinhoodMCPClient(
@@ -108,7 +117,9 @@ def default_broker_registry() -> BrokerRegistry:
             timeout_seconds=float(os.getenv("ROBINHOOD_MCP_TIMEOUT_SECONDS")
                                   or config.get("robinhood_mcp_timeout_seconds", 20)),
         )
-        account_number = os.getenv("ROBINHOOD_ACCOUNT_NUMBER") or config.get("robinhood_account_number")
+        account_number = get_api_key(
+            "robinhood_account_number", "ROBINHOOD_ACCOUNT_NUMBER"
+        ) or config.get("robinhood_account_number")
         review_only = str(os.getenv("ROBINHOOD_MCP_REVIEW_ONLY",
                                      config.get("robinhood_mcp_review_only", True))).lower() in {
             "1", "true", "yes", "on",

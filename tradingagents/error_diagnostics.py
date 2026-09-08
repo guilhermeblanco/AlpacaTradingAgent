@@ -231,21 +231,27 @@ class ErrorDiagnostics:
         """
         issues = []
         
-        # Check API keys
-        if not os.getenv("OPENAI_API_KEY"):
+        from tradingagents.dataflows.config import (
+            get_alpaca_api_key,
+            get_alpaca_secret_key,
+            get_openai_api_key,
+        )
+
+        # Resolve the encrypted vault before falling back to environment values.
+        if not get_openai_api_key():
             issues.append({
                 "type": "missing_config",
                 "severity": "high", 
-                "message": "OPENAI_API_KEY not found in environment variables",
-                "solution": "Add OPENAI_API_KEY to your .env file"
+                "message": "OpenAI credentials are not configured",
+                "solution": "Connect OpenAI in the Web UI or set OPENAI_API_KEY"
             })
             
-        if not os.getenv("ALPACA_API_KEY") or not os.getenv("ALPACA_SECRET_KEY"):
+        if not get_alpaca_api_key() or not get_alpaca_secret_key():
             issues.append({
                 "type": "missing_config",
                 "severity": "high",
                 "message": "Alpaca API credentials not found",
-                "solution": "Add ALPACA_API_KEY and ALPACA_SECRET_KEY to your .env file"
+                "solution": "Connect Alpaca in the Web UI or set its environment credentials"
             })
         
         return issues

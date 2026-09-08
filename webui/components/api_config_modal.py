@@ -1,9 +1,8 @@
 """
 API Configuration Modal Component for TradingAgents WebUI
 
-This component creates a modal dialog for configuring API keys.
-Keys are hidden by default (password style) but can be toggled to show.
-Supports both localStorage persistence and .env file fallback.
+This component creates a modal dialog for configuring server-side integrations.
+Existing secrets are never returned to the browser; inputs only replace values.
 """
 
 import dash_bootstrap_components as dbc
@@ -121,6 +120,42 @@ API_CONFIGS = [
         "icon": "fas fa-key"
     },
     {
+        "id": "tradier-token",
+        "name": "Tradier Access Token",
+        "env_var": "TRADIER_ACCESS_TOKEN",
+        "placeholder": "Your Tradier token",
+        "help_url": "https://documentation.tradier.com/brokerage-api/getting-started",
+        "help_text": "Required when using the Tradier broker",
+        "icon": "fas fa-building-columns"
+    },
+    {
+        "id": "tradier-account",
+        "name": "Tradier Account ID",
+        "env_var": "TRADIER_ACCOUNT_ID",
+        "placeholder": "Your Tradier account ID",
+        "help_url": "https://documentation.tradier.com/brokerage-api/getting-started",
+        "help_text": "Selects the Tradier brokerage account",
+        "icon": "fas fa-id-card"
+    },
+    {
+        "id": "robinhood-token",
+        "name": "Robinhood MCP Access Token",
+        "env_var": "ROBINHOOD_MCP_ACCESS_TOKEN",
+        "placeholder": "Your Robinhood MCP token",
+        "help_url": "https://robinhood.com/",
+        "help_text": "Required when using Robinhood without a token cache",
+        "icon": "fas fa-key"
+    },
+    {
+        "id": "robinhood-account",
+        "name": "Robinhood Account Number",
+        "env_var": "ROBINHOOD_ACCOUNT_NUMBER",
+        "placeholder": "Your Robinhood account number",
+        "help_url": "https://robinhood.com/",
+        "help_text": "Optional account selector for Robinhood MCP",
+        "icon": "fas fa-id-card"
+    },
+    {
         "id": "finnhub",
         "name": "Finnhub API Key",
         "env_var": "FINNHUB_API_KEY",
@@ -183,7 +218,7 @@ def create_api_input_row(api_config):
                 dbc.Input(
                     id=f"api-input-{api_id}",
                     type="password",
-                    placeholder=api_config["placeholder"],
+                    placeholder=f"{api_config['placeholder']} (leave blank to keep current)",
                     className="api-key-input",
                     style={
                         "background": "#1E293B",
@@ -245,7 +280,7 @@ def create_api_config_modal():
                 [
                     html.H4([
                         html.I(className="fas fa-cog me-2"),
-                        "API Configuration"
+                        "Integrations"
                     ], className="mb-0"),
                 ],
                 close_button=True,
@@ -256,8 +291,8 @@ def create_api_config_modal():
                     # Info alert
                     html.Div([
                         html.I(className="fas fa-info-circle me-2"),
-                        "Configure your API keys below. Keys are stored in your browser's local storage and take precedence over .env file settings. ",
-                        html.Strong("Your keys never leave your browser."),
+                        "Credentials are encrypted by the server and are never returned to the browser. ",
+                        html.Strong("Leave a field blank to keep its current value."),
                     ], className="alert alert-info mb-4"),
                     
                     # .env file status
@@ -265,6 +300,7 @@ def create_api_config_modal():
                         id="env-file-status",
                         className="mb-3"
                     ),
+                    html.Div(id="api-save-status", className="mb-3"),
                     
                     html.Hr(),
                     
@@ -287,7 +323,7 @@ def create_api_config_modal():
                     dbc.Button(
                         [
                             html.I(className="fas fa-trash me-2"),
-                            "Clear All"
+                            "Disconnect Stored"
                         ],
                         id="clear-api-keys-btn",
                         color="outline-danger",
@@ -296,18 +332,8 @@ def create_api_config_modal():
                     ),
                     dbc.Button(
                         [
-                            html.I(className="fas fa-sync me-2"),
-                            "Load from .env"
-                        ],
-                        id="load-env-btn",
-                        color="outline-info",
-                        size="sm",
-                        className="me-2"
-                    ),
-                    dbc.Button(
-                        [
                             html.I(className="fas fa-save me-2"),
-                            "Save & Apply"
+                            "Save Changes"
                         ],
                         id="save-api-keys-btn",
                         color="primary",
@@ -343,13 +369,13 @@ def create_config_button():
     return dbc.Button(
         [
             html.I(className="fas fa-key me-2"),
-            "Config APIs"
+            "Integrations"
         ],
         id="open-api-config-btn",
         color="outline-warning",
         size="sm",
         className="config-apis-btn",
-        title="Configure API Keys"
+        title="Configure external services"
     )
 
 

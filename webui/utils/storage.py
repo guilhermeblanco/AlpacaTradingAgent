@@ -46,39 +46,12 @@ DEFAULT_SETTINGS = {
     "deep_parallel_tool_calls": True,
 }
 
-# Default API keys structure (empty by default, loaded from localStorage or .env)
-DEFAULT_API_KEYS = {
-    "openai": "",
-    "google": "",
-    "anthropic": "",
-    "xai": "",
-    "minimax": "",
-    "deepseek": "",
-    "dashscope": "",
-    "zhipu": "",
-    "openrouter": "",
-    "azure-openai": "",
-    "alpha-vantage": "",
-    "alpaca-key": "",
-    "alpaca-secret": "",
-    "finnhub": "",
-    "fred": "",
-    "coindesk": "",
-    "alpaca-paper": True
-}
-
-
 def get_default_settings() -> Dict[str, Any]:
     """Get the default settings structure"""
     defaults = DEFAULT_SETTINGS.copy()
     defaults["llm_provider"] = os.getenv("LLM_PROVIDER", defaults.get("llm_provider", "openai"))
     defaults["backend_url"] = os.getenv("OPENAI_BASE_URL", defaults.get("backend_url", ""))
     return defaults
-
-
-def get_default_api_keys() -> Dict[str, Any]:
-    """Get the default API keys structure"""
-    return DEFAULT_API_KEYS.copy()
 
 
 def create_storage_store_component():
@@ -88,6 +61,6 @@ def create_storage_store_component():
 
 
 def create_api_keys_store_component():
-    """Create a dcc.Store component for API keys localStorage persistence"""
+    """Create a memory-only revision signal for integration callbacks."""
     from dash import dcc
-    return dcc.Store(id='api-keys-store', storage_type='local', data=DEFAULT_API_KEYS)
+    return dcc.Store(id='api-keys-store', storage_type='memory', data={"revision": 0})
