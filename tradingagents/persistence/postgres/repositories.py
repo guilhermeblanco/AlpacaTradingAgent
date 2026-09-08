@@ -14,6 +14,11 @@ from tradingagents.evaluation.models import EvaluationEpisode, EvaluationOutcome
 from tradingagents.evaluation.point_in_time import validate_episode_point_in_time
 from tradingagents.lifecycle.models import LifecycleRecord, LifecycleStatus
 from tradingagents.operations.admission import AdmissionDecision
+from tradingagents.operations.control_plane import (
+    OperationalHealth,
+    ServiceControl,
+    ServiceHeartbeat,
+)
 from tradingagents.persistence.events import EventEnvelope
 from tradingagents.execution.models import ExecutionResult, PlanAction
 from tradingagents.execution.order_ledger import BrokerOrderRecord
@@ -44,6 +49,8 @@ from .models import (
     PortfolioReservationRow,
     PortfolioReservationTransitionRow,
     ReconciliationLeaseRow,
+    ServiceControlRow,
+    ServiceHeartbeatRow,
 )
 from tradingagents.persistence.outbox import OutboxLeaseLost, OutboxMessage
 
@@ -1329,4 +1336,198 @@ class PostgresPortfolioReservationRepository:
                 decision_id: AllocationReservationState(state)
                 for decision_id, state in states.items()
             },
+        )
+
+
+class PostgresOperationalRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def control(self, service: str) -> ServiceControl:
+        key = service.lower().strip()
+        row = self.session.get(ServiceControlRow, key)
+        if row is None:
+            return ServiceControl(service=key)
+        return self._control(row)
+
+    def is_paused(self, service: str) -> bool:
+        return self.control(service).paused
+
+    def set_paused(
+        self,
+        service: str,
+        *,
+        paused: bool,
+        reason: Optional[str] = None,
+        updated_by: Optional[str] = None,
+        now: Optional[datetime] = None,
+    ) -> ServiceControl:
+        key = service.lower().strip()
+        if not key:
+            raise ValueError("service name is required")
+        now = now or _utcnow()
+        row = self.session.scalar(
+            select(ServiceControlRow)
+            .where(ServiceControlRow.service == key)
+            .with_for_update()
+        )
+        if row is None:
+            row = ServiceControlRow(service=key, paused=paused, updated_at=now)
+            self.session.add(row)
+        row.paused = bool(paused)
+        row.reason = reason if paused else None
+        row.updated_at = now
+        row.updated_by = updated_by
+        self.session.flush()
+        return self._control(row)
+
+    def beat(
+        self,
+        service: str,
+        *,
+        instance_id: str,
+        status: str = "healthy",
+        details: Optional[dict[str, Any]] = None,
+        now: Optional[datetime] = None,
+    ) -> ServiceHeartbeat:
+        service_key = service.lower().strip()
+        instance_key = instance_id.strip()
+        if not service_key or not instance_key:
+            raise ValueError("service and instance_id are required")
+        now = now or _utcnow()
+        row = self.session.get(ServiceHeartbeatRow, (service_key, instance_key))
+        if row is None:
+            row = ServiceHeartbeatRow(
+                service=service_key,
+                instance_id=instance_key,
+                status=status,
+                last_seen_at=now,
+                details=details or {},
+            )
+            self.session.add(row)
+        else:
+            row.status = status
+            row.last_seen_at = now
+            row.details = details or {}
+        self.session.flush()
+        return self._heartbeat(row, now=now, stale_after_seconds=float("inf"))
+
+    def health(
+        self,
+        *,
+        now: Optional[datetime] = None,
+        stale_after_seconds: float = 600,
+    ) -> OperationalHealth:
+        now = now or _utcnow()
+        controls = [
+            self._control(row)
+            for row in self.session.scalars(
+                select(ServiceControlRow).order_by(ServiceControlRow.service)
+            ).all()
+        ]
+        heartbeats = [
+            self._heartbeat(
+                row, now=now, stale_after_seconds=max(0.0, stale_after_seconds)
+            )
+            for row in self.session.scalars(
+                select(ServiceHeartbeatRow).order_by(
+                    ServiceHeartbeatRow.service, ServiceHeartbeatRow.instance_id
+                )
+            ).all()
+        ]
+        reconciliation_pending = self.session.scalar(
+            select(func.count()).select_from(ReconciliationLeaseRow).where(
+                ReconciliationLeaseRow.completed_at.is_(None)
+            )
+        ) or 0
+        oldest_reconciliation = self.session.scalar(
+            select(func.min(ReconciliationLeaseRow.available_at)).where(
+                ReconciliationLeaseRow.completed_at.is_(None)
+            )
+        )
+        outbox_pending = self.session.scalar(
+            select(func.count()).select_from(OutboxRow).where(
+                OutboxRow.processed_at.is_(None),
+                OutboxRow.dead_lettered_at.is_(None),
+            )
+        ) or 0
+        outbox_dead = self.session.scalar(
+            select(func.count()).select_from(OutboxRow).where(
+                OutboxRow.dead_lettered_at.is_not(None)
+            )
+        ) or 0
+        in_flight = self.session.scalar(
+            select(func.count()).select_from(AnalysisAdmissionRow).where(
+                AnalysisAdmissionRow.in_flight.is_(True)
+            )
+        ) or 0
+        active_reservations = self.session.scalar(
+            select(func.count())
+            .select_from(PortfolioReservationAllocationRow)
+            .where(
+                PortfolioReservationAllocationRow.state.in_(
+                    [
+                        AllocationReservationState.RESERVED.value,
+                        AllocationReservationState.DISPATCHING.value,
+                        AllocationReservationState.CONSUMED.value,
+                    ]
+                )
+            )
+        ) or 0
+        active_executions = self.session.scalar(
+            select(func.count()).select_from(LifecycleRow).where(
+                LifecycleRow.status.in_(
+                    [
+                        LifecycleStatus.SUBMITTED.value,
+                        LifecycleStatus.PARTIALLY_FILLED.value,
+                    ]
+                )
+            )
+        ) or 0
+        lag = 0.0
+        if oldest_reconciliation is not None:
+            lag = max(
+                0.0,
+                (_as_utc(now) - _as_utc(oldest_reconciliation)).total_seconds(),
+            )
+        return OperationalHealth(
+            observed_at=now,
+            controls=controls,
+            heartbeats=heartbeats,
+            reconciliation_pending=reconciliation_pending,
+            reconciliation_oldest_lag_seconds=lag,
+            outbox_pending=outbox_pending,
+            outbox_dead_lettered=outbox_dead,
+            analyses_in_flight=in_flight,
+            active_reservation_allocations=active_reservations,
+            active_executions=active_executions,
+        )
+
+    @staticmethod
+    def _control(row: ServiceControlRow) -> ServiceControl:
+        return ServiceControl(
+            service=row.service,
+            paused=row.paused,
+            reason=row.reason,
+            updated_at=row.updated_at,
+            updated_by=row.updated_by,
+        )
+
+    @staticmethod
+    def _heartbeat(
+        row: ServiceHeartbeatRow,
+        *,
+        now: datetime,
+        stale_after_seconds: float,
+    ) -> ServiceHeartbeat:
+        stale = (
+            _as_utc(now) - _as_utc(row.last_seen_at)
+        ).total_seconds() > stale_after_seconds
+        return ServiceHeartbeat(
+            service=row.service,
+            instance_id=row.instance_id,
+            status=row.status,
+            last_seen_at=row.last_seen_at,
+            stale=stale,
+            details=row.details or {},
         )

@@ -124,6 +124,25 @@ class ReconciliationWorker:
                 except Exception:
                     LOGGER.exception("Failed to release reconciliation lease")
                 LOGGER.exception("Reconciliation failed for %s", message)
+        try:
+            with self.unit_of_work_factory() as uow:
+                operations = getattr(uow, "operations", None)
+                if operations is not None:
+                    operations.beat(
+                        "reconciliation-worker",
+                        instance_id=self.worker_id,
+                        status="degraded" if result.failed else "healthy",
+                        details={
+                            "claimed": result.claimed,
+                            "completed": result.completed,
+                            "rescheduled": result.rescheduled,
+                            "failed": result.failed,
+                        },
+                        now=now,
+                    )
+                uow.commit()
+        except Exception:
+            LOGGER.exception("Failed to record reconciliation heartbeat")
         return result
 
     def run_forever(

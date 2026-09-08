@@ -7,6 +7,7 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
+from uuid import uuid4
 
 import pandas as pd
 
@@ -55,6 +56,7 @@ class AutonomousCycleResult:
     capability_blocked: int = 0
     admission_blocked: int = 0
     shadow_recorded: int = 0
+    paused: bool = False
     portfolio_run: Optional[PortfolioBatchRun] = None
     dispatch: Optional[PortfolioDispatchResult] = None
     errors: list[str] = field(default_factory=list)
@@ -85,6 +87,8 @@ class AutonomousCycleScheduler:
         shadow_episode_recorder: Optional[
             Callable[[TradeIntent, ExperimentAssignment], Any]
         ] = None,
+        service_name: str = "autonomous-worker",
+        instance_id: Optional[str] = None,
     ):
         if not account_key.strip():
             raise ValueError("account_key is required for durable portfolio reservations")
@@ -116,6 +120,8 @@ class AutonomousCycleScheduler:
             ]
         )
         self.shadow_episode_recorder = shadow_episode_recorder
+        self.service_name = service_name
+        self.instance_id = instance_id or f"autonomous-{uuid4()}"
         self._stop = threading.Event()
 
     @staticmethod
@@ -132,6 +138,18 @@ class AutonomousCycleScheduler:
         result = AutonomousCycleResult(started_at=started_at, finished_at=started_at)
         admitted: list[Candidate] = []
         try:
+            with self.unit_of_work_factory() as uow:
+                result.paused = uow.operations.is_paused(self.service_name)
+                uow.operations.beat(
+                    self.service_name,
+                    instance_id=self.instance_id,
+                    status="paused" if result.paused else "running",
+                    details={"cycle_started_at": started_at.isoformat()},
+                    now=started_at,
+                )
+                uow.commit()
+            if result.paused:
+                return result
             snapshot = self.snapshot_provider.get_portfolio_snapshot()
             candidates = sorted(
                 self.candidate_source(snapshot),
@@ -271,6 +289,30 @@ class AutonomousCycleScheduler:
                     )
                     LOGGER.exception("Failed to complete admission for %s", candidate.symbol)
             result.finished_at = datetime.now(timezone.utc)
+            try:
+                with self.unit_of_work_factory() as uow:
+                    uow.operations.beat(
+                        self.service_name,
+                        instance_id=self.instance_id,
+                        status=(
+                            "paused"
+                            if result.paused
+                            else "degraded"
+                            if result.errors
+                            else "healthy"
+                        ),
+                        details={
+                            "discovered": result.discovered,
+                            "admitted": result.admitted,
+                            "shadow_recorded": result.shadow_recorded,
+                            "errors": result.errors[-5:],
+                            "cycle_finished_at": result.finished_at.isoformat(),
+                        },
+                        now=result.finished_at,
+                    )
+                    uow.commit()
+            except Exception as exc:
+                result.errors.append(f"heartbeat failed: {exc}")
         return result
 
     def run_forever(self, *, interval_seconds: float) -> None:

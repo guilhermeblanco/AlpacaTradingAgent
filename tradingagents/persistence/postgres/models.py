@@ -324,3 +324,24 @@ class PortfolioReservationTransitionRow(Base):
     from_status: Mapped[Optional[str]] = mapped_column(String(40))
     to_status: Mapped[str] = mapped_column(String(40), nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, nullable=False, default=dict)
+
+
+class ServiceControlRow(Base):
+    __tablename__ = "service_controls"
+
+    service: Mapped[str] = mapped_column(String(120), primary_key=True)
+    paused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    reason: Mapped[Optional[str]] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_by: Mapped[Optional[str]] = mapped_column(String(160))
+
+
+class ServiceHeartbeatRow(Base):
+    __tablename__ = "service_heartbeats"
+    __table_args__ = (Index("ix_service_heartbeats_last_seen", "last_seen_at"),)
+
+    service: Mapped[str] = mapped_column(String(120), primary_key=True)
+    instance_id: Mapped[str] = mapped_column(String(160), primary_key=True)
+    status: Mapped[str] = mapped_column(String(40), nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    details: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, nullable=False, default=dict)

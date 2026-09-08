@@ -14,6 +14,7 @@ from .repositories import (
     PostgresLifecycleRepository,
     PostgresOutboxRepository,
     PostgresOrderLedger,
+    PostgresOperationalRepository,
     PostgresPortfolioReservationRepository,
     PostgresReconciliationQueue,
 )
@@ -44,6 +45,7 @@ class PostgresUnitOfWork:
             self.session
         )
         self.reconciliation_queue = PostgresReconciliationQueue(self.session)
+        self.operations = PostgresOperationalRepository(self.session)
         return self
 
     def __exit__(

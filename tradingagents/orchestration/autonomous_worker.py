@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import signal
+import socket
 import threading
 from contextlib import nullcontext
 from datetime import datetime
@@ -199,6 +200,7 @@ def build_scheduler_from_env():
         ),
         experiment_assigner=assigner,
         shadow_episode_recorder=record_shadow,
+        instance_id=os.getenv("AUTONOMOUS_INSTANCE_ID") or socket.gethostname(),
     )
     return scheduler, persistence.close
 
