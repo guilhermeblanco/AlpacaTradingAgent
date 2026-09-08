@@ -90,6 +90,29 @@ services:
     restart: unless-stopped
     stop_grace_period: 30s
 
+  autonomous-worker:
+    profiles: ["autonomous"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: alpaca-trading-agent:web
+    env_file:
+      - ${ENV_FILE:-.env}
+    environment:
+      DATABASE_URL: "postgresql+psycopg://${POSTGRES_USER:-tradingagents}:${POSTGRES_PASSWORD:-tradingagents}@postgres:5432/${POSTGRES_DB:-tradingagents}"
+      PERSISTENCE_BACKEND: "postgres"
+      AUTONOMOUS_ENABLED: "${AUTONOMOUS_ENABLED:-false}"
+      EXECUTION_BROKER: "${EXECUTION_BROKER:-alpaca}"
+      EXECUTION_GATEWAY: "${EXECUTION_GATEWAY:-dry-run}"
+    command: ["python", "-m", "tradingagents.orchestration.autonomous_worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+    stop_grace_period: 60s
+
   postgres:
     image: postgres:17-alpine
     container_name: alpaca-trading-agent-postgres

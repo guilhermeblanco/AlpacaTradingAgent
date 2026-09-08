@@ -6,6 +6,7 @@ langchain-anthropic>=1.4.2,<2.0.0
 langchain-google-genai>=4.2.2,<5.0.0
 langchain-experimental>=0.4.1,<0.5.0
 pandas
+exchange-calendars>=4.5,<5.0
 yfinance
 praw
 feedparser

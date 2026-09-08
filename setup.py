@@ -33,6 +33,7 @@ setup(
         "psycopg[binary]>=3.2,<4.0",
         "numpy>=1.24.0",
         "pandas>=2.0.0",
+        "exchange-calendars>=4.5,<5.0",
         "praw>=7.7.0",
         "stockstats>=0.5.4",
         "typer>=0.9.0",
