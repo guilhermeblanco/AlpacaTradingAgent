@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import Enum
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .batch import PortfolioDecisionBatch
 
@@ -19,6 +19,7 @@ class ReservationStatus(str, Enum):
 
 class AllocationReservationState(str, Enum):
     RESERVED = "reserved"
+    DISPATCHING = "dispatching"
     CONSUMED = "consumed"
     RELEASED = "released"
 
@@ -32,3 +33,6 @@ class PortfolioReservation(BaseModel):
     updated_at: datetime
     expires_at: datetime
     batch: PortfolioDecisionBatch
+    allocation_states: dict[str, AllocationReservationState] = Field(
+        default_factory=dict
+    )

@@ -52,6 +52,10 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _as_utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+
+
 def _symbol_key(symbol: str) -> str:
     return (symbol or "").upper().replace("/", "").strip()
 
@@ -903,11 +907,26 @@ class PostgresPortfolioReservationRepository:
         self._expire_due(account_key=account_key, now=now)
         outstanding = self.session.scalar(
             select(
-                func.coalesce(func.sum(PortfolioReservationRow.reserved_notional), 0.0)
-            ).where(
+                func.coalesce(
+                    func.sum(PortfolioReservationAllocationRow.approved_notional), 0.0
+                )
+            )
+            .join(
+                PortfolioReservationRow,
+                PortfolioReservationRow.reservation_id
+                == PortfolioReservationAllocationRow.reservation_id,
+            )
+            .where(
                 PortfolioReservationRow.account_key == account_key,
                 PortfolioReservationRow.status.in_(
                     [ReservationStatus.RESERVED.value, ReservationStatus.CONSUMED.value]
+                ),
+                PortfolioReservationAllocationRow.state.in_(
+                    [
+                        AllocationReservationState.RESERVED.value,
+                        AllocationReservationState.DISPATCHING.value,
+                        AllocationReservationState.CONSUMED.value,
+                    ]
                 ),
             )
         ) or 0.0
@@ -938,6 +957,7 @@ class PostgresPortfolioReservationRepository:
                     PortfolioReservationAllocationRow.state.in_(
                         [
                             AllocationReservationState.RESERVED.value,
+                            AllocationReservationState.DISPATCHING.value,
                             AllocationReservationState.CONSUMED.value,
                         ]
                     ),
@@ -1039,6 +1059,7 @@ class PostgresPortfolioReservationRepository:
         reservation_id: str,
         *,
         decision_id: str,
+        worker_id: Optional[str] = None,
         now: Optional[datetime] = None,
     ) -> PortfolioReservation:
         now = now or _utcnow()
@@ -1055,20 +1076,115 @@ class PostgresPortfolioReservationRepository:
             raise ValueError("released allocation cannot be consumed")
         if allocation.state == AllocationReservationState.CONSUMED.value:
             return self._record(row)
+        if worker_id is not None and (
+            allocation.state != AllocationReservationState.DISPATCHING.value
+            or allocation.locked_by != worker_id
+        ):
+            raise ValueError(
+                f"Worker {worker_id} does not own allocation {decision_id}"
+            )
         allocation.state = AllocationReservationState.CONSUMED.value
         allocation.consumed_at = allocation.consumed_at or now
+        allocation.locked_by = None
+        allocation.locked_until = None
         self.session.flush()
-        remaining = self.session.scalar(
-            select(func.count()).select_from(PortfolioReservationAllocationRow).where(
-                PortfolioReservationAllocationRow.reservation_id == reservation_id,
-                PortfolioReservationAllocationRow.state
-                == AllocationReservationState.RESERVED.value,
-            )
-        ) or 0
-        if remaining == 0:
-            self._transition(row, ReservationStatus.CONSUMED, now)
+        self._refresh_parent(row, now=now)
         self.session.flush()
         return self._record(row)
+
+    def claim_allocation(
+        self,
+        reservation_id: str,
+        *,
+        decision_id: str,
+        worker_id: str,
+        lease_seconds: int = 60,
+        now: Optional[datetime] = None,
+    ) -> bool:
+        now = now or _utcnow()
+        row = self._locked(reservation_id)
+        if row.status != ReservationStatus.RESERVED.value:
+            return False
+        allocation = self.session.scalar(
+            select(PortfolioReservationAllocationRow)
+            .where(
+                PortfolioReservationAllocationRow.reservation_id == reservation_id,
+                PortfolioReservationAllocationRow.decision_id == decision_id,
+            )
+            .with_for_update()
+        )
+        if allocation is None:
+            raise KeyError(f"Decision {decision_id} is not reserved by {reservation_id}")
+        claimable = allocation.state == AllocationReservationState.RESERVED.value or (
+            allocation.state == AllocationReservationState.DISPATCHING.value
+            and allocation.locked_until is not None
+            and _as_utc(allocation.locked_until) <= _as_utc(now)
+        )
+        if not claimable:
+            return False
+        allocation.state = AllocationReservationState.DISPATCHING.value
+        allocation.locked_by = worker_id
+        allocation.locked_until = now + timedelta(seconds=max(1, int(lease_seconds)))
+        row.updated_at = now
+        self.session.flush()
+        return True
+
+    def release_allocation(
+        self,
+        reservation_id: str,
+        *,
+        decision_id: str,
+        worker_id: Optional[str] = None,
+        now: Optional[datetime] = None,
+    ) -> PortfolioReservation:
+        now = now or _utcnow()
+        row = self._locked(reservation_id)
+        allocation = self.session.scalar(
+            select(PortfolioReservationAllocationRow)
+            .where(
+                PortfolioReservationAllocationRow.reservation_id == reservation_id,
+                PortfolioReservationAllocationRow.decision_id == decision_id,
+            )
+            .with_for_update()
+        )
+        if allocation is None:
+            raise KeyError(f"Decision {decision_id} is not reserved by {reservation_id}")
+        if allocation.state == AllocationReservationState.RELEASED.value:
+            return self._record(row)
+        if worker_id is not None and (
+            allocation.state != AllocationReservationState.DISPATCHING.value
+            or allocation.locked_by != worker_id
+        ):
+            raise ValueError(
+                f"Worker {worker_id} does not own allocation {decision_id}"
+            )
+        allocation.state = AllocationReservationState.RELEASED.value
+        allocation.locked_by = None
+        allocation.locked_until = None
+        self.session.flush()
+        self._refresh_parent(row, now=now)
+        self.session.flush()
+        return self._record(row)
+
+    def release_decision(
+        self, decision_id: str, *, now: Optional[datetime] = None
+    ) -> bool:
+        now = now or _utcnow()
+        allocation = self.session.scalar(
+            select(PortfolioReservationAllocationRow)
+            .where(PortfolioReservationAllocationRow.decision_id == decision_id)
+            .with_for_update()
+        )
+        if allocation is None or allocation.state == AllocationReservationState.RELEASED.value:
+            return False
+        row = self._locked(allocation.reservation_id)
+        allocation.state = AllocationReservationState.RELEASED.value
+        allocation.locked_by = None
+        allocation.locked_until = None
+        self.session.flush()
+        self._refresh_parent(row, now=now)
+        self.session.flush()
+        return True
 
     def release(
         self, reservation_id: str, *, now: Optional[datetime] = None
@@ -1084,6 +1200,8 @@ class PostgresPortfolioReservationRepository:
         ).all()
         for allocation in allocations:
             allocation.state = AllocationReservationState.RELEASED.value
+            allocation.locked_by = None
+            allocation.locked_until = None
         row.released_at = now
         self._transition(row, ReservationStatus.RELEASED, now)
         self.session.flush()
@@ -1110,9 +1228,16 @@ class PostgresPortfolioReservationRepository:
                 )
             ).all()
             for allocation in allocations:
-                if allocation.state == AllocationReservationState.RESERVED.value:
+                if allocation.state == AllocationReservationState.RESERVED.value or (
+                    allocation.state == AllocationReservationState.DISPATCHING.value
+                    and allocation.locked_until is not None
+                    and _as_utc(allocation.locked_until) <= _as_utc(now)
+                ):
                     allocation.state = AllocationReservationState.RELEASED.value
-            self._transition(row, ReservationStatus.EXPIRED, now)
+                    allocation.locked_by = None
+                    allocation.locked_until = None
+            self.session.flush()
+            self._refresh_parent(row, now=now, empty_status=ReservationStatus.EXPIRED)
         self.session.flush()
         return len(rows)
 
@@ -1150,8 +1275,47 @@ class PostgresPortfolioReservationRepository:
             )
         )
 
-    @staticmethod
-    def _record(row: PortfolioReservationRow) -> PortfolioReservation:
+    def _refresh_parent(
+        self,
+        row: PortfolioReservationRow,
+        *,
+        now: datetime,
+        empty_status: ReservationStatus = ReservationStatus.RELEASED,
+    ) -> None:
+        states = set(
+            self.session.scalars(
+                select(PortfolioReservationAllocationRow.state).where(
+                    PortfolioReservationAllocationRow.reservation_id
+                    == row.reservation_id
+                )
+            ).all()
+        )
+        if states & {
+            AllocationReservationState.RESERVED.value,
+            AllocationReservationState.DISPATCHING.value,
+        }:
+            status = ReservationStatus.RESERVED
+        elif AllocationReservationState.CONSUMED.value in states:
+            status = ReservationStatus.CONSUMED
+        else:
+            status = empty_status
+        if row.status != status.value:
+            if status in {ReservationStatus.RELEASED, ReservationStatus.EXPIRED}:
+                row.released_at = now
+            self._transition(row, status, now)
+
+    def _record(self, row: PortfolioReservationRow) -> PortfolioReservation:
+        states = dict(
+            self.session.execute(
+                select(
+                    PortfolioReservationAllocationRow.decision_id,
+                    PortfolioReservationAllocationRow.state,
+                ).where(
+                    PortfolioReservationAllocationRow.reservation_id
+                    == row.reservation_id
+                )
+            ).all()
+        )
         return PortfolioReservation(
             reservation_id=row.reservation_id,
             account_key=row.account_key,
@@ -1161,4 +1325,8 @@ class PostgresPortfolioReservationRepository:
             updated_at=row.updated_at,
             expires_at=row.expires_at,
             batch=PortfolioDecisionBatch.model_validate(row.payload),
+            allocation_states={
+                decision_id: AllocationReservationState(state)
+                for decision_id, state in states.items()
+            },
         )

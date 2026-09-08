@@ -38,8 +38,16 @@ broker account and recheck both gross and per-symbol capacity against other
 active workers. The operation is idempotent by batch ID and may further clip a
 stale approval.
 
-Consume each allocation when execution accepts responsibility for its decision.
-Consumed capacity remains unavailable until reconciliation releases the whole
-reservation. An untouched reservation expires after its TTL; a partially or
-fully consumed reservation never expires automatically. Every state change is
-recorded in `portfolio_reservation_transitions` for audit and recovery.
+`ReservationAwareExecutionCoordinator` is the required bridge from a durable
+batch to the normal execution pipeline. It claims each approved allocation in a
+short transaction, calls the broker outside the transaction, and consumes only
+allocations that return a remote order ID. Failed, blocked, and dry-run results
+release only their own allocation. A lease prevents another coordinator replica
+from dispatching the same allocation while the first is making the broker call.
+
+Consumed capacity remains unavailable while its broker order is active. The
+reconciliation worker releases that decision's allocation when all order legs
+become terminal, independent of whether the configured broker is Alpaca,
+Tradier, or Robinhood. Expired untouched allocations are released
+automatically. Every parent state change is recorded in
+`portfolio_reservation_transitions` for audit and recovery.
