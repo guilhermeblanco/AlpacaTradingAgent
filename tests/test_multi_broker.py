@@ -5,6 +5,7 @@ from tradingagents.broker.registry import BrokerCapabilities, BrokerRegistry, Br
 from tradingagents.broker.robinhood import RobinhoodExecutionGateway, RobinhoodSnapshotProvider
 from tradingagents.broker.tradier import TradierClient, TradierExecutionGateway, TradierSnapshotProvider
 from tradingagents.execution.dry_run_gateway import DryRunExecutionGateway
+from tradingagents.execution.gateway import SubmissionUncertain
 from tradingagents.execution.models import ExecutionLeg, ExecutionPlan, PlanAction
 
 
@@ -59,6 +60,20 @@ class FakeRobinhoodClient:
                                  "quantity": "10", "filled_quantity": "10",
                                  "average_fill_price": "100.75"}]}
         raise AssertionError(name)
+
+
+class TimeoutTradierTransport(FakeTradierTransport):
+    def __call__(self, method, path, *, params=None, data=None):
+        if method == "POST":
+            raise TimeoutError("response timed out")
+        return super().__call__(method, path, params=params, data=data)
+
+
+class TimeoutRobinhoodClient(FakeRobinhoodClient):
+    def call_tool(self, name, arguments):
+        if name == "place_equity_order":
+            raise TimeoutError("response timed out")
+        return super().call_tool(name, arguments)
 
 
 def trade_intent():
@@ -121,6 +136,16 @@ class MultiBrokerTests(unittest.TestCase):
         self.assertEqual(snapshot.filled_quantity, 10)
         self.assertEqual(snapshot.filled_avg_price, 100.5)
 
+    def test_tradier_transport_timeout_is_uncertain(self):
+        gateway = TradierExecutionGateway(TradierClient(
+            token="token", account_id="account", transport=TimeoutTradierTransport(),
+        ))
+        with self.assertRaises(SubmissionUncertain) as raised:
+            gateway.submit_plan(execution_plan(), trade_intent())
+        self.assertEqual(
+            raised.exception.actions[0]["result"]["client_order_id"], "ata-d1-0"
+        )
+
     def test_tradier_rejects_fractional_only_plan(self):
         gateway = TradierExecutionGateway(TradierClient(
             token="token", account_id="account", transport=FakeTradierTransport(),
@@ -160,6 +185,16 @@ class MultiBrokerTests(unittest.TestCase):
         self.assertEqual(snapshot.status.value, "filled")
         self.assertEqual(snapshot.filled_quantity, 10)
         self.assertEqual(snapshot.filled_avg_price, 100.75)
+
+    def test_robinhood_transport_timeout_is_uncertain(self):
+        gateway = RobinhoodExecutionGateway(
+            TimeoutRobinhoodClient(), review_only=False, live_orders_enabled=True
+        )
+        with self.assertRaises(SubmissionUncertain) as raised:
+            gateway.submit_plan(execution_plan(), trade_intent())
+        self.assertEqual(
+            raised.exception.actions[0]["result"]["client_order_id"], "ata-d1-0"
+        )
 
 
 if __name__ == "__main__":

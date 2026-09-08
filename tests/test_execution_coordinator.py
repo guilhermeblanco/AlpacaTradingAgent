@@ -152,6 +152,41 @@ def test_duplicate_dispatch_does_not_call_broker_twice(session_factory) -> None:
     assert len(calls) == 1
 
 
+def test_uncertain_submission_keeps_allocation_reserved(session_factory) -> None:
+    intent = _intent("MSFT")
+    batch = _batch([intent])
+    result = ReservationAwareExecutionCoordinator(
+        lambda: PostgresUnitOfWork(session_factory),
+        lambda *args, **kwargs: {
+            "success": False,
+            "submission_uncertain": True,
+            "error": "request timed out",
+            "actions": [
+                {
+                    "result": {
+                        "status": "unknown",
+                        "client_order_id": "stable-key",
+                    }
+                }
+            ],
+        },
+        worker_id="worker-a",
+    ).execute(
+        batch,
+        {intent.decision_id: intent},
+        account_key="alpaca:test",
+    )
+    assert result.allocations[0].status is AllocationDispatchStatus.ACCEPTED
+    with PostgresUnitOfWork(session_factory) as uow:
+        reservation = uow.portfolio_reservations.reserve(
+            batch, account_key="alpaca:test"
+        )
+        uow.rollback()
+    assert reservation.allocation_states[intent.decision_id] is (
+        AllocationReservationState.CONSUMED
+    )
+
+
 def test_allocation_claim_can_only_be_taken_after_lease_expiry(session_factory) -> None:
     now = datetime.now(timezone.utc)
     intent = _intent("MSFT")

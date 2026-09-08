@@ -27,6 +27,9 @@ AlpacaTradingAgent introduces powerful new capabilities specifically designed fo
 Software-managed protective exits are opt-in and independently gated for live
 accounts. See [docs/virtual-stops.md](docs/virtual-stops.md).
 
+Broker timeouts are recovered by stable client order ID without blind retries.
+See [docs/submission-recovery.md](docs/submission-recovery.md).
+
 ### 📈 **Dual Asset Support: Stocks & Crypto**
 - **Multi-Asset Analysis**: Analyze both traditional stocks and cryptocurrencies in a single session
 - **Crypto Format**: Use proper crypto format (e.g., `BTC/USD`, `ETH/USD`) for cryptocurrency analysis

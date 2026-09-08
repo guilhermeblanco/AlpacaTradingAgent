@@ -46,6 +46,8 @@ def _as_result_dict(result: Any) -> dict[str, Any]:
 
 
 def _accepted_by_broker(result: dict[str, Any]) -> bool:
+    if result.get("submission_uncertain"):
+        return True
     if not result.get("success"):
         return False
     for action in result.get("actions") or []:

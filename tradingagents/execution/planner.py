@@ -20,6 +20,7 @@ class ExecutionPlanner:
         requested_notional_usd: float,
     ) -> ExecutionPlan:
         position = portfolio.position_for(intent.symbol)
+        current_quantity = float(position.quantity) if position else 0.0
         current_value = float(position.market_value) if position else 0.0
         if position and position.quantity < 0 and current_value > 0:
             current_value = -current_value
@@ -49,6 +50,7 @@ class ExecutionPlanner:
                 current_pct,
                 reference_price,
                 requested_notional_usd,
+                current_quantity,
             )
 
         target_value = equity * intent.target_portfolio_pct / 100.0
@@ -71,7 +73,13 @@ class ExecutionPlanner:
             target_value = current_value + delta
             warnings.append(f"Exposure-increasing delta capped at ${cap:,.2f}.")
 
-        legs = self._target_legs(current_value, target_value, delta, reference_price)
+        legs = self._target_legs(
+            current_value,
+            target_value,
+            delta,
+            reference_price,
+            current_quantity,
+        )
         return ExecutionPlan(
             decision_id=intent.decision_id,
             symbol=intent.symbol,
@@ -87,7 +95,7 @@ class ExecutionPlanner:
             metadata={"intent_type": intent.intent_type.value, **intent.metadata},
         )
 
-    def _target_legs(self, current, target, delta, price):
+    def _target_legs(self, current, target, delta, price, current_quantity):
         if abs(delta) < self.minimum_delta_usd:
             return [ExecutionLeg(action=PlanAction.HOLD, reason="Allocation already at target.")]
         if target == 0 and current != 0:
@@ -96,6 +104,7 @@ class ExecutionPlanner:
                     action=PlanAction.CLOSE,
                     side="sell" if current > 0 else "buy",
                     notional_usd=abs(current),
+                    quantity=abs(current_quantity) or None,
                     risk_reducing=True,
                     reason="Target allocation is zero.",
                 )
@@ -109,6 +118,7 @@ class ExecutionPlanner:
                     action=PlanAction.CLOSE,
                     side="sell" if current > 0 else "buy",
                     notional_usd=abs(current),
+                    quantity=abs(current_quantity) or None,
                     risk_reducing=True,
                     reason="Close existing exposure before reversing direction.",
                 )
@@ -130,7 +140,9 @@ class ExecutionPlanner:
         )
         return legs
 
-    def _legacy_plan(self, intent, current_value, current_pct, price, requested):
+    def _legacy_plan(
+        self, intent, current_value, current_pct, price, requested, current_quantity
+    ):
         action = trade_intent_action(intent) or "HOLD"
         requested = max(0.0, float(requested or 0.0))
         if intent.max_notional_usd is not None:
@@ -140,7 +152,7 @@ class ExecutionPlanner:
             legs = [ExecutionLeg(action=PlanAction.HOLD, reason="Intent requested no order.")]
             delta = 0.0
         elif action == "SELL" and current_value > 0:
-            legs = [ExecutionLeg(action=PlanAction.CLOSE, side="sell", notional_usd=abs(current_value), risk_reducing=True, reason="Legacy SELL closes the long position.")]
+            legs = [ExecutionLeg(action=PlanAction.CLOSE, side="sell", notional_usd=abs(current_value), quantity=abs(current_quantity) or None, risk_reducing=True, reason="Legacy SELL closes the long position.")]
             delta = -current_value
         else:
             side = "sell" if action == "SHORT" else "buy"

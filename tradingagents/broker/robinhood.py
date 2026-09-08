@@ -273,6 +273,11 @@ class RobinhoodExecutionGateway:
         )
 
     def submit_plan(self, plan: ExecutionPlan, intent: TradeIntent) -> ExecutionResult:
+        from tradingagents.execution.gateway import (
+            SubmissionUncertain,
+            is_uncertain_submission_error,
+        )
+
         account = self.provider._account()
         actions = []
         keys = plan.metadata.get("leg_idempotency_keys", [])
@@ -291,7 +296,18 @@ class RobinhoodExecutionGateway:
                 "side": leg.side or "buy", "type": "market",
                 "dollar_amount": f"{leg.notional_usd:.2f}", "market_hours": "regular_hours",
             }
-            review = self.client.call_tool("review_equity_order", arguments)
+            try:
+                review = self.client.call_tool("review_equity_order", arguments)
+            except Exception as exc:
+                return ExecutionResult(
+                    success=False,
+                    decision_id=plan.decision_id,
+                    symbol=plan.symbol,
+                    gateway=self.name,
+                    plan=plan,
+                    actions=actions,
+                    error=f"Robinhood order review failed before submission: {exc}",
+                )
             result = {"success": True, "review": review, "review_only": self.review_only}
             if not self.review_only:
                 if not self.live_orders_enabled:
@@ -302,7 +318,39 @@ class RobinhoodExecutionGateway:
                     )
                 order_args = dict(arguments)
                 order_args["ref_id"] = keys[index] if index < len(keys) else plan.decision_id
-                order = self.client.call_tool("place_equity_order", order_args)
+                try:
+                    order = self.client.call_tool("place_equity_order", order_args)
+                except Exception as exc:
+                    if is_uncertain_submission_error(exc):
+                        result.update(
+                            {
+                                "success": False,
+                                "submission_uncertain": True,
+                                "client_order_id": order_args["ref_id"],
+                                "status": "unknown",
+                                "error": str(exc),
+                            }
+                        )
+                        actions.append({
+                            "action": leg.action.value.lower(),
+                            "leg": leg.model_dump(mode="json"),
+                            "result": result,
+                        })
+                        raise SubmissionUncertain(
+                            f"Robinhood submission may have been accepted: {exc}",
+                            gateway=self.name,
+                            leg_index=index,
+                            actions=actions,
+                        ) from exc
+                    return ExecutionResult(
+                        success=False,
+                        decision_id=plan.decision_id,
+                        symbol=plan.symbol,
+                        gateway=self.name,
+                        plan=plan,
+                        actions=actions,
+                        error=f"Robinhood rejected order submission: {exc}",
+                    )
                 result.update({"order": order, "review_only": False,
                                "order_id": order.get("order_id") if isinstance(order, dict) else None})
             actions.append({"action": leg.action.value.lower(), "leg": leg.model_dump(mode="json"),

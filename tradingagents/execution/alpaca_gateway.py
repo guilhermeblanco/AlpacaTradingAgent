@@ -3,6 +3,7 @@ from __future__ import annotations
 from tradingagents.agents.schemas import TradeIntent
 
 from .models import ExecutionPlan, ExecutionResult, PlanAction
+from .gateway import SubmissionUncertain
 from .reconciliation import BrokerOrderSnapshot, BrokerOrderStatus
 
 
@@ -55,7 +56,13 @@ class AlpacaExecutionGateway:
                 actions.append({"action": "hold", "result": {"success": True, "message": leg.reason}})
                 continue
             if leg.action == PlanAction.CLOSE:
-                result = AlpacaUtils.close_position(plan.symbol)
+                result = AlpacaUtils.place_market_order(
+                    plan.symbol,
+                    leg.side or "sell",
+                    notional=leg.notional_usd if leg.quantity is None else None,
+                    qty=leg.quantity,
+                    client_order_id=client_order_id,
+                )
             else:
                 controls = intent.risk_controls
                 stop = controls.stop_loss_price or extract_protective_price(
@@ -93,6 +100,13 @@ class AlpacaExecutionGateway:
                         client_order_id=client_order_id,
                     )
             actions.append({"action": leg.action.value.lower(), "leg": leg.model_dump(mode="json"), "result": result})
+            if result.get("submission_uncertain"):
+                raise SubmissionUncertain(
+                    result.get("error", "Alpaca submission result is uncertain"),
+                    gateway=self.name,
+                    leg_index=index,
+                    actions=actions,
+                )
             if not result.get("success"):
                 return ExecutionResult(
                     success=False,

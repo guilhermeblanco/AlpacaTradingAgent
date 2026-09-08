@@ -51,4 +51,5 @@ class ExecutionResult(BaseModel):
     validations: list[dict[str, Any]] = Field(default_factory=list)
     error: Optional[str] = None
     safety_blocked: bool = False
+    submission_uncertain: bool = False
     journal_path: Optional[str] = None
