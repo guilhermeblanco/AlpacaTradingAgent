@@ -3,5 +3,22 @@
 from .models import EvaluationEpisode, EvaluationOutcome
 from .outcomes import calculate_outcome
 from .repository import EvaluationRepository
+from .attribution import (
+    EvaluationHorizon,
+    FilledEpisodeAttributor,
+    HistoricalPriceProvider,
+    OutcomeAttributor,
+    PriceObservation,
+)
 
-__all__ = ["EvaluationEpisode", "EvaluationOutcome", "EvaluationRepository", "calculate_outcome"]
+__all__ = [
+    "EvaluationEpisode",
+    "EvaluationHorizon",
+    "EvaluationOutcome",
+    "EvaluationRepository",
+    "FilledEpisodeAttributor",
+    "HistoricalPriceProvider",
+    "OutcomeAttributor",
+    "PriceObservation",
+    "calculate_outcome",
+]

@@ -74,6 +74,15 @@ def _exercise_unit_of_work(session_factory) -> str:
         )
         uow.evaluation.record_episode(episode)
         uow.evaluation.record_outcome(outcome)
+        assert uow.evaluation.pending_episodes(
+            horizon="1d", due_before=now + timedelta(days=2)
+        ) == []
+        assert decision_id in [
+            row.decision_id
+            for row in uow.evaluation.pending_episodes(
+                horizon="5d", due_before=now + timedelta(days=6)
+            )
+        ]
         admission = uow.admission.try_admit(
             symbol, price=200.0, estimated_tokens=100, now=now
         )

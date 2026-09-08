@@ -260,40 +260,33 @@ class PostgresEvaluationRepository:
         validate_episode_point_in_time(episode)
         if self.session.get(EvaluationEpisodeRow, episode.decision_id) is not None:
             return
-        self.session.add(
-            EvaluationEpisodeRow(
-                decision_id=episode.decision_id,
-                symbol=episode.symbol,
-                action=episode.action,
-                decision_at=episode.decision_at,
-                data_as_of=episode.data_as_of,
-                reference_price=episode.reference_price,
-                benchmark_symbol=episode.benchmark_symbol,
-                benchmark_price=episode.benchmark_price,
-                confidence=episode.confidence,
-                experiment_id=episode.experiment_id,
-                metadata_payload=episode.metadata,
-            )
-        )
-        self.session.flush()
+        try:
+            with self.session.begin_nested():
+                self.session.add(
+                    EvaluationEpisodeRow(
+                        decision_id=episode.decision_id,
+                        symbol=episode.symbol,
+                        action=episode.action,
+                        decision_at=episode.decision_at,
+                        data_as_of=episode.data_as_of,
+                        reference_price=episode.reference_price,
+                        benchmark_symbol=episode.benchmark_symbol,
+                        benchmark_price=episode.benchmark_price,
+                        confidence=episode.confidence,
+                        experiment_id=episode.experiment_id,
+                        metadata_payload=episode.metadata,
+                    )
+                )
+                self.session.flush()
+        except IntegrityError:
+            if self.session.get(EvaluationEpisodeRow, episode.decision_id) is None:
+                raise
 
     def get_episode(self, decision_id: str) -> Optional[EvaluationEpisode]:
         row = self.session.get(EvaluationEpisodeRow, decision_id)
         if row is None:
             return None
-        return EvaluationEpisode(
-            decision_id=row.decision_id,
-            symbol=row.symbol,
-            action=row.action,
-            decision_at=row.decision_at,
-            data_as_of=row.data_as_of,
-            reference_price=row.reference_price,
-            benchmark_symbol=row.benchmark_symbol,
-            benchmark_price=row.benchmark_price,
-            confidence=row.confidence,
-            experiment_id=row.experiment_id,
-            metadata=row.metadata_payload or {},
-        )
+        return self._episode(row)
 
     def record_outcome(self, outcome: EvaluationOutcome) -> None:
         if self.get_episode(outcome.decision_id) is None:
@@ -304,14 +297,42 @@ class PostgresEvaluationRepository:
                 EvaluationOutcomeRow.horizon == outcome.horizon,
             )
         )
-        values = outcome.model_dump()
-        if row is None:
-            row = EvaluationOutcomeRow(**values)
-            self.session.add(row)
-        else:
-            for key, value in values.items():
-                setattr(row, key, value)
-        self.session.flush()
+        if row is not None:
+            return
+        try:
+            with self.session.begin_nested():
+                self.session.add(EvaluationOutcomeRow(**outcome.model_dump()))
+                self.session.flush()
+        except IntegrityError:
+            exists = self.session.scalar(
+                select(EvaluationOutcomeRow.outcome_id).where(
+                    EvaluationOutcomeRow.decision_id == outcome.decision_id,
+                    EvaluationOutcomeRow.horizon == outcome.horizon,
+                )
+            )
+            if exists is None:
+                raise
+
+    def pending_episodes(
+        self, *, horizon: str, due_before: datetime
+    ) -> list[EvaluationEpisode]:
+        outcome_exists = (
+            select(EvaluationOutcomeRow.outcome_id)
+            .where(
+                EvaluationOutcomeRow.decision_id == EvaluationEpisodeRow.decision_id,
+                EvaluationOutcomeRow.horizon == horizon,
+            )
+            .exists()
+        )
+        rows = self.session.scalars(
+            select(EvaluationEpisodeRow)
+            .where(
+                EvaluationEpisodeRow.decision_at <= due_before,
+                ~outcome_exists,
+            )
+            .order_by(EvaluationEpisodeRow.decision_at, EvaluationEpisodeRow.decision_id)
+        ).all()
+        return [self._episode(row) for row in rows]
 
     def outcomes(
         self, *, experiment_id: Optional[str] = None
@@ -337,6 +358,22 @@ class PostgresEvaluationRepository:
             )
             for row in self.session.scalars(statement).all()
         ]
+
+    @staticmethod
+    def _episode(row: EvaluationEpisodeRow) -> EvaluationEpisode:
+        return EvaluationEpisode(
+            decision_id=row.decision_id,
+            symbol=row.symbol,
+            action=row.action,
+            decision_at=row.decision_at,
+            data_as_of=row.data_as_of,
+            reference_price=row.reference_price,
+            benchmark_symbol=row.benchmark_symbol,
+            benchmark_price=row.benchmark_price,
+            confidence=row.confidence,
+            experiment_id=row.experiment_id,
+            metadata=row.metadata_payload or {},
+        )
 
 
 class PostgresAdmissionPolicy:
