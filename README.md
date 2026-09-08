@@ -219,6 +219,8 @@ docker compose up -d --build
 
 This starts a local web server at http://localhost:7860. To use a different
 host port, set `HOST_PORT`, for example `HOST_PORT=7861 docker compose up -d --build`.
+See [PostgreSQL persistence](docs/postgresql.md) for schema migrations,
+production hardening, backup guidance, and database integration tests.
 
 ### Prompt Customization
 
