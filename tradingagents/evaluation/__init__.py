@@ -28,12 +28,13 @@ from .experiments import (
 )
 from .alpaca_prices import (
     AlpacaHistoricalPriceProvider,
-    PriceObservationUnavailable,
 )
+from .errors import PriceObservationUnavailable
 from .price_registry import (
     HistoricalPriceProviderRegistry,
     default_historical_price_registry,
 )
+from .tradier_prices import TradierHistoricalPriceProvider
 
 __all__ = [
     "AlpacaHistoricalPriceProvider",
@@ -55,6 +56,7 @@ __all__ = [
     "PromotionDecision",
     "PromotionPolicy",
     "PromotionStatus",
+    "TradierHistoricalPriceProvider",
     "assess_promotion",
     "attribute_episode_outcome",
     "build_filled_episode",
