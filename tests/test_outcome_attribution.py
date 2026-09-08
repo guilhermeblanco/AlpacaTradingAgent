@@ -49,12 +49,12 @@ class Prices:
         )
 
 
-def _fill(decision_id, quantity, price, updated_at):
+def _fill(decision_id, quantity, price, updated_at, broker="test"):
     return BrokerOrderRecord(
         order_key=f"{decision_id}-{quantity}",
         decision_id=decision_id,
         leg_index=int(quantity),
-        broker="test",
+        broker=broker,
         broker_order_id=f"broker-{quantity}",
         client_order_id=f"client-{quantity}",
         symbol="AAPL",
@@ -131,3 +131,20 @@ def test_outcome_observation_cannot_precede_horizon(tmp_path) -> None:
         OutcomeAttributor(
             repository, prices, [EvaluationHorizon("1d", timedelta(days=1))]
         ).resolve_due(now=entry_at + timedelta(days=2))
+
+
+@pytest.mark.parametrize("broker", ["alpaca", "tradier", "robinhood"])
+def test_fill_attribution_is_independent_of_execution_broker(
+    tmp_path, broker
+) -> None:
+    entry_at = datetime(2026, 9, 1, 15, tzinfo=timezone.utc)
+    decision_id = f"{broker}-decision"
+    repository = EvaluationRepository(tmp_path / f"{broker}.sqlite3")
+    episode = FilledEpisodeAttributor(
+        Orders([_fill(decision_id, 1, 100, entry_at, broker=broker)]),
+        repository,
+        Prices(entry_at),
+    ).capture(decision_id, action="BUY")
+
+    assert episode.metadata["source"] == "terminal_fills"
+    assert episode.reference_price == 100
