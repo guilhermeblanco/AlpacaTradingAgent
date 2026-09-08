@@ -92,6 +92,9 @@ class ReconciliationWorker:
                             worker_id=self.worker_id,
                             now=now,
                         )
+                        uow.portfolio_reservations.release_decision(
+                            task.decision_id, now=now
+                        )
                         result.completed += 1
                     else:
                         uow.reconciliation_queue.retry(

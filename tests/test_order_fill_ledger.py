@@ -37,6 +37,12 @@ from tradingagents.persistence.postgres.models import (
     BrokerOrderRow,
     LifecycleRow,
 )
+from tradingagents.portfolio import (
+    AllocationReservationState,
+    BatchAllocationStatus,
+    PortfolioAllocation,
+    PortfolioDecisionBatch,
+)
 from tradingagents.safety import SafetyGuard
 
 
@@ -186,6 +192,36 @@ def test_reconciliation_queue_uses_exclusive_durable_leases(session_factory) -> 
 
 def test_reconciliation_worker_completes_filled_order(session_factory) -> None:
     plan = _seed_submission(session_factory, gateway="tradier")
+    with PostgresUnitOfWork(session_factory) as uow:
+        reservation = uow.portfolio_reservations.reserve(
+            PortfolioDecisionBatch(
+                batch_id="order-ledger-batch",
+                created_at=datetime.now(timezone.utc),
+                snapshot_hash="snapshot",
+                snapshot_captured_at="2026-09-08T15:00:00+00:00",
+                account_equity_usd=100_000,
+                starting_gross_exposure_usd=0,
+                starting_symbol_exposure_usd={},
+                gross_limit_usd=100_000,
+                max_symbol_concentration_pct=100,
+                ending_reserved_exposure_usd=1_000,
+                allocations=[
+                    PortfolioAllocation(
+                        decision_id=plan.decision_id,
+                        symbol=plan.symbol,
+                        status=BatchAllocationStatus.APPROVED,
+                        requested_notional_usd=1_000,
+                        approved_notional_usd=1_000,
+                        priority=1,
+                    )
+                ],
+            ),
+            account_key="tradier:test",
+        )
+        uow.portfolio_reservations.consume(
+            reservation.reservation_id, decision_id=plan.decision_id
+        )
+        uow.commit()
 
     class FilledGateway:
         def get_order_snapshot(self, **kwargs):
@@ -229,6 +265,10 @@ def test_reconciliation_worker_completes_filled_order(session_factory) -> None:
     with PostgresUnitOfWork(session_factory) as uow:
         assert uow.lifecycle.get(plan.decision_id).status is LifecycleStatus.FILLED
         assert uow.reconciliation_queue.claim(worker_id="other") == []
+        recorded = uow.portfolio_reservations.reserve(
+            reservation.batch, account_key="tradier:test"
+        )
+        assert recorded.allocation_states[plan.decision_id] is AllocationReservationState.RELEASED
         uow.rollback()
 
 

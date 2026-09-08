@@ -305,6 +305,8 @@ class PortfolioReservationAllocationRow(Base):
     state: Mapped[str] = mapped_column(String(40), nullable=False)
     approved_notional: Mapped[float] = mapped_column(Float, nullable=False)
     consumed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    locked_by: Mapped[Optional[str]] = mapped_column(String(160))
+    locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
 
 class PortfolioReservationTransitionRow(Base):
