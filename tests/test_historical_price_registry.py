@@ -3,6 +3,7 @@ import pytest
 from tradingagents.evaluation import (
     AlpacaHistoricalPriceProvider,
     HistoricalPriceProviderRegistry,
+    TradierHistoricalPriceProvider,
     default_historical_price_registry,
 )
 
@@ -10,8 +11,17 @@ from tradingagents.evaluation import (
 def test_default_registry_builds_alpaca_as_a_market_data_source() -> None:
     registry = default_historical_price_registry()
 
-    assert registry.names() == ["alpaca"]
+    assert registry.names() == ["alpaca", "tradier"]
     assert isinstance(registry.create("ALPACA"), AlpacaHistoricalPriceProvider)
+
+
+def test_default_registry_constructs_tradier_from_environment(monkeypatch) -> None:
+    monkeypatch.setenv("TRADIER_ACCESS_TOKEN", "token")
+    monkeypatch.setenv("TRADIER_ACCOUNT_ID", "account")
+
+    provider = default_historical_price_registry().create("TRADIER")
+
+    assert isinstance(provider, TradierHistoricalPriceProvider)
 
 
 def test_registry_rejects_unknown_sources_instead_of_falling_back() -> None:

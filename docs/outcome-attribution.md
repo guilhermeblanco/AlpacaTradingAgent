@@ -36,6 +36,23 @@ the same attribution path and may use the Alpaca market-data source. Selecting
 an unknown source fails at startup; the execution broker name is never used as
 an implicit price-provider fallback.
 
+## Tradier price observations
+
+`TradierHistoricalPriceProvider` supports US securities through Tradier's
+documented Time & Sales and historical pricing endpoints. It first requests
+one-minute regular-session data. A minute close becomes observable at the end
+of its interval, matching the Alpaca adapter's point-in-time semantics.
+
+When minute data is outside Tradier's retention window, the adapter falls back
+to daily history and assigns each close the official XNYS session-close time.
+This prevents a same-day close from being treated as available during the
+session and skips dates that are not exchange sessions. Missing, future-only,
+or non-positive observations fail closed. Select it with
+`EVALUATION_PRICE_PROVIDER=tradier`; `TRADIER_ACCESS_TOKEN` and
+`TRADIER_ACCOUNT_ID` are required. The provider works with fills from Alpaca,
+Tradier, or Robinhood because evaluation source selection remains independent
+of order execution.
+
 ## Recurring worker
 
 Run `python -m tradingagents.evaluation.worker` with PostgreSQL persistence to

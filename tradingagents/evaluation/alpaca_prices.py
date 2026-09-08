@@ -8,11 +8,8 @@ from typing import Any, Optional
 import pandas as pd
 
 from .attribution import PriceObservation
+from .errors import PriceObservationUnavailable
 from .point_in_time import ensure_aware
-
-
-class PriceObservationUnavailable(LookupError):
-    pass
 
 
 class AlpacaHistoricalPriceProvider:
