@@ -171,6 +171,50 @@ def build_filled_episode(
     return episode
 
 
+def build_signal_episode(
+    decision_id: str,
+    *,
+    symbol: str,
+    action: str,
+    decision_at: datetime,
+    prices: HistoricalPriceProvider,
+    benchmark_symbol: str = "SPY",
+    confidence: Optional[float] = None,
+    experiment_id: str,
+    metadata: Optional[dict] = None,
+    persist=None,
+) -> EvaluationEpisode:
+    """Capture a point-in-time episode for a decision that never reaches a broker."""
+    ensure_aware(decision_at, "decision_at")
+    action_key = action.upper().strip()
+    if action_key not in {"BUY", "OPEN", "INCREASE", "LONG", "SHORT"}:
+        raise ValueError("only exposure-adding signals can create shadow episodes")
+    asset = prices.price_at_or_before(symbol, decision_at)
+    benchmark = prices.price_at_or_before(benchmark_symbol, decision_at)
+    for observation in (asset, benchmark):
+        ensure_aware(observation.observed_at, "price observed_at")
+        if observation.observed_at.astimezone(timezone.utc) > decision_at.astimezone(
+            timezone.utc
+        ):
+            raise PointInTimeViolation("signal reference observation is after decision")
+    episode = EvaluationEpisode(
+        decision_id=decision_id,
+        symbol=symbol,
+        action=action_key,
+        decision_at=decision_at,
+        data_as_of=max(asset.observed_at, benchmark.observed_at),
+        reference_price=asset.price,
+        benchmark_symbol=benchmark_symbol,
+        benchmark_price=benchmark.price,
+        confidence=confidence,
+        experiment_id=experiment_id,
+        metadata={**(metadata or {}), "source": "shadow_signal"},
+    )
+    if persist is not None:
+        persist(episode)
+    return episode
+
+
 class OutcomeAttributor:
     def __init__(
         self,

@@ -4,17 +4,26 @@ from __future__ import annotations
 
 import argparse
 import copy
+import json
 import logging
 import os
 import signal
+import threading
+from contextlib import nullcontext
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from tradingagents.agents.schemas import TradeIntent
+from tradingagents.agents.schemas import TradeIntent, trade_intent_action
 from tradingagents.broker.registry import default_broker_registry
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.execution import ExecutionPipeline
 from tradingagents.execution.dry_run_gateway import DryRunExecutionGateway
+from tradingagents.evaluation import (
+    DeterministicExperimentAssigner,
+    ExperimentVariant,
+    build_signal_episode,
+    default_historical_price_registry,
+)
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.persistence import build_persistence_runtime
 from tradingagents.portfolio import PortfolioLimitsConfig
@@ -77,6 +86,24 @@ def build_scheduler_from_env():
         ).split(",")
         if value.strip()
     ]
+    variants = [
+        ExperimentVariant.model_validate(row)
+        for row in json.loads(
+            os.getenv(
+                "AUTONOMOUS_EXPERIMENTS_JSON",
+                '[{"experiment_id":"champion","weight":1,'
+                '"execution_eligible":true,"config_overrides":{}}]',
+            )
+        )
+    ]
+    assigner = DeterministicExperimentAssigner(
+        variants, seed=os.getenv("AUTONOMOUS_EXPERIMENT_SEED", "default")
+    )
+    variant_config_lock = threading.Lock()
+    variants_have_overrides = any(variant.config_overrides for variant in variants)
+    evaluation_prices = default_historical_price_registry().create(
+        os.getenv("EVALUATION_PRICE_PROVIDER", "alpaca"), config
+    )
 
     def candidate_source(snapshot):
         scan = run_scan(
@@ -99,10 +126,38 @@ def build_scheduler_from_env():
         ]
 
     def analyze(candidate: Candidate) -> TradeIntent:
-        graph = TradingAgentsGraph(analysts, config=config, debug=False)
-        trade_date = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
-        state, _ = graph.propagate(candidate.symbol, trade_date)
+        assignment = candidate.provenance["experiment"]
+        variant_config = copy.deepcopy(config)
+        variant_config.update(assignment.get("config_overrides") or {})
+        # TradingAgentsGraph currently publishes tool configuration globally.
+        # Serialize differing variants so one cohort cannot overwrite another.
+        context = variant_config_lock if variants_have_overrides else nullcontext()
+        with context:
+            graph = TradingAgentsGraph(analysts, config=variant_config, debug=False)
+            trade_date = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+            state, _ = graph.propagate(candidate.symbol, trade_date)
         return TradeIntent.model_validate(state["final_trade_intent"])
+
+    def record_shadow(intent, assignment):
+        action = trade_intent_action(intent)
+        if action not in {"BUY", "LONG", "SHORT"}:
+            return None
+        decision_at = datetime.fromisoformat(intent.generated_at)
+        episode = build_signal_episode(
+            intent.decision_id,
+            symbol=intent.symbol,
+            action=action,
+            decision_at=decision_at,
+            prices=evaluation_prices,
+            benchmark_symbol=os.getenv("EVALUATION_BENCHMARK_SYMBOL", "SPY"),
+            confidence=intent.confidence_score,
+            experiment_id=assignment.experiment_id,
+            metadata={"experiment_role": "shadow"},
+        )
+        with persistence.unit_of_work_factory() as uow:
+            uow.evaluation.record_episode(episode)
+            uow.commit()
+        return episode
 
     allowed = {"equity"}
     if broker.capabilities.crypto:
@@ -142,6 +197,8 @@ def build_scheduler_from_env():
         reservation_ttl_seconds=int(
             os.getenv("AUTONOMOUS_RESERVATION_TTL_SECONDS", "300")
         ),
+        experiment_assigner=assigner,
+        shadow_episode_recorder=record_shadow,
     )
     return scheduler, persistence.close
 

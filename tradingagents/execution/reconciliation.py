@@ -197,7 +197,10 @@ class PersistentExecutionReconciler:
                         prices=self.evaluation_prices,
                         benchmark_symbol=self.evaluation_benchmark_symbol,
                         confidence=self.evaluation_confidence,
-                        experiment_id=self.evaluation_experiment_id,
+                        experiment_id=str(
+                            plan.metadata.get("experiment_id")
+                            or self.evaluation_experiment_id
+                        ),
                         metadata={"entry_time_source": "reconciliation_observed_at"},
                     )
                 except Exception as exc:

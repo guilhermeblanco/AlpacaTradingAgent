@@ -302,6 +302,7 @@ def test_reconciliation_captures_fill_episode_for_every_broker(
     session_factory, broker
 ) -> None:
     plan = _seed_submission(session_factory, gateway=broker)
+    plan.metadata["experiment_id"] = "assigned-champion"
 
     class FilledGateway:
         def get_order_snapshot(self, **kwargs):
@@ -337,6 +338,7 @@ def test_reconciliation_captures_fill_episode_for_every_broker(
         uow.rollback()
     assert episode is not None
     assert episode.reference_price == 101
+    assert episode.experiment_id == "assigned-champion"
     assert episode.metadata["entry_time_source"] == "reconciliation_observed_at"
 
 
