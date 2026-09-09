@@ -123,6 +123,7 @@ dev = [
 tradingagents = "cli.main:app"
 tradingagents-web = "run_webui_dash:main"
 tradingagents-account-monitor = "tradingagents.execution.account_monitor:main"
+tradingagents-broker-preflight = "tradingagents.broker.preflight:main"
 
 [tool.setuptools]
 include-package-data = true
