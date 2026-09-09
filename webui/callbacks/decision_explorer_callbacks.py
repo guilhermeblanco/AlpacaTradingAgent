@@ -3,12 +3,7 @@
 from dash import Input, Output, State, html
 import dash_bootstrap_components as dbc
 
-
-def _persistence_runtime():
-    from tradingagents.dataflows.config import get_config
-    from tradingagents.persistence import build_persistence_runtime
-
-    return build_persistence_runtime(get_config() or {})
+from webui.utils.persistence import get_persistence_runtime
 
 
 def _event_row(event):
@@ -50,27 +45,24 @@ def register_decision_explorer_callbacks(app):
         State("decision-explorer-selection", "value"),
     )
     def load_decisions(_interval, _refresh, symbol, status, selected):
-        runtime = _persistence_runtime()
+        runtime = get_persistence_runtime()
         if runtime.unit_of_work_factory is None:
             return [], None
-        try:
-            with runtime.unit_of_work_factory() as uow:
-                decisions = uow.decision_explorer.list_decisions(
-                    limit=100,
-                    symbol=symbol or None,
-                    status=status or None,
-                )
-            options = [
-                {
-                    "label": f"{item.symbol} | {item.status.upper()} | {item.created_at:%Y-%m-%d %H:%M}",
-                    "value": item.decision_id,
-                }
-                for item in decisions
-            ]
-            values = {option["value"] for option in options}
-            return options, selected if selected in values else (options[0]["value"] if options else None)
-        finally:
-            runtime.close()
+        with runtime.unit_of_work_factory() as uow:
+            decisions = uow.decision_explorer.list_decisions(
+                limit=100,
+                symbol=symbol or None,
+                status=status or None,
+            )
+        options = [
+            {
+                "label": f"{item.symbol} | {item.status.upper()} | {item.created_at:%Y-%m-%d %H:%M}",
+                "value": item.decision_id,
+            }
+            for item in decisions
+        ]
+        values = {option["value"] for option in options}
+        return options, selected if selected in values else (options[0]["value"] if options else None)
 
     @app.callback(
         Output("decision-explorer-detail", "children"),
@@ -79,7 +71,7 @@ def register_decision_explorer_callbacks(app):
     def load_decision_detail(decision_id):
         if not decision_id:
             return html.Div("No persisted decisions found", className="text-muted py-4")
-        runtime = _persistence_runtime()
+        runtime = get_persistence_runtime()
         if runtime.unit_of_work_factory is None:
             return dbc.Alert("Decision history requires PostgreSQL.", color="warning")
         try:
@@ -100,5 +92,3 @@ def register_decision_explorer_callbacks(app):
             return html.Div([header, error, *[_event_row(event) for event in detail.timeline]])
         except Exception as exc:
             return dbc.Alert(f"Unable to load decision: {exc}", color="danger")
-        finally:
-            runtime.close()

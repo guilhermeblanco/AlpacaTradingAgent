@@ -140,6 +140,15 @@ class EvaluationRepository:
             ) for row in rows
         ]
 
+    def experiment_ids(self) -> list[str]:
+        """Distinct experiment ids that have recorded at least one episode."""
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                "SELECT DISTINCT experiment_id FROM evaluation_episodes"
+                " ORDER BY experiment_id"
+            ).fetchall()
+        return [row["experiment_id"] for row in rows]
+
     @staticmethod
     def _episode(row: sqlite3.Row) -> EvaluationEpisode:
         return EvaluationEpisode(

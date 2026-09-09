@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
-from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from alembic import command
-from alembic.config import Config
 from sqlalchemy import create_engine, func, inspect, select, text
 from sqlalchemy.exc import DBAPIError
 
@@ -18,14 +14,10 @@ from tradingagents.persistence.postgres import (
     Base,
     DatabaseSettings,
     PostgresUnitOfWork,
-    create_database_engine,
     create_session_factory,
 )
 from tradingagents.persistence.postgres.models import DecisionEventRow, LifecycleRow
 from tradingagents.safety.state import PostgresSafetyStateStore
-
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _exercise_unit_of_work(session_factory) -> str:
@@ -149,24 +141,6 @@ def test_database_settings_require_a_url(monkeypatch: pytest.MonkeyPatch) -> Non
         DatabaseSettings.from_env()
 
 
-@pytest.fixture(scope="module")
-def postgres_engine():
-    database_url = os.getenv("TEST_DATABASE_URL")
-    if not database_url:
-        pytest.skip("TEST_DATABASE_URL is not configured")
-
-    config = Config(str(REPO_ROOT / "alembic.ini"))
-    config.set_main_option("script_location", str(REPO_ROOT / "migrations"))
-    config.set_main_option("sqlalchemy.url", database_url)
-    command.upgrade(config, "head")
-
-    engine = create_database_engine(DatabaseSettings(url=database_url))
-    try:
-        yield engine
-    finally:
-        engine.dispose()
-
-
 def test_initial_migration_creates_all_persistence_tables(postgres_engine) -> None:
     assert {
         "decision_events",
@@ -228,3 +202,26 @@ def test_postgres_rejects_decision_event_mutation(postgres_engine) -> None:
                 {"event_id": event_id},
             )
         transaction.rollback()
+
+
+def test_experiment_ids_lists_distinct_recorded_experiments(postgres_session_factory) -> None:
+    """The evaluation panel needs the variants available to compare."""
+    now = datetime.now(timezone.utc)
+    with PostgresUnitOfWork(postgres_session_factory) as uow:
+        for index, experiment_id in enumerate(["variant-b", "default", "variant-b"]):
+            uow.evaluation.record_episode(
+                EvaluationEpisode(
+                    decision_id=f"decision-{index}",
+                    symbol="AAPL",
+                    action="BUY",
+                    decision_at=now,
+                    data_as_of=now - timedelta(minutes=1),
+                    reference_price=100.0,
+                    benchmark_price=500.0,
+                    experiment_id=experiment_id,
+                )
+            )
+        uow.commit()
+
+    with PostgresUnitOfWork(postgres_session_factory) as uow:
+        assert uow.evaluation.experiment_ids() == ["default", "variant-b"]

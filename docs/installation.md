@@ -1,6 +1,6 @@
 # Installation profiles and configuration validation
 
-Use Python 3.11 or 3.12. From the repository root:
+Use Python 3.14. From the repository root:
 
 ```bash
 python3 -m venv .venv

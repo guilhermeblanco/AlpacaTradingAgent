@@ -22,6 +22,11 @@ class AccountDriftReport(BaseModel):
     position_differences: dict[str, float] = Field(default_factory=dict)
     cash_difference: float = 0.0
     problems: list[str] = Field(default_factory=list)
+    # Positions only move when someone trades. Cash also moves on dividends,
+    # interest, fees, and transfers, so the two are tracked apart: one is a
+    # reason to stop trading, the other usually is not.
+    positions_matched: bool = True
+    cash_matched: bool = True
 
 
 class AccountBaseline(BaseModel):
@@ -60,7 +65,8 @@ def compare_account_snapshots(
         f"{symbol} quantity differs by {difference:g}"
         for symbol, difference in differences.items()
     ]
-    if abs(cash_difference) > cash_tolerance:
+    cash_matched = abs(cash_difference) <= cash_tolerance
+    if not cash_matched:
         problems.append(f"cash differs by {cash_difference:.2f}")
     return AccountDriftReport(
         broker=actual.broker,
@@ -69,7 +75,13 @@ def compare_account_snapshots(
         position_differences=differences,
         cash_difference=cash_difference,
         problems=problems,
+        positions_matched=not differences,
+        cash_matched=cash_matched,
     )
+
+
+def _default_quarantine_scope(broker: str) -> str:
+    return f"execution:{broker}"
 
 
 @dataclass
@@ -79,6 +91,7 @@ class AccountMonitorResult:
     matched: int = 0
     mismatched: int = 0
     quarantined: int = 0
+    resynced: int = 0
     reports: list[AccountDriftReport] = field(default_factory=list)
 
 
@@ -93,6 +106,8 @@ class AccountReconciliationMonitor:
         quantity_tolerance: float = 1e-6,
         cash_tolerance: float = 1.0,
         worker_id: str = "account-monitor",
+        quarantine_scope: Optional[Callable[[str], str]] = None,
+        quarantine_on_cash_drift: bool = False,
     ) -> None:
         self.unit_of_work_factory = unit_of_work_factory
         self.snapshot_provider_factory = snapshot_provider_factory
@@ -101,6 +116,10 @@ class AccountReconciliationMonitor:
         self.quantity_tolerance = quantity_tolerance
         self.cash_tolerance = cash_tolerance
         self.worker_id = worker_id
+        # Must match the scope the execution pipeline checks, otherwise the
+        # quarantine pauses a service nothing enforces.
+        self.quarantine_scope = quarantine_scope or _default_quarantine_scope
+        self.quarantine_on_cash_drift = quarantine_on_cash_drift
 
     def run_once(self) -> AccountMonitorResult:
         result = AccountMonitorResult()
@@ -123,7 +142,8 @@ class AccountReconciliationMonitor:
                     cash_tolerance=self.cash_tolerance,
                 )
                 result.reports.append(report)
-                mismatch_count = 0 if report.matched else baseline.mismatch_count + 1
+                halting = self._is_halting(report)
+                mismatch_count = baseline.mismatch_count + 1 if halting else 0
                 uow.account_snapshots.record_check(
                     broker, report, mismatch_count=mismatch_count
                 )
@@ -131,16 +151,49 @@ class AccountReconciliationMonitor:
                     result.matched += 1
                 else:
                     result.mismatched += 1
+                if halting:
                     if mismatch_count >= self.mismatch_threshold:
                         uow.operations.set_paused(
-                            f"execution:{broker}",
+                            self.quarantine_scope(broker),
                             paused=True,
                             reason="account-wide drift: " + "; ".join(report.problems),
                             updated_by=self.worker_id,
                         )
                         result.quarantined += 1
+                elif not report.matched:
+                    # Cash-only drift is expected from dividends, interest,
+                    # fees, and transfers. Adopt it so the next comparison
+                    # measures against reality instead of re-reporting it.
+                    uow.account_snapshots.upsert(
+                        broker,
+                        actual,
+                        source="cash_drift_resync",
+                        mismatch_count=0,
+                    )
+                    result.resynced += 1
                 uow.commit()
         return result
+
+    def _is_halting(self, report: AccountDriftReport) -> bool:
+        """Only position drift means somebody traded outside this system."""
+        if not report.positions_matched:
+            return True
+        return self.quarantine_on_cash_drift and not report.cash_matched
+
+    def resync_baseline(self, broker: str) -> AccountBaseline:
+        """Adopt the broker's current account state as the new baseline.
+
+        A quarantine stops execution, and only a verified fill refreshes the
+        baseline, so without an explicit reset a quarantined account can
+        never return to a matching state on its own.
+        """
+        actual = self.snapshot_provider_factory(broker).get_portfolio_snapshot()
+        with self.unit_of_work_factory() as uow:
+            baseline = uow.account_snapshots.upsert(
+                broker, actual, source="operator_resync", mismatch_count=0
+            )
+            uow.commit()
+        return baseline
 
 
 def build_monitor_from_env():
@@ -157,12 +210,20 @@ def build_monitor_from_env():
         persistence.close()
         raise ValueError("account monitor requires PERSISTENCE_BACKEND=postgres")
     runtime = get_execution_broker_runtime(config)
+    # Every process sharing an account must quarantine the same scope the
+    # execution pipeline checks before it submits an order.
+    scope = os.getenv("EXECUTION_QUARANTINE_SCOPE", "").strip()
     monitor = AccountReconciliationMonitor(
         persistence.unit_of_work_factory,
         lambda _broker: runtime.snapshot_provider,
         [runtime.name],
         mismatch_threshold=int(os.getenv("ACCOUNT_DRIFT_MISMATCH_THRESHOLD", "2")),
         cash_tolerance=float(os.getenv("ACCOUNT_DRIFT_CASH_TOLERANCE", "1")),
+        quarantine_scope=(lambda _broker, scope=scope: scope) if scope else None,
+        quarantine_on_cash_drift=os.getenv(
+            "ACCOUNT_DRIFT_HALT_ON_CASH", "false"
+        ).strip().lower()
+        in {"1", "true", "yes", "on"},
     )
     return monitor, persistence.close
 
@@ -170,6 +231,14 @@ def build_monitor_from_env():
 def main() -> None:
     parser = argparse.ArgumentParser(description="Monitor broker account-wide drift")
     parser.add_argument("--once", action="store_true")
+    parser.add_argument(
+        "--resync-baseline",
+        action="store_true",
+        help=(
+            "Adopt the broker's current account state as the baseline and "
+            "exit. Use after reconciling a quarantine by hand."
+        ),
+    )
     parser.add_argument(
         "--interval-seconds",
         type=float,
@@ -179,6 +248,15 @@ def main() -> None:
     logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
     monitor, close = build_monitor_from_env()
     try:
+        if args.resync_baseline:
+            for broker in monitor.brokers:
+                baseline = monitor.resync_baseline(broker)
+                logging.info(
+                    "account baseline resynced broker=%s at=%s",
+                    broker,
+                    baseline.updated_at,
+                )
+            return
         while True:
             result = monitor.run_once()
             logging.info("account monitor result=%s", result)

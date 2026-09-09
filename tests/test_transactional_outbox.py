@@ -1,29 +1,20 @@
 from __future__ import annotations
 
-import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from alembic import command
-from alembic.config import Config
 from sqlalchemy import create_engine, select
 
 from tradingagents.persistence.outbox import OutboxDispatcher, OutboxLeaseLost
 from tradingagents.persistence.postgres import (
     Base,
-    DatabaseSettings,
     PostgresUnitOfWork,
-    create_database_engine,
     create_session_factory,
 )
 from tradingagents.persistence.postgres.models import OutboxRow
-
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture
@@ -190,22 +181,6 @@ def test_expired_lease_can_be_reclaimed_but_stale_worker_cannot_ack(
         uow.rollback()
 
 
-@pytest.fixture(scope="module")
-def postgres_session_factory():
-    database_url = os.getenv("TEST_DATABASE_URL")
-    if not database_url:
-        pytest.skip("TEST_DATABASE_URL is not configured")
-    config = Config(str(REPO_ROOT / "alembic.ini"))
-    config.set_main_option("script_location", str(REPO_ROOT / "migrations"))
-    config.set_main_option("sqlalchemy.url", database_url)
-    command.upgrade(config, "head")
-    engine = create_database_engine(DatabaseSettings(url=database_url))
-    try:
-        yield create_session_factory(engine)
-    finally:
-        engine.dispose()
-
-
 def test_postgres_skip_locked_prevents_double_claim(postgres_session_factory) -> None:
     key = f"skip-locked-{uuid4()}"
     with PostgresUnitOfWork(postgres_session_factory) as uow:
@@ -213,10 +188,14 @@ def test_postgres_skip_locked_prevents_double_claim(postgres_session_factory) ->
         uow.commit()
 
     with PostgresUnitOfWork(postgres_session_factory) as first:
-        claimed = first.outbox.claim(worker_id="worker-a")
-        assert len(claimed) == 1
+        claimed = {message.idempotency_key for message in first.outbox.claim(worker_id="worker-a")}
+        assert key in claimed
         with PostgresUnitOfWork(postgres_session_factory) as second:
-            assert second.outbox.claim(worker_id="worker-b") == []
+            contended = {
+                message.idempotency_key
+                for message in second.outbox.claim(worker_id="worker-b")
+            }
+            assert not (claimed & contended)
             second.rollback()
         first.rollback()
 

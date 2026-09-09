@@ -7,7 +7,7 @@ name = "tradingagents"
 version = "0.1.0"
 description = "Auditable multi-agent trading research and broker execution framework"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.14"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [{ name = "TradingAgents Team" }]
@@ -124,6 +124,10 @@ tradingagents = "cli.main:app"
 tradingagents-web = "run_webui_dash:main"
 tradingagents-account-monitor = "tradingagents.execution.account_monitor:main"
 tradingagents-broker-preflight = "tradingagents.broker.preflight:main"
+tradingagents-autonomous-worker = "tradingagents.orchestration.autonomous_worker:main"
+tradingagents-control-plane = "tradingagents.operations.control_plane:main"
+tradingagents-evaluation-worker = "tradingagents.evaluation.worker:main"
+tradingagents-reconciliation-worker = "tradingagents.execution.reconciliation_worker:main"
 
 [tool.setuptools]
 include-package-data = true

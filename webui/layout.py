@@ -19,6 +19,7 @@ from webui.components.cost_panel import create_cost_panel
 from webui.components.api_config_modal import create_api_config_modal
 from webui.components.operations_panel import create_operations_panel
 from webui.components.decision_explorer import create_decision_explorer
+from webui.components.evaluation_panel import create_evaluation_panel
 from webui.config.constants import COLORS, REFRESH_INTERVALS
 
 
@@ -185,6 +186,7 @@ def create_main_layout():
             ]),
             reports_card,
             create_backtest_panel(),
+            create_evaluation_panel(),
             create_cost_panel(),
             html.Div(className="mt-4"),
             create_footer(),

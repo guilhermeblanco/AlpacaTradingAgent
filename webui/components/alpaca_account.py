@@ -310,6 +310,23 @@ def render_orders_table_error(error):
     ], className="orders-empty-state error-state")
 
 
+def render_orders_table_shell():
+    """Orders surface with empty child containers.
+
+    The layout is built once at server startup, so it must not call the
+    broker. `update_enhanced_alpaca_tables` fills both containers on the
+    first callback pass.
+    """
+    return html.Div([
+        dcc.Loading(
+            html.Div(id="orders-table-body-container", className="orders-table-body"),
+            type="circle",
+            className="orders-loading",
+        ),
+        html.Div(id="orders-pagination-container"),
+    ], className="enhanced-table-container orders-table-container")
+
+
 def render_orders_table(page=1, page_size=ORDERS_PAGE_SIZE):
     """Render the enhanced Recent Orders surface with table-only loading."""
     try:
@@ -448,7 +465,7 @@ def render_alpaca_account_section():
                     html.I(className="fas fa-briefcase me-2"),
                     "Open Positions"
                 ], className="mb-3"),
-                html.Div(id="positions-table-container", children=render_positions_table())
+                html.Div(id="positions-table-container")
             ], md=7),
             dbc.Col([
                 html.H5([
@@ -456,10 +473,10 @@ def render_alpaca_account_section():
                     "Recent Orders"
                 ], className="mb-3"),
                 dcc.Store(id="orders-page-store", data=1),
-                html.Div(id="orders-table-container", children=render_orders_table())
+                html.Div(id="orders-table-container", children=render_orders_table_shell())
             ], md=5)
         ]),
-        html.Div(id="account-summary-container", children=render_account_summary()),
+        html.Div(id="account-summary-container"),
         # Hidden div for liquidation confirmations
         dcc.ConfirmDialog(
             id='liquidate-confirm',

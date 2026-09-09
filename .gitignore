@@ -1,4 +1,5 @@
 env/
+.venv/
 __pycache__/
 .DS_Store
 *.csv
@@ -8,3 +9,6 @@ eval_data/
 *.egg-info/
 .env
 data/
+.coverage
+.coverage.*
+htmlcov/

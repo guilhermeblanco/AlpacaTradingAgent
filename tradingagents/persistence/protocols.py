@@ -68,6 +68,8 @@ class EvaluationRepositoryPort(Protocol):
         self, *, experiment_id: Optional[str] = None
     ) -> list[EvaluationOutcome]: ...
 
+    def experiment_ids(self) -> list[str]: ...
+
 
 @runtime_checkable
 class AdmissionPolicyPort(Protocol):

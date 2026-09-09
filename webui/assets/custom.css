@@ -2687,6 +2687,24 @@ body {
 .operations-metric-value { font-size: 1.15rem; font-weight: 700; margin-top: 4px; }
 .operations-table { table-layout: fixed; }
 
+.evaluation-metric-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 8px;
+}
+
+.evaluation-metric {
+    min-height: 72px;
+    padding: 10px 12px;
+    border-left: 3px solid #64748b;
+    background: #111827;
+}
+
+.evaluation-metric-success { border-left-color: #22c55e; }
+.evaluation-metric-warning { border-left-color: #f59e0b; }
+.evaluation-metric-danger { border-left-color: #ef4444; }
+.evaluation-metric-value { font-size: 1.15rem; font-weight: 700; margin-top: 4px; }
+
 .decision-explorer {
     border-bottom: 1px solid #334155;
     padding-bottom: 20px;
