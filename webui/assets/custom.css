@@ -2663,3 +2663,26 @@ body {
         white-space: normal;
     }
 }
+.operations-panel {
+    border-top: 1px solid #334155;
+    border-bottom: 1px solid #334155;
+    padding: 20px 0;
+}
+
+.operations-metric-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 8px;
+}
+
+.operations-metric {
+    min-height: 72px;
+    padding: 10px 12px;
+    border-left: 3px solid #64748b;
+    background: #111827;
+}
+
+.operations-metric-warning { border-left-color: #f59e0b; }
+.operations-metric-danger { border-left-color: #ef4444; }
+.operations-metric-value { font-size: 1.15rem; font-weight: 700; margin-top: 4px; }
+.operations-table { table-layout: fixed; }
