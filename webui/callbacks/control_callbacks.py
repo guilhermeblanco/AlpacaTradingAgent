@@ -170,6 +170,50 @@ def _collect_llm_params(
     )
 
 
+def format_trading_hours(hours):
+    """Render validated market hours as 12-hour clock times.
+
+    validate_market_hours bounds these to 9-16, so noon is the only case
+    that is neither a bare AM hour nor an afternoon subtraction.
+    """
+    formatted = []
+    for hour in hours:
+        if hour < 12:
+            formatted.append(f"{hour}:00 AM")
+        elif hour > 12:
+            formatted.append(f"{hour - 12}:00 PM")
+        else:
+            formatted.append("12:00 PM")
+    return " and ".join(formatted)
+
+
+def resolve_scheduling_modes(
+    trigger_id, loop_enabled, market_hour_enabled, screener_enabled
+):
+    """Keep at most one scheduling mode enabled.
+
+    Returns the three switch states followed by the disabled flag for each
+    mode's own input. Enabling one mode turns the other two off and greys
+    out their inputs; disabling a mode frees every input it was blocking.
+    """
+    if not trigger_id:
+        return loop_enabled, market_hour_enabled, screener_enabled, False, False, False
+    if trigger_id == "loop-enabled" and loop_enabled:
+        return True, False, False, False, True, True
+    if trigger_id == "market-hour-enabled" and market_hour_enabled:
+        return False, True, False, True, False, True
+    if trigger_id == "screener-enabled" and screener_enabled:
+        return False, False, True, True, True, False
+    return (
+        loop_enabled,
+        market_hour_enabled,
+        screener_enabled,
+        not loop_enabled,
+        not market_hour_enabled,
+        not screener_enabled,
+    )
+
+
 def register_control_callbacks(app):
     """Register all control and configuration callbacks"""
 
@@ -526,15 +570,7 @@ def register_control_callbacks(app):
                 error_msg
             ], color="danger", className="config-inline-alert mb-2")
         else:
-            # Format hours for display
-            formatted_hours = []
-            for hour in hours:
-                if hour < 12:
-                    formatted_hours.append(f"{hour}:00 AM")
-                else:
-                    formatted_hours.append(f"{hour-12}:00 PM" if hour > 12 else "12:00 PM")
-
-            hours_str = " and ".join(formatted_hours)
+            hours_str = format_trading_hours(hours)
             return dbc.Alert([
                 html.I(className="fas fa-check-circle me-2"),
                 f"Valid trading hours: {hours_str} EST/EDT"
@@ -555,20 +591,12 @@ def register_control_callbacks(app):
     def mutual_exclusive_scheduling_modes(loop_enabled, market_hour_enabled, screener_enabled):
         """Ensure only one scheduling mode can be enabled at a time"""
         ctx = dash.callback_context
-        if not ctx.triggered:
-            return loop_enabled, market_hour_enabled, screener_enabled, False, False, False
-
-        trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
-
-        if trigger_id == "loop-enabled" and loop_enabled:
-            return True, False, False, False, True, True
-        elif trigger_id == "market-hour-enabled" and market_hour_enabled:
-            return False, True, False, True, False, True
-        elif trigger_id == "screener-enabled" and screener_enabled:
-            return False, False, True, True, True, False
-        else:
-            # Mode was disabled, enable all inputs
-            return loop_enabled, market_hour_enabled, screener_enabled, not loop_enabled, not market_hour_enabled, not screener_enabled
+        trigger_id = (
+            ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else None
+        )
+        return resolve_scheduling_modes(
+            trigger_id, loop_enabled, market_hour_enabled, screener_enabled
+        )
 
     @app.callback(
         Output("scheduling-mode-info", "children"),
