@@ -92,3 +92,116 @@ class SafetyPanelWiringTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SafetyLimitsEditorTests(unittest.TestCase):
+    """The deterministic limits were backend-only; the panel now edits them."""
+
+    def setUp(self):
+        from tradingagents.dataflows.config import get_config, set_config
+
+        self._original = {
+            key: (get_config() or {}).get(key)
+            for key in (
+                "execution_gateway",
+                "safety_enabled",
+                "max_trade_notional_usd",
+                "max_symbol_concentration_pct",
+                "daily_loss_halt_pct",
+                "max_drawdown_halt_pct",
+                "max_consecutive_rejections",
+                "daily_llm_token_budget",
+            )
+        }
+        self.addCleanup(lambda: set_config(self._original))
+
+    def test_panel_exposes_every_editable_limit(self):
+        from webui.components.safety_panel import (
+            SAFETY_LIMIT_FIELDS,
+            create_safety_panel,
+        )
+
+        rendered = str(create_safety_panel())
+        self.assertIn("safety-execution-gateway", rendered)
+        self.assertIn("safety-enabled-switch", rendered)
+        self.assertIn("safety-limits-save", rendered)
+        for input_id, _key, _label, _help, _step in SAFETY_LIMIT_FIELDS:
+            self.assertIn(input_id, rendered)
+
+    def test_saving_limits_updates_config_and_reloads_the_guard(self):
+        from tradingagents.dataflows.config import get_config
+        from tradingagents.safety import get_safety_guard
+        from webui.callbacks.safety_callbacks import apply_safety_limits
+
+        get_safety_guard()  # build the singleton so the reset is observable
+
+        saved, message = apply_safety_limits(
+            "alpaca", True, [1234, 10, 5, 7, 3, 50_000]
+        )
+
+        self.assertTrue(saved, message)
+        config = get_config()
+        self.assertEqual(config["max_trade_notional_usd"], 1234)
+        self.assertEqual(config["max_symbol_concentration_pct"], 10)
+        self.assertEqual(config["daily_llm_token_budget"], 50_000)
+        self.assertEqual(get_safety_guard().config["max_trade_notional_usd"], 1234)
+
+    def test_dry_run_gateway_is_selectable_and_called_out(self):
+        from tradingagents.dataflows.config import get_config
+        from webui.callbacks.safety_callbacks import apply_safety_limits
+
+        saved, message = apply_safety_limits(
+            "dry-run", True, [1000, 10, 5, 7, 3, 0]
+        )
+
+        self.assertTrue(saved, message)
+        self.assertEqual(get_config()["execution_gateway"], "dry-run")
+        self.assertIn("no orders are sent", message)
+
+    def test_disabling_the_safety_layer_says_so(self):
+        from webui.callbacks.safety_callbacks import apply_safety_limits
+
+        saved, message = apply_safety_limits(
+            "alpaca", False, [1000, 10, 5, 7, 3, 0]
+        )
+
+        self.assertTrue(saved, message)
+        self.assertIn("DISABLED", message)
+
+    def test_unknown_gateway_is_rejected_without_changing_config(self):
+        from tradingagents.dataflows.config import get_config
+        from webui.callbacks.safety_callbacks import apply_safety_limits
+
+        before = get_config()["execution_gateway"]
+        saved, message = apply_safety_limits(
+            "not-a-gateway", True, [1000, 10, 5, 7, 3, 0]
+        )
+
+        self.assertFalse(saved)
+        self.assertIn("not saved", message)
+        self.assertEqual(get_config()["execution_gateway"], before)
+
+    def test_blank_input_keeps_the_stored_limit(self):
+        from tradingagents.dataflows.config import get_config
+        from webui.callbacks.safety_callbacks import apply_safety_limits
+
+        apply_safety_limits("alpaca", True, [4321, 10, 5, 7, 3, 0])
+        saved, message = apply_safety_limits("alpaca", True, ["", 10, 5, 7, 3, 0])
+
+        self.assertTrue(saved, message)
+        self.assertEqual(get_config()["max_trade_notional_usd"], 4321)
+
+    def test_reading_limits_matches_the_field_order(self):
+        from webui.callbacks.safety_callbacks import (
+            SAFETY_LIMIT_KEYS,
+            apply_safety_limits,
+            read_safety_limits,
+        )
+
+        apply_safety_limits("dry-run", False, [11, 22, 33, 44, 55, 66])
+        gateway, enabled, values = read_safety_limits()
+
+        self.assertEqual(gateway, "dry-run")
+        self.assertFalse(enabled)
+        self.assertEqual(values, [11, 22, 33, 44, 55, 66])
+        self.assertEqual(len(values), len(SAFETY_LIMIT_KEYS))
