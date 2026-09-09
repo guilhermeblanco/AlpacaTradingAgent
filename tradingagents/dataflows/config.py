@@ -2,6 +2,7 @@
 import tradingagents.default_config as default_config
 from typing import Dict, Optional
 import os
+from tradingagents.configuration import validate_application_config
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -19,7 +20,7 @@ def initialize_config():
     """Initialize the configuration with default values."""
     global _config, DATA_DIR
     if _config is None:
-        _config = default_config.DEFAULT_CONFIG.copy()
+        _config = validate_application_config()
         DATA_DIR = _config["data_dir"]
 
 
@@ -27,8 +28,8 @@ def set_config(config: Dict):
     """Update the configuration with custom values."""
     global _config, DATA_DIR
     if _config is None:
-        _config = default_config.DEFAULT_CONFIG.copy()
-    _config.update(config)
+        _config = validate_application_config()
+    _config = validate_application_config({**_config, **config})
     DATA_DIR = _config["data_dir"]
 
 
@@ -36,7 +37,7 @@ def get_config() -> Dict:
     """Get the current configuration."""
     if _config is None:
         initialize_config()
-    return _config.copy()
+    return validate_application_config(_config)
 
 
 def set_runtime_api_keys(api_keys: Dict[str, str]):

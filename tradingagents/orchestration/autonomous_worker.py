@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 from tradingagents.agents.schemas import TradeIntent, trade_intent_action
 from tradingagents.broker.registry import default_broker_registry
 from tradingagents.default_config import DEFAULT_CONFIG
+from tradingagents.configuration import validate_application_config
 from tradingagents.execution import ExecutionPipeline
 from tradingagents.execution.dry_run_gateway import DryRunExecutionGateway
 from tradingagents.evaluation import (
@@ -58,6 +59,7 @@ def build_scheduler_from_env():
             "quick_think_llm": os.getenv("QUICK_THINK_LLM", config["quick_think_llm"]),
         }
     )
+    config = validate_application_config(config)
     persistence = build_persistence_runtime(config)
     if persistence.unit_of_work_factory is None:
         persistence.close()

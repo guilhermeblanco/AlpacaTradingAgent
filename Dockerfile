@@ -23,9 +23,9 @@ RUN apt-get update \
 
 RUN python -m venv /opt/venv
 
-COPY requirements.txt ./
+COPY . .
 RUN python -m pip install --upgrade pip setuptools wheel \
-    && python -m pip install -r requirements.txt
+    && python -m pip install ".[app]"
 
 
 FROM python:3.11-slim-bookworm AS runtime
@@ -56,8 +56,7 @@ RUN apt-get update \
 COPY --from=builder /opt/venv /opt/venv
 COPY . .
 
-RUN python -m pip install --no-deps -e . \
-    && groupadd --system app \
+RUN groupadd --system app \
     && useradd --system --gid app --home-dir /app --shell /usr/sbin/nologin app \
     && mkdir -p \
         /app/tradingagents/dataflows/data_cache \
@@ -74,5 +73,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
     CMD python -c "import os, urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.environ.get(\"PORT\", \"7860\")}', timeout=3).read(1)"
 
 CMD ["sh", "-c", "exec python run_webui_dash.py --server-name \"${SERVER_NAME:-0.0.0.0}\" --port \"${PORT:-7860}\""]
-
 

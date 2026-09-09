@@ -125,14 +125,22 @@ Our enhanced framework decomposes complex trading tasks into specialized roles w
 
 Clone AlpacaTradingAgent:
 ```bash
-git clone https://github.com/huygiatrng/AlpacaTradingAgent.git
+git clone https://github.com/guilhermeblanco/AlpacaTradingAgent.git
 cd AlpacaTradingAgent
 ```
 
-Install dependencies:
+Create an isolated Python 3.11+ environment and install the complete product:
 ```bash
-pip install -r requirements.txt
+python3 -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+python -m pip install --upgrade pip
+python -m pip install -e ".[app]"
 ```
+
+Use `python -m pip install -e ".[app,dev]"` when running the test suite.
+`pip install -r requirements.txt` remains a compatibility alias for the full
+`app` installation. See [docs/installation.md](docs/installation.md) for the
+smaller dependency groups and verification commands.
 
 ### Required APIs Configuration
 
