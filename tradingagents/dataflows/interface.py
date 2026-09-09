@@ -1497,10 +1497,14 @@ def get_defillama_fundamentals(
     Returns:
         str: Markdown-formatted fundamentals report for the cryptocurrency
     """
-    # Clean the ticker - remove any USD/USDT suffix if present
-    clean_ticker = ticker.upper().replace("USD", "").replace("USDT", "")
+    # Clean the ticker - remove any USD/USDT suffix if present. Split the
+    # pair first and strip the longer suffix first, or BTCUSDT loses its
+    # "USD" and DeFi Llama gets asked about "BTCT".
+    clean_ticker = ticker.upper()
     if "/" in clean_ticker:
         clean_ticker = clean_ticker.split("/")[0]
+    else:
+        clean_ticker = clean_ticker.replace("USDT", "").replace("USD", "")
         
     try:
         return get_defillama_fundamentals_util(clean_ticker, lookback_days)
