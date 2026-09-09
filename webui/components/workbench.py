@@ -299,7 +299,117 @@ def create_workbench_panel():
                 ),
                 className="workbench-stage-card mb-3",
             ),
+            _variants_card(),
             html.Div(id="workbench-tape"),
         ],
         className="workbench-panel",
+    )
+
+
+def _variants_card():
+    """Replay a decision under an experiment variant, and read the gate."""
+    return dbc.Card(
+        dbc.CardBody(
+            [
+                html.Div(
+                    [
+                        html.Strong("Would another configuration have done better?"),
+                        html.Small(
+                            " Re-runs the analysts under a variant and records "
+                            "the result as a shadow episode. This costs real "
+                            "model calls and takes minutes. It never places an "
+                            "order.",
+                            className="text-muted",
+                        ),
+                    ],
+                    className="mb-2",
+                ),
+                dbc.Row(
+                    [
+                        dbc.Col(
+                            dcc.Dropdown(
+                                id="workbench-variant",
+                                placeholder="Variant to replay under",
+                                clearable=False,
+                                className="workbench-dropdown",
+                            ),
+                            md=4,
+                        ),
+                        dbc.Col(
+                            dbc.Button(
+                                "Replay under variant",
+                                id="workbench-replay",
+                                color="warning",
+                                outline=True,
+                                size="sm",
+                            ),
+                            md="auto",
+                        ),
+                    ],
+                    className="g-2 align-items-center mb-2",
+                ),
+                dcc.Interval(id="workbench-replay-interval", interval=5_000),
+                html.Div(id="workbench-replay-status"),
+                html.Hr(className="my-3"),
+                html.Div(
+                    [
+                        html.Strong("Promotion gate"),
+                        html.Small(
+                            " Challenger against champion, on the policy the "
+                            "autonomous worker would apply.",
+                            className="text-muted",
+                        ),
+                    ],
+                    className="mb-2",
+                ),
+                dbc.Row(
+                    [
+                        dbc.Col(
+                            dcc.Dropdown(
+                                id="workbench-challenger",
+                                placeholder="Challenger",
+                                clearable=False,
+                                className="workbench-dropdown",
+                            ),
+                            md=3,
+                        ),
+                        dbc.Col(
+                            dcc.Dropdown(
+                                id="workbench-champion",
+                                placeholder="Champion",
+                                clearable=False,
+                                className="workbench-dropdown",
+                            ),
+                            md=3,
+                        ),
+                        dbc.Col(
+                            dcc.Dropdown(
+                                id="workbench-horizon",
+                                placeholder="Horizon",
+                                clearable=False,
+                                className="workbench-dropdown",
+                            ),
+                            md=2,
+                        ),
+                        dbc.Col(
+                            dbc.Checklist(
+                                options=[
+                                    {
+                                        "label": " Include replayed outcomes",
+                                        "value": "yes",
+                                    }
+                                ],
+                                value=[],
+                                id="workbench-include-replays",
+                                switch=True,
+                            ),
+                            md="auto",
+                        ),
+                    ],
+                    className="g-2 align-items-center mb-2",
+                ),
+                html.Div(id="workbench-promotion"),
+            ]
+        ),
+        className="workbench-stage-card mb-3",
     )

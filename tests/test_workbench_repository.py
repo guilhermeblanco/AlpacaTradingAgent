@@ -343,3 +343,134 @@ def test_the_board_respects_its_limit(session_factory) -> None:
         _lifecycle(session_factory, decision_id=f"decision-{index}", offset=index)
 
     assert len(_board(session_factory, limit=2)) == 2
+
+
+def _episode(session_factory, decision_id, *, experiment_id, replay=False,
+             offset=0, symbol="NVDA"):
+    from tradingagents.evaluation.models import EvaluationEpisode
+    from tradingagents.workbench.replay import REPLAY_SOURCE
+
+    metadata = {"experiment_role": "shadow"}
+    if replay:
+        metadata["origin"] = REPLAY_SOURCE
+        metadata["origin_decision_id"] = "decision-1"
+    with PostgresUnitOfWork(session_factory) as uow:
+        uow.evaluation.record_episode(
+            EvaluationEpisode(
+                decision_id=decision_id,
+                symbol=symbol,
+                action="BUY",
+                decision_at=NOW + timedelta(minutes=offset),
+                data_as_of=NOW + timedelta(minutes=offset - 1),
+                reference_price=100.0,
+                benchmark_symbol="SPY",
+                benchmark_price=500.0,
+                experiment_id=experiment_id,
+                metadata=metadata,
+            )
+        )
+        uow.commit()
+
+
+def _outcome_for(session_factory, decision_id, *, excess=1.5, horizon="1d"):
+    from tradingagents.evaluation.models import EvaluationOutcome
+
+    with PostgresUnitOfWork(session_factory) as uow:
+        uow.evaluation.record_outcome(
+            EvaluationOutcome(
+                decision_id=decision_id,
+                horizon=horizon,
+                outcome_at=NOW + timedelta(days=1),
+                asset_price=101.0,
+                benchmark_price=500.0,
+                asset_return_pct=excess,
+                benchmark_return_pct=0.0,
+                excess_return_pct=excess,
+                directionally_correct=excess > 0,
+                estimated_cost_pct=0.1,
+            )
+        )
+        uow.commit()
+
+
+def test_replayed_outcomes_are_separable_from_live_ones(session_factory) -> None:
+    """A challenger built out of replays is not evidence to promote on, so
+    the gate has to be able to leave them out."""
+    _episode(session_factory, "live-1", experiment_id="deep", offset=0)
+    _outcome_for(session_factory, "live-1")
+    _episode(session_factory, "replay-1", experiment_id="deep", replay=True, offset=1)
+    _outcome_for(session_factory, "replay-1")
+
+    with PostgresUnitOfWork(session_factory) as uow:
+        everything = uow.evaluation.outcomes(experiment_id="deep")
+        live_only = uow.evaluation.outcomes(
+            experiment_id="deep", include_replays=False
+        )
+        uow.rollback()
+
+    assert {row.decision_id for row in everything} == {"live-1", "replay-1"}
+    assert {row.decision_id for row in live_only} == {"live-1"}
+
+
+def test_a_ledger_with_no_replays_is_unaffected_by_the_filter(session_factory) -> None:
+    _episode(session_factory, "live-1", experiment_id="deep")
+    _outcome_for(session_factory, "live-1")
+
+    with PostgresUnitOfWork(session_factory) as uow:
+        live_only = uow.evaluation.outcomes(
+            experiment_id="deep", include_replays=False
+        )
+        uow.rollback()
+
+    assert len(live_only) == 1
+
+
+def test_a_replay_reaches_the_promotion_gate(session_factory) -> None:
+    """End to end: a replayed episode resolves into an outcome the gate
+    compares against the champion."""
+    from tradingagents.evaluation import PromotionStatus
+    from tradingagents.workbench.promotion_view import build_promotion_view
+
+    for index in range(4):
+        _episode(
+            session_factory,
+            f"replay-{index}",
+            experiment_id="deep",
+            replay=True,
+            offset=index,
+        )
+        _outcome_for(session_factory, f"replay-{index}", excess=3.0)
+        _episode(
+            session_factory,
+            f"champion-{index}",
+            experiment_id="champion",
+            offset=index,
+        )
+        _outcome_for(session_factory, f"champion-{index}", excess=0.1)
+
+    with PostgresUnitOfWork(session_factory) as uow:
+        included = build_promotion_view(
+            uow,
+            challenger="deep",
+            champion="champion",
+            horizon="1d",
+            include_replays=True,
+            policy=None,
+        )
+        excluded = build_promotion_view(
+            uow,
+            challenger="deep",
+            champion="champion",
+            horizon="1d",
+            include_replays=False,
+        )
+        uow.rollback()
+
+    assert included.decision.challenger.count == 4
+    assert included.challenger_replays == 4
+    assert included.replay_share_pct == 100.0
+    assert "came from replays" in " ".join(included.notes)
+
+    # With replays excluded the challenger has nothing to stand on.
+    assert excluded.decision.challenger.count == 0
+    assert excluded.decision.status is PromotionStatus.INSUFFICIENT_DATA

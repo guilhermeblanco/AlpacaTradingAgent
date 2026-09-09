@@ -366,14 +366,39 @@ class PostgresEvaluationRepository:
         ).all()
         return [self._episode(row) for row in rows]
 
+    def _replay_decision_ids(self) -> set[str]:
+        """Episodes produced by a workbench replay rather than a live cycle.
+
+        Read and filtered in Python: JSON predicates are not portable across
+        the backends this repository is exercised on, and the episode table
+        is small enough that it does not matter.
+        """
+        from tradingagents.workbench.replay import REPLAY_SOURCE
+
+        rows = self.session.scalars(select(EvaluationEpisodeRow)).all()
+        return {
+            row.decision_id
+            for row in rows
+            if (row.metadata_payload or {}).get("origin") == REPLAY_SOURCE
+        }
+
     def outcomes(
-        self, *, experiment_id: Optional[str] = None
+        self,
+        *,
+        experiment_id: Optional[str] = None,
+        include_replays: bool = True,
     ) -> list[EvaluationOutcome]:
         statement = select(EvaluationOutcomeRow).join(EvaluationEpisodeRow)
         if experiment_id:
             statement = statement.where(
                 EvaluationEpisodeRow.experiment_id == experiment_id
             )
+        if not include_replays:
+            replays = self._replay_decision_ids()
+            if replays:
+                statement = statement.where(
+                    EvaluationOutcomeRow.decision_id.not_in(replays)
+                )
         statement = statement.order_by(EvaluationOutcomeRow.outcome_at)
         return [
             EvaluationOutcome(
