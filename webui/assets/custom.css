@@ -2714,6 +2714,19 @@ body {
 
 .decision-event-time { color: #94a3b8; font-size: 0.8rem; }
 
+.decision-explorer .form-select,
+.decision-explorer .Select-control,
+.decision-explorer .Select-menu-outer {
+    background-color: #1e293b;
+    border-color: #334155;
+    color: #f1f5f9;
+}
+
+.decision-explorer .Select-value-label,
+.decision-explorer .Select-placeholder {
+    color: #f1f5f9 !important;
+}
+
 @media (max-width: 640px) {
     .decision-event-row { grid-template-columns: 1fr; gap: 4px; }
 }

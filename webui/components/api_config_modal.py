@@ -390,13 +390,11 @@ def create_api_config_modal():
                         className="me-2"
                     ),
                     dbc.Button(
-                        [
-                            html.I(className="fas fa-times me-2"),
-                            "Close"
-                        ],
+                        html.I(className="fas fa-times"),
                         id="close-api-config-btn",
                         color="secondary",
-                        size="sm"
+                        size="sm",
+                        title="Close integrations",
                     )
                 ]
             )
