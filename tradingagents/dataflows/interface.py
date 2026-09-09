@@ -139,13 +139,14 @@ def _quick_model_params_for_tool(
     max_output_tokens: int,
     store_responses: bool,
 ) -> Dict:
-    params = normalize_model_params(
-        model,
-        config.get("quick_llm_params"),
-        role="quick",
-    )
+    configured = config.get("quick_llm_params") or {}
+    params = normalize_model_params(model, configured, role="quick")
     params.setdefault("max_output_tokens", max_output_tokens)
-    params.setdefault("store", store_responses)
+    # normalize_model_params always supplies a `store` default, so a plain
+    # setdefault could never carry openai_store_responses through and the
+    # setting had no effect. An explicit per-model choice still wins.
+    if "store" not in configured:
+        params["store"] = store_responses
     return params
 
 
