@@ -1507,14 +1507,14 @@ def get_defillama_fundamentals(
         return f"Error fetching DeFi Llama data for {clean_ticker}: {str(e)}"
 
 
-def get_alpaca_data_window(
+def get_market_data_window(
     symbol: Annotated[str, "ticker symbol of the company"],
     curr_date: Annotated[str, "Current date in yyyy-mm-dd format"] = None,
     look_back_days: Annotated[int, "how many days to look back"] = 60,
     timeframe: Annotated[str, "Timeframe for data: 1Min, 5Min, 15Min, 1Hour, 1Day"] = "1Day",
 ) -> str:
     """
-    Get a window of stock data from Alpaca
+    Get a window of price data from the configured research provider.
     Args:
         symbol: ticker symbol of the company
         curr_date: The current trading date you are trading on, YYYY-mm-dd (optional - if not provided, will use today's date)
@@ -1533,10 +1533,13 @@ def get_alpaca_data_window(
         start_dt = curr_dt - pd.Timedelta(days=look_back_days)
         start_date = start_dt.strftime("%Y-%m-%d")
         
-        # Get data from Alpaca - don't pass end_date to avoid subscription limitations
-        data = AlpacaUtils.get_stock_data(
+        from tradingagents.marketdata import get_research_market_data_provider
+
+        provider = get_research_market_data_provider()
+        data = provider.get_bars(
             symbol=symbol,
             start_date=start_date,
+            end_date=curr_date,
             timeframe=timeframe
         )
         
@@ -1549,7 +1552,7 @@ def get_alpaca_data_window(
         
         # Add latest quote if available
         try:
-            latest_quote = AlpacaUtils.get_latest_quote(symbol)
+            latest_quote = provider.get_latest_quote(symbol)
             if latest_quote:
                 result += f"\n\n## Latest Quote for {symbol}:\n"
                 result += f"Bid: {latest_quote['bid_price']} ({latest_quote['bid_size']}), "
@@ -1562,14 +1565,19 @@ def get_alpaca_data_window(
     except Exception as e:
         return f"Error getting stock data for {symbol}: {str(e)}"
 
-def get_alpaca_data(
+def get_alpaca_data_window(*args, **kwargs) -> str:
+    """Compatibility alias for the provider-neutral research tool."""
+    return get_market_data_window(*args, **kwargs)
+
+
+def get_market_data(
     symbol: Annotated[str, "ticker symbol of the company"],
     start_date: Annotated[str, "Start date in yyyy-mm-dd format"],
     end_date: Annotated[str, "End date in yyyy-mm-dd format"] = None,
     timeframe: Annotated[str, "Timeframe for data: 1Min, 5Min, 15Min, 1Hour, 1Day"] = "1Day",
 ) -> str:
     """
-    Get stock data from Alpaca
+    Get price data from the configured research provider.
     Args:
         symbol: ticker symbol of the company
         start_date: Start date in yyyy-mm-dd format
@@ -1579,8 +1587,10 @@ def get_alpaca_data(
         str: a report of the stock data
     """
     try:
-        # Get data from Alpaca
-        data = AlpacaUtils.get_stock_data(
+        from tradingagents.marketdata import get_research_market_data_provider
+
+        provider = get_research_market_data_provider()
+        data = provider.get_bars(
             symbol=symbol,
             start_date=start_date,
             end_date=end_date,
@@ -1652,7 +1662,7 @@ def get_alpaca_data(
         
         # Add latest quote if available
         try:
-            latest_quote = AlpacaUtils.get_latest_quote(symbol)
+            latest_quote = provider.get_latest_quote(symbol)
             if latest_quote:
                 result += f"\n## Latest Real-Time Quote:\n"
                 result += f"Bid: ${latest_quote['bid_price']:.2f} (Size: {int(latest_quote['bid_size']):,})\n"
@@ -1673,6 +1683,11 @@ def get_alpaca_data(
         return result
     except Exception as e:
         return f"Error getting stock data for {symbol}: {str(e)}"
+
+
+def get_alpaca_data(*args, **kwargs) -> str:
+    """Compatibility alias for the provider-neutral research tool."""
+    return get_market_data(*args, **kwargs)
 
 
 def get_technical_brief(
