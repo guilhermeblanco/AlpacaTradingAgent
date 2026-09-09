@@ -529,3 +529,173 @@ class ChunkProcessingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LoopResetTests(unittest.TestCase):
+    """Loop mode reuses symbol states across iterations."""
+
+    def setUp(self):
+        self.state = AppState()
+        self.state.init_symbol_state("NVDA")
+        self.state.current_symbol = "NVDA"
+
+    def test_reset_describes_the_same_reports_as_a_fresh_symbol(self):
+        """A dropped key means the panel reading it behaves differently on
+        the second loop iteration than on the first."""
+        fresh = self.state.get_state("NVDA")
+        expected_reports = set(fresh["current_reports"])
+        expected_prompts = set(fresh["agent_prompts"])
+
+        self.state.reset_for_loop()
+        after = self.state.get_state("NVDA")
+
+        self.assertEqual(set(after["current_reports"]), expected_reports)
+        self.assertEqual(set(after["agent_prompts"]), expected_prompts)
+
+    def test_the_previous_iteration_reports_are_cleared(self):
+        state = self.state.get_state("NVDA")
+        state["current_reports"]["market_report"] = "stale"
+        state["analysis_complete"] = True
+
+        self.state.reset_for_loop()
+        after = self.state.get_state("NVDA")
+
+        self.assertIsNone(after["current_reports"]["market_report"])
+        self.assertFalse(after["analysis_complete"])
+
+    def test_the_symbol_survives_so_pagination_keeps_working(self):
+        self.state.reset_for_loop()
+
+        self.assertIn("NVDA", self.state.symbol_states)
+
+    def test_each_iteration_gets_a_new_session(self):
+        first = self.state.get_state("NVDA")["session_id"]
+
+        self.state.reset_for_loop()
+
+        self.assertNotEqual(self.state.get_state("NVDA")["session_id"], first)
+
+    def test_the_queue_and_counters_are_cleared(self):
+        self.state.add_symbols_to_queue(["AAPL"])
+        self.state.register_llm_call(model_name="gpt-5.4-nano")
+
+        self.state.reset_for_loop()
+
+        self.assertEqual(self.state.analysis_queue, [])
+        self.assertEqual(self.state.llm_calls_count, 0)
+
+    def test_every_agent_returns_to_pending(self):
+        self.state.update_agent_status("Market Analyst", "completed", symbol="NVDA")
+
+        self.state.reset_for_loop()
+
+        statuses = self.state.get_state("NVDA")["agent_statuses"]
+        self.assertEqual(set(statuses.values()), {"pending"})
+
+
+class DebateChunkTests(unittest.TestCase):
+    def setUp(self):
+        self.state = AppState()
+        self.state.add_symbols_to_queue(["NVDA"])
+        self.state.get_next_symbol()
+
+    def _reports(self):
+        return self.state.get_state("NVDA")["current_reports"]
+
+    def _statuses(self):
+        return self.state.get_state("NVDA")["agent_statuses"]
+
+    def test_the_bull_and_bear_arguments_are_stored(self):
+        self.state.process_chunk_updates(
+            {
+                "investment_debate_state": {
+                    "bull_history": "the bull case",
+                    "bear_history": "the bear case",
+                }
+            }
+        )
+
+        self.assertEqual(self._reports()["bull_report"], "the bull case")
+        self.assertEqual(self._reports()["bear_report"], "the bear case")
+
+    def test_the_latest_message_wins_over_the_full_history(self):
+        """The panel shows the newest turn, not the whole transcript."""
+        self.state.process_chunk_updates(
+            {
+                "investment_debate_state": {
+                    "bull_history": "turn one\nturn two",
+                    "bull_messages": ["turn one", "turn two"],
+                }
+            }
+        )
+
+        self.assertEqual(self._reports()["bull_report"], "turn two")
+
+    def test_the_manager_decision_completes_the_research_team(self):
+        self.state.process_chunk_updates(
+            {"investment_debate_state": {"judge_decision": "go long"}}
+        )
+
+        self.assertEqual(self._statuses()["Research Manager"], "completed")
+        self.assertEqual(self._statuses()["Bull Researcher"], "completed")
+        self.assertEqual(self._statuses()["Trader"], "in_progress")
+        self.assertEqual(self._reports()["investment_plan"], "go long")
+
+    def test_the_trader_plan_hands_over_to_the_risk_team(self):
+        self.state.process_chunk_updates({"trader_investment_plan": "the plan"})
+
+        self.assertEqual(self._reports()["trader_investment_plan"], "the plan")
+        self.assertEqual(self._statuses()["Trader"], "completed")
+        self.assertEqual(self._statuses()["Risky Analyst"], "in_progress")
+
+    def test_each_risk_perspective_is_stored(self):
+        self.state.process_chunk_updates(
+            {
+                "risk_debate_state": {
+                    "current_risky_response": "press on",
+                    "current_safe_response": "trim",
+                    "current_neutral_response": "hold",
+                }
+            }
+        )
+
+        self.assertIn("press on", self._reports()["risky_report"])
+        self.assertIn("trim", self._reports()["safe_report"])
+        self.assertIn("hold", self._reports()["neutral_report"])
+
+    def test_the_risk_verdict_completes_the_portfolio_manager(self):
+        self.state.process_chunk_updates(
+            {"risk_debate_state": {"judge_decision": "BUY 10 shares"}}
+        )
+
+        self.assertEqual(self._statuses()["Portfolio Manager"], "completed")
+        self.assertEqual(self._reports()["final_trade_decision"], "BUY 10 shares")
+
+    def test_the_verdict_backfills_perspectives_from_their_history(self):
+        """A run that only streamed the transcript still shows all three."""
+        self.state.process_chunk_updates(
+            {
+                "risk_debate_state": {
+                    "judge_decision": "HOLD",
+                    "risky_history": "Risky Analyst: press on",
+                    "safe_history": "Safe Analyst: trim",
+                    "neutral_history": "Neutral Analyst: hold",
+                }
+            }
+        )
+
+        self.assertEqual(self._reports()["risky_report"], "press on")
+        self.assertEqual(self._reports()["safe_report"], "trim")
+        self.assertEqual(self._reports()["neutral_report"], "hold")
+
+    def test_the_typed_intent_is_kept_for_execution(self):
+        intent = {"action": "BUY", "symbol": "NVDA"}
+
+        self.state.process_chunk_updates({"final_trade_intent": intent})
+
+        self.assertEqual(self.state.get_state("NVDA")["final_trade_intent"], intent)
+
+    def test_an_empty_debate_state_changes_nothing(self):
+        self.state.process_chunk_updates({"investment_debate_state": {}})
+
+        self.assertIsNone(self._reports()["bull_report"])
