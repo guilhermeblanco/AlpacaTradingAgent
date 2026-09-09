@@ -6,7 +6,7 @@ therefore gets push semantics without changing its own callback, and the
 interval itself stays as a slow fallback for when a proxy eats the stream.
 """
 
-from dash import Input, Output, clientside_callback, html
+from dash import Input, Output, html
 
 #: Opens the stream once and keeps it open. `set_props` lets one listener
 #: drive components it is not an Output of, which is what makes the swap
@@ -44,7 +44,11 @@ function(_children) {
 
 
 def register_pulse_callbacks(app):
-    clientside_callback(
+    # app.clientside_callback, not the module-level function: the global
+    # registry the latter writes into is drained when the Dash object is
+    # constructed, which happens before callbacks are registered. Anything
+    # added afterwards is silently never attached.
+    app.clientside_callback(
         LISTENER,
         Output("pulse-listener", "children"),
         Input("pulse-listener", "id"),
