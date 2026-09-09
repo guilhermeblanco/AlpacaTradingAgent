@@ -19,6 +19,11 @@ from tradingagents.operations.control_plane import (
     ServiceControl,
     ServiceHeartbeat,
 )
+from tradingagents.operations.explorer import (
+    DecisionActivityDetail,
+    DecisionActivitySummary,
+    DecisionTimelineEvent,
+)
 from tradingagents.persistence.events import EventEnvelope
 from tradingagents.execution.models import ExecutionResult, PlanAction
 from tradingagents.execution.order_ledger import BrokerOrderRecord
@@ -1341,6 +1346,136 @@ class PostgresPortfolioReservationRepository:
                 for decision_id, state in states.items()
             },
         )
+
+
+class PostgresDecisionExplorerRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def list_decisions(
+        self,
+        *,
+        limit: int = 100,
+        symbol: Optional[str] = None,
+        status: Optional[str] = None,
+    ) -> list[DecisionActivitySummary]:
+        statement = select(LifecycleRow).order_by(LifecycleRow.created_at.desc())
+        if symbol:
+            statement = statement.where(LifecycleRow.symbol == symbol.upper().strip())
+        if status:
+            statement = statement.where(LifecycleRow.status == status.lower().strip())
+        rows = self.session.scalars(statement.limit(max(1, min(limit, 500)))).all()
+        if not rows:
+            return []
+        decision_ids = [row.decision_id for row in rows]
+        orders = self.session.scalars(
+            select(BrokerOrderRow).where(BrokerOrderRow.decision_id.in_(decision_ids))
+        ).all()
+        by_decision: dict[str, list[BrokerOrderRow]] = {}
+        for order in orders:
+            by_decision.setdefault(order.decision_id, []).append(order)
+        return [
+            DecisionActivitySummary(
+                decision_id=row.decision_id,
+                symbol=row.symbol,
+                status=row.status,
+                created_at=row.created_at,
+                updated_at=row.updated_at,
+                broker=(by_decision[row.decision_id][0].broker if by_decision.get(row.decision_id) else None),
+                order_count=len(by_decision.get(row.decision_id, [])),
+                filled_quantity=sum(order.filled_quantity for order in by_decision.get(row.decision_id, [])),
+                error=row.error,
+            )
+            for row in rows
+        ]
+
+    def get_decision(self, decision_id: str) -> DecisionActivityDetail:
+        summaries = [
+            item
+            for item in self.list_decisions(limit=500)
+            if item.decision_id == decision_id
+        ]
+        if not summaries:
+            raise KeyError(f"Unknown decision {decision_id}")
+        events: list[DecisionTimelineEvent] = []
+        for row in self.session.scalars(
+            select(LifecycleTransitionRow).where(
+                LifecycleTransitionRow.decision_id == decision_id
+            )
+        ).all():
+            events.append(
+                DecisionTimelineEvent(
+                    occurred_at=row.recorded_at,
+                    category="lifecycle",
+                    label=f"{row.from_status or 'new'} -> {row.to_status}",
+                    status=row.to_status,
+                    details=row.payload or {},
+                )
+            )
+        for row in self.session.scalars(
+            select(DecisionEventRow).where(
+                DecisionEventRow.aggregate_type == "decision",
+                DecisionEventRow.aggregate_id == decision_id,
+            )
+        ).all():
+            events.append(
+                DecisionTimelineEvent(
+                    occurred_at=row.occurred_at,
+                    category="decision",
+                    label=row.event_type,
+                    details=row.payload or {},
+                )
+            )
+        orders = self.session.scalars(
+            select(BrokerOrderRow).where(BrokerOrderRow.decision_id == decision_id)
+        ).all()
+        for order in orders:
+            events.append(
+                DecisionTimelineEvent(
+                    occurred_at=order.submitted_at,
+                    category="order",
+                    label=f"{order.broker} {order.side} {order.symbol}",
+                    status=order.status,
+                    details={
+                        "order_id": order.broker_order_id,
+                        "requested_quantity": order.requested_quantity,
+                        "requested_notional": order.requested_notional,
+                    },
+                )
+            )
+            for fill in self.session.scalars(
+                select(BrokerFillRow).where(BrokerFillRow.order_key == order.order_key)
+            ).all():
+                events.append(
+                    DecisionTimelineEvent(
+                        occurred_at=fill.observed_at,
+                        category="fill",
+                        label=f"Filled {fill.quantity:g} @ {fill.price:g}",
+                        status="filled",
+                        details={"source": fill.source},
+                    )
+                )
+        for outcome in self.session.scalars(
+            select(EvaluationOutcomeRow).where(
+                EvaluationOutcomeRow.decision_id == decision_id
+            )
+        ).all():
+            events.append(
+                DecisionTimelineEvent(
+                    occurred_at=outcome.outcome_at,
+                    category="outcome",
+                    label=f"{outcome.horizon} outcome",
+                    status="correct" if outcome.directionally_correct else "incorrect",
+                    details={
+                        "asset_return_pct": outcome.asset_return_pct,
+                        "benchmark_return_pct": outcome.benchmark_return_pct,
+                        "excess_return_pct": outcome.excess_return_pct,
+                        "estimated_cost_pct": outcome.estimated_cost_pct,
+                    },
+                )
+            )
+        events.sort(key=lambda item: item.occurred_at)
+        return DecisionActivityDetail(summary=summaries[0], timeline=events)
 
 
 class PostgresAccountSnapshotRepository:

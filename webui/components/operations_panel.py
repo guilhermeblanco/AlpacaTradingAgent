@@ -39,7 +39,7 @@ def create_operations_panel():
                         ]
                     ),
                 ],
-                className="d-flex justify-content-between align-items-center mb-3",
+                className="operations-header d-flex justify-content-between align-items-center mb-3",
             ),
             html.Div(id="operations-action-status"),
             html.Div(id="operations-metrics", className="operations-metric-grid"),

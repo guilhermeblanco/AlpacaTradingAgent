@@ -2686,3 +2686,66 @@ body {
 .operations-metric-danger { border-left-color: #ef4444; }
 .operations-metric-value { font-size: 1.15rem; font-weight: 700; margin-top: 4px; }
 .operations-table { table-layout: fixed; }
+
+.decision-explorer {
+    border-bottom: 1px solid #334155;
+    padding-bottom: 20px;
+}
+
+.decision-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+    gap: 8px;
+}
+
+.decision-summary-grid > div {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.decision-event-row {
+    display: grid;
+    grid-template-columns: minmax(150px, 190px) 1fr;
+    gap: 16px;
+    padding: 10px 0;
+    border-top: 1px solid #273449;
+}
+
+.decision-event-time { color: #94a3b8; font-size: 0.8rem; }
+
+.decision-explorer .form-select,
+.decision-explorer .Select-control,
+.decision-explorer .Select-menu-outer {
+    background-color: #1e293b;
+    border-color: #334155;
+    color: #f1f5f9;
+}
+
+.decision-explorer .Select-value-label,
+.decision-explorer .Select-placeholder {
+    color: #f1f5f9 !important;
+}
+
+@media (max-width: 640px) {
+    .decision-event-row { grid-template-columns: 1fr; gap: 4px; }
+}
+
+.app-title {
+    font-size: 2rem;
+    line-height: 1.2;
+    text-align: left;
+}
+
+@media (max-width: 767px) {
+    .app-title { font-size: 1.55rem; }
+    .app-header-actions { justify-content: stretch !important; }
+    .app-header-actions .config-apis-btn { width: 100%; }
+    .operations-header {
+        align-items: stretch !important;
+        flex-direction: column;
+        gap: 12px;
+    }
+    .operations-header .btn-group { display: flex; width: 100%; }
+    .operations-header .btn-group .btn { flex: 1 1 auto; }
+}

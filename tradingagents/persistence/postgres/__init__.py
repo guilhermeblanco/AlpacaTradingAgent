@@ -6,6 +6,7 @@ from .unit_of_work import PostgresUnitOfWork
 from .repositories import (
     PostgresOrderLedger,
     PostgresAccountSnapshotRepository,
+    PostgresDecisionExplorerRepository,
     PostgresOutboxRepository,
     PostgresOperationalRepository,
     PostgresPortfolioReservationRepository,
@@ -20,6 +21,7 @@ __all__ = [
     "PostgresOperationalRepository",
     "PostgresOrderLedger",
     "PostgresAccountSnapshotRepository",
+    "PostgresDecisionExplorerRepository",
     "PostgresPortfolioReservationRepository",
     "PostgresReconciliationQueue",
     "create_database_engine",
