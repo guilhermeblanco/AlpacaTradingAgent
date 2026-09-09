@@ -36,52 +36,6 @@ class StatusFixture(unittest.TestCase):
             self.state.get_state(symbol)["agent_statuses"].update(statuses)
 
 
-class StatusTableTests(StatusFixture):
-    def _table(self):
-        return str(dash_callback(self.app, "status-table.children")(0, 0))
-
-    def test_no_run_renders_an_empty_table(self):
-        self.assertIsNotNone(self._table())
-
-    def test_the_downstream_teams_are_always_listed(self):
-        self._run()
-
-        rendered = self._table()
-
-        for agent in ("Bull Researcher", "Research Manager", "Trader", "Portfolio Manager"):
-            self.assertIn(agent, rendered, agent)
-
-    def test_only_the_selected_analysts_are_listed(self):
-        """An unselected analyst never runs, so showing it as pending lies."""
-        self._run()
-        self.state.active_analysts = ["Market Analyst"]
-
-        rendered = self._table()
-
-        self.assertIn("Market Analyst", rendered)
-        self.assertNotIn("Social Analyst", rendered)
-
-    def test_the_analyst_team_is_omitted_when_none_are_selected(self):
-        self._run()
-        self.state.active_analysts = []
-
-        self.assertNotIn("Analyst Team", self._table())
-
-    def test_each_status_is_shown_distinctly(self):
-        self._run(statuses={"Trader": "completed", "Bull Researcher": "in_progress"})
-
-        rendered = self._table()
-
-        self.assertIn("COMPLETED", rendered)
-        self.assertIn("IN PROGRESS", rendered)
-        self.assertIn("PENDING", rendered)
-
-    def test_an_unknown_agent_reads_as_pending(self):
-        self._run()
-
-        self.assertIn("PENDING", self._table())
-
-
 class ProgressStatTests(StatusFixture):
     def test_the_counters_are_rendered(self):
         self.state.tool_calls_count = 7

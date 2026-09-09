@@ -195,6 +195,122 @@ CSS = """
     background-color: #0F172A;
     color: #F1F5F9;
 }
+
+/* --- Vitals strip ------------------------------------------------------ */
+.vitals-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1px;
+    background-color: #334155;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    overflow: hidden;
+}
+.vitals-cell {
+    flex: 1 1 140px;
+    min-width: 140px;
+    background-color: #1E293B;
+    padding: 10px 14px;
+}
+.vitals-label {
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #64748B;
+}
+.vitals-value {
+    font-size: 17px;
+    font-weight: 600;
+    line-height: 1.3;
+}
+.vitals-hint {
+    font-size: 11px;
+    color: #64748B;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* --- Pipeline board ---------------------------------------------------- */
+.board-columns {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+}
+.board-column {
+    flex: 1 1 0;
+    min-width: 150px;
+    background-color: #0F172A;
+    border: 1px solid #334155;
+    border-radius: 6px;
+}
+.board-column-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 10px;
+    border-bottom: 1px solid #334155;
+}
+.board-column-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: #F1F5F9;
+}
+.board-column-count {
+    font-size: 11px;
+    color: #64748B;
+    background-color: #1E293B;
+    border-radius: 10px;
+    padding: 0 7px;
+}
+.board-column-body {
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-height: 60px;
+    max-height: 320px;
+    overflow-y: auto;
+}
+.board-column-empty {
+    color: #334155;
+    text-align: center;
+    font-size: 12px;
+    padding: 8px 0;
+}
+.board-card {
+    background-color: #1E293B;
+    border: 1px solid #334155;
+    border-left: 3px solid #64748B;
+    border-radius: 4px;
+    padding: 7px 9px;
+    cursor: pointer;
+    transition: border-color 0.15s ease, transform 0.15s ease;
+}
+.board-card:hover {
+    border-color: #3B82F6;
+    transform: translateY(-1px);
+}
+.board-card-symbol {
+    font-weight: 600;
+    font-size: 13px;
+    color: #F1F5F9;
+}
+.board-card-badge {
+    font-size: 9px;
+}
+.board-card-headline {
+    font-size: 11px;
+    color: #94A3B8;
+    margin-top: 3px;
+    line-height: 1.35;
+}
+.board-card-hint {
+    font-size: 10px;
+    color: #64748B;
+    margin-top: 2px;
+}
 """
 
 # JavaScript for auto-refresh and UI improvements

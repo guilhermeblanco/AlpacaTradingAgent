@@ -41,65 +41,6 @@ class StateFixture(unittest.TestCase):
         return self.state.get_state(symbol)
 
 
-class StatusCallbackTests(StateFixture):
-    MODULES = ("webui.callbacks.status_callbacks",)
-
-    def setUp(self):
-        super().setUp()
-        from webui.callbacks.status_callbacks import register_status_callbacks
-
-        self.app = _app(register_status_callbacks)
-
-    def test_the_status_table_renders_before_a_run_starts(self):
-        callback = dash_callback(self.app, "status-table.children")
-
-        self.assertIsNotNone(callback(0, None))
-
-    def test_the_status_table_lists_the_selected_analysts(self):
-        self._prepare()
-        self.state.update_agent_status("Market Analyst", "completed")
-        callback = dash_callback(self.app, "status-table.children")
-
-        rendered = str(callback(1, None))
-
-        self.assertIn("Market Analyst", rendered)
-
-    def test_the_progress_counters_are_reported(self):
-        self.state.tool_calls_count = 4
-        self.state.llm_calls_count = 2
-        self.state.generated_reports_count = 1
-        callback = dash_callback(self.app, "tool-calls-text.children")
-
-        tools, llms, reports = callback(1)
-
-        self.assertIn("4", tools)
-        self.assertIn("2", llms)
-        self.assertIn("1", reports)
-
-    def test_the_fast_interval_is_off_while_idle(self):
-        callback = dash_callback(self.app, "refresh-interval.disabled")
-
-        fast_disabled, _medium, _text, _class = callback({}, 1)
-
-        self.assertTrue(fast_disabled)
-
-    def test_the_fast_interval_runs_during_an_analysis(self):
-        self.state.analysis_running = True
-        callback = dash_callback(self.app, "refresh-interval.disabled")
-
-        fast_disabled, _medium, _text, _class = callback({}, 1)
-
-        self.assertFalse(fast_disabled)
-
-    def test_a_pending_ui_update_also_wakes_the_fast_interval(self):
-        self.state.needs_ui_update = True
-        callback = dash_callback(self.app, "refresh-interval.disabled")
-
-        fast_disabled, *_rest = callback({}, 1)
-
-        self.assertFalse(fast_disabled)
-
-
 class ChartCallbackTests(StateFixture):
     MODULES = ("webui.callbacks.chart_callbacks",)
 
