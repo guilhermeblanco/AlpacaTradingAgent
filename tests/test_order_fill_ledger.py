@@ -12,6 +12,7 @@ from tradingagents.agents.schemas import (
 )
 from tradingagents.broker.models import AccountSnapshot, PortfolioSnapshot, QuoteSnapshot
 from tradingagents.execution.journal import ExecutionJournal
+from tradingagents.execution.gateway import SubmissionUncertain
 from tradingagents.execution.pipeline import ExecutionPipeline
 
 from tradingagents.execution.models import (
@@ -54,6 +55,89 @@ def session_factory():
         yield create_session_factory(engine)
     finally:
         engine.dispose()
+
+
+class UncertainGateway:
+    name = "alpaca-paper"
+
+    def __init__(self):
+        self.calls = 0
+
+    def submit_plan(self, plan, intent):
+        self.calls += 1
+        client_order_id = plan.metadata["leg_idempotency_keys"][0]
+        raise SubmissionUncertain(
+            "broker response timed out",
+            gateway=self.name,
+            leg_index=0,
+            actions=[
+                {
+                    "action": "buy",
+                    "leg": plan.legs[0].model_dump(mode="json"),
+                    "result": {
+                        "success": False,
+                        "status": "unknown",
+                        "client_order_id": client_order_id,
+                        "submission_uncertain": True,
+                    },
+                }
+            ],
+        )
+
+
+class PipelineProvider:
+    def get_portfolio_snapshot(self):
+        return PortfolioSnapshot(account=AccountSnapshot(equity=100_000))
+
+    def get_quote_snapshot(self, symbol):
+        return QuoteSnapshot(symbol=symbol, bid_price=99, ask_price=101)
+
+
+def test_uncertain_pipeline_result_is_durable_and_not_resubmitted(
+    session_factory, tmp_path
+) -> None:
+    intent = build_trade_intent_from_risk_decision(
+        symbol="AAPL",
+        trading_mode="investment",
+        current_position="NEUTRAL",
+        decision=RiskDecision(
+            action=ExecutableAction.BUY,
+            confidence="high",
+            risk_rationale="uncertainty test",
+            required_controls="test",
+            target_portfolio_pct=1,
+        ),
+    )
+    gateway = UncertainGateway()
+    pipeline = ExecutionPipeline(
+        PipelineProvider(),
+        gateway,
+        journal=ExecutionJournal(tmp_path),
+        safety_guard=SafetyGuard(
+            {"safety_enabled": False},
+            state_path=tmp_path / "safety.json",
+            kill_switch_path=tmp_path / "KILL_SWITCH",
+        ),
+        unit_of_work_factory=lambda: PostgresUnitOfWork(session_factory),
+    )
+
+    first = pipeline.execute("AAPL", intent, 1_000)
+    second = pipeline.execute("AAPL", intent, 1_000)
+
+    assert not first["success"]
+    assert first["submission_uncertain"]
+    assert second == first
+    assert gateway.calls == 1
+    with PostgresUnitOfWork(session_factory) as uow:
+        lifecycle = uow.lifecycle.get(intent.decision_id)
+        orders = uow.orders.orders_for_decision(intent.decision_id)
+        tasks = uow.reconciliation_queue.claim(worker_id="test")
+        uow.rollback()
+    assert lifecycle.status is LifecycleStatus.SUBMITTED
+    assert len(orders) == 1
+    assert orders[0].broker_order_id is None
+    assert orders[0].status == "unknown"
+    assert tasks[0].execution_result["submission_uncertain"]
 
 
 def _plan() -> ExecutionPlan:

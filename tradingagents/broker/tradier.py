@@ -201,6 +201,11 @@ class TradierExecutionGateway:
         )
 
     def submit_plan(self, plan: ExecutionPlan, intent: TradeIntent) -> ExecutionResult:
+        from tradingagents.execution.gateway import (
+            SubmissionUncertain,
+            is_uncertain_submission_error,
+        )
+
         actions = []
         keys = plan.metadata.get("leg_idempotency_keys", [])
         for index, leg in enumerate(plan.legs):
@@ -238,6 +243,25 @@ class TradierExecutionGateway:
                     "status": order.get("status"), "client_order_id": payload["tag"], "raw": order,
                 }
             except Exception as exc:
+                if is_uncertain_submission_error(exc):
+                    result = {
+                        "success": False,
+                        "status": "unknown",
+                        "client_order_id": payload["tag"],
+                        "submission_uncertain": True,
+                        "error": str(exc),
+                    }
+                    actions.append({
+                        "action": leg.action.value.lower(),
+                        "leg": leg.model_dump(mode="json"),
+                        "result": result,
+                    })
+                    raise SubmissionUncertain(
+                        f"Tradier submission may have been accepted: {exc}",
+                        gateway=self.name,
+                        leg_index=index,
+                        actions=actions,
+                    ) from exc
                 result = {"success": False, "error": str(exc)}
             actions.append({
                 "action": leg.action.value.lower(), "leg": leg.model_dump(mode="json"), "result": result,

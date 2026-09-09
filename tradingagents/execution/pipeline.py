@@ -8,7 +8,7 @@ from tradingagents.lifecycle import LifecycleService, LifecycleStatus
 from tradingagents.lifecycle.service import DuplicateExecution
 from tradingagents.persistence.protocols import EventJournalPort
 
-from .gateway import ExecutionGateway
+from .gateway import ExecutionGateway, SubmissionUncertain
 from .journal import ExecutionJournal, snapshot_hash
 from .models import ExecutionResult, PlanAction
 from .planner import ExecutionPlanner
@@ -327,22 +327,76 @@ class ExecutionPipeline:
             },
             status=LifecycleStatus.SUBMITTING,
         )
-        result = self.gateway.submit_plan(plan, parsed)
+        try:
+            result = self.gateway.submit_plan(plan, parsed)
+        except SubmissionUncertain as exc:
+            result = ExecutionResult(
+                success=False,
+                decision_id=parsed.decision_id,
+                symbol=parsed.symbol,
+                gateway=exc.gateway,
+                plan=plan,
+                actions=exc.actions,
+                error=str(exc),
+                submission_uncertain=True,
+            )
+        except Exception as exc:
+            keys = plan.metadata.get("leg_idempotency_keys", [])
+            actions = []
+            for index, leg in enumerate(plan.legs):
+                if leg.action == PlanAction.HOLD:
+                    actions.append({"action": "hold", "result": {"success": True}})
+                    continue
+                actions.append(
+                    {
+                        "action": leg.action.value.lower(),
+                        "leg": leg.model_dump(mode="json"),
+                        "result": {
+                            "success": False,
+                            "status": "unknown",
+                            "client_order_id": (
+                                keys[index]
+                                if index < len(keys)
+                                else f"{parsed.decision_id}-{index}"
+                            ),
+                            "submission_uncertain": True,
+                            "error": str(exc),
+                        },
+                    }
+                )
+            result = ExecutionResult(
+                success=False,
+                decision_id=parsed.decision_id,
+                symbol=parsed.symbol,
+                gateway=self.gateway.name,
+                plan=plan,
+                actions=actions,
+                error=f"Broker submission failed without a definitive response: {exc}",
+                submission_uncertain=True,
+            )
         result.validations = validations
         result.journal_path = journal_path
         has_remote_order = any(
             (action.get("result", action) or {}).get("order_id")
             for action in result.actions
         )
-        submission_only = result.success and not plan.is_noop and bool(has_remote_order)
+        needs_reconciliation = bool(has_remote_order) or result.submission_uncertain
+        submission_only = not plan.is_noop and needs_reconciliation
         event = (
-            "execution_submitted"
+            "execution_uncertain"
+            if result.submission_uncertain
+            else "execution_submitted"
             if submission_only
             else "execution_completed"
             if result.success
             else "broker_rejected"
         )
-        if guard is not None and guard.enabled and not plan.is_noop:
+        if (
+            guard is not None
+            and guard.enabled
+            and not plan.is_noop
+            and not result.submission_uncertain
+        ):
             guard.record_order_result(result.success)
         result_payload = result.model_dump(mode="json")
         self._record(
@@ -359,7 +413,7 @@ class ExecutionPipeline:
             ),
             error=result.error,
             result=result_payload,
-            execution_result=result if has_remote_order else None,
+            execution_result=result if needs_reconciliation else None,
         )
         return result_payload
 

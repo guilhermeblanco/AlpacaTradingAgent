@@ -869,7 +869,14 @@ class AlpacaUtils:
         except Exception as e:
             error_msg = f"Error placing {side} order for {symbol}: {e}"
             print(error_msg)
-            return {"success": False, "error": error_msg}
+            from tradingagents.execution.gateway import is_uncertain_submission_error
+
+            return {
+                "success": False,
+                "error": error_msg,
+                "submission_uncertain": is_uncertain_submission_error(e),
+                "error_type": type(e).__name__,
+            }
 
     @staticmethod
     def place_protected_market_order(
@@ -943,7 +950,14 @@ class AlpacaUtils:
         except Exception as e:
             error_msg = f"Error placing protected {side} order for {symbol}: {e}"
             print(error_msg)
-            return {"success": False, "error": error_msg}
+            from tradingagents.execution.gateway import is_uncertain_submission_error
+
+            return {
+                "success": False,
+                "error": error_msg,
+                "submission_uncertain": is_uncertain_submission_error(e),
+                "error_type": type(e).__name__,
+            }
 
     @staticmethod
     def close_position(symbol: str, percentage: float = 100.0) -> dict:
