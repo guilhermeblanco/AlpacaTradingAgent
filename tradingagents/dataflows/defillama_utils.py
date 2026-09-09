@@ -151,7 +151,12 @@ def get_fundamentals(symbol: str, lookback_days: int = 30) -> str:
     if symbol.upper() in base_chains:
         return _get_chain_fundamentals(symbol, lookback_days)
 
-    slug, nice_name = _find_slug(symbol)
+    try:
+        slug, nice_name = _find_slug(symbol)
+    except Exception as exc:
+        # Every other failure in this module reports itself as markdown; the
+        # protocol lookup was the one path that raised instead.
+        return f"Error fetching DeFiLlama protocol list: {exc}"
     if not slug:
         # Fallback to chain fundamentals for other potential chains
         return _get_chain_fundamentals(symbol, lookback_days)
