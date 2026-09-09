@@ -236,3 +236,246 @@ class RunSummaryTests(ControlFixture):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ControlButtonTests(ControlFixture):
+    """The Start/Stop button: what it refuses, and what it arms."""
+
+    #: The callback takes 44 positional inputs; only a handful matter per test.
+    FIELDS = (
+        "n_clicks tickers symbol_query_input analysts_market analysts_social "
+        "analysts_news analysts_fundamentals analysts_macro research_depth "
+        "llm_provider backend_url output_language checkpoint_enabled "
+        "quick_llm deep_llm quick_llm_custom_model deep_llm_custom_model "
+        "google_thinking_level anthropic_effort xai_reasoning_effort "
+        "quick_reasoning_effort quick_verbosity quick_summary quick_temperature "
+        "quick_top_p quick_max_output_tokens quick_store quick_parallel_tool_calls "
+        "deep_reasoning_effort deep_verbosity deep_summary deep_temperature "
+        "deep_top_p deep_max_output_tokens deep_store deep_parallel_tool_calls "
+        "allow_shorts loop_enabled loop_interval trade_enabled trade_amount "
+        "market_hour_enabled market_hours_input screener_enabled screener_interval"
+    ).split()
+
+    DEFAULTS = {
+        "n_clicks": 1,
+        "tickers": "NVDA",
+        "analysts_market": True,
+        "research_depth": "Medium",
+        "llm_provider": "openai",
+        "quick_llm": "gpt-5.4-nano",
+        "deep_llm": "gpt-5.4-mini",
+        "output_language": "English",
+        "loop_interval": 60,
+        "trade_amount": 1000,
+        "screener_interval": 15,
+    }
+
+    def setUp(self):
+        super().setUp()
+        self.callback = dash_callback(self.app, "result-text.children")
+        self.threads = []
+        patch = mock.patch(
+            "webui.callbacks.control_callbacks.threading.Thread",
+            lambda *a, **k: self.threads.append(k) or mock.MagicMock(),
+        )
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def _click(self, **overrides):
+        values = dict.fromkeys(self.FIELDS)
+        values.update(self.DEFAULTS)
+        values.update(overrides)
+        return self.callback(*[values[name] for name in self.FIELDS])
+
+    def test_a_button_that_was_never_clicked_changes_nothing(self):
+        result = self._click(n_clicks=None)
+
+        self.assertTrue(all(item is dash.no_update for item in result))
+
+    def test_no_symbols_is_refused(self):
+        message, *_rest = self._click(tickers="", symbol_query_input="")
+
+        self.assertIn("at least one stock symbol", message)
+
+    def test_the_search_box_supplies_symbols_when_the_field_is_empty(self):
+        """Symbol states are created synchronously so paging works at once;
+        the queue itself is filled on the worker thread."""
+        self._click(tickers="", symbol_query_input="nvda; aapl")
+
+        self.assertEqual(list(self.state.symbol_states), ["NVDA", "AAPL"])
+
+    def test_symbols_are_normalized_before_their_state_is_created(self):
+        self._click(tickers=" nvda , aapl ")
+
+        self.assertEqual(list(self.state.symbol_states), ["NVDA", "AAPL"])
+
+    def test_a_worker_thread_is_started_for_the_run(self):
+        """Non-daemon on purpose: an in-flight analysis finishes rather than
+        being killed when the server is asked to stop."""
+        self._click()
+
+        self.assertEqual(len(self.threads), 1)
+        self.assertEqual(self.threads[0]["target"].__name__, "analysis_thread")
+        self.assertNotIn("daemon", self.threads[0])
+
+    def test_the_selected_analysts_are_recorded(self):
+        self._click(analysts_market=True, analysts_macro=True)
+
+        self.assertEqual(
+            self.state.active_analysts, ["Market Analyst", "Macro Analyst"]
+        )
+
+    def test_a_custom_model_without_an_id_is_refused(self):
+        message, *_rest = self._click(quick_llm="custom", quick_llm_custom_model="")
+
+        self.assertIn("custom model", message.lower())
+
+    def test_invalid_market_hours_are_refused(self):
+        message, *_rest = self._click(market_hour_enabled=True, market_hours_input="25")
+
+        self.assertIn("Hour 25", message)
+
+    def test_the_trade_settings_reach_the_shared_state(self):
+        self._click(trade_enabled=True, trade_amount=2500)
+
+        self.assertTrue(self.state.trade_enabled)
+        self.assertEqual(self.state.trade_amount, 2500)
+
+    def test_a_zero_trade_amount_falls_back_to_the_default(self):
+        self._click(trade_enabled=True, trade_amount=0)
+
+        self.assertEqual(self.state.trade_amount, 1000)
+
+    def test_a_zero_loop_interval_falls_back_to_the_default(self):
+        self._click(loop_enabled=True, loop_interval=0)
+
+        self.assertEqual(self.state.loop_interval_minutes, 60)
+
+    def test_a_running_analysis_is_stopped_rather_than_restarted(self):
+        self.state.analysis_running = True
+
+        message, *_rest = self._click()
+
+        self.assertIn("stopped", message.lower())
+        self.assertFalse(self.state.analysis_running)
+
+    def test_stopping_names_the_mode_that_was_running(self):
+        for setup, expected in (
+            ("screener_enabled", "Screener mode stopped."),
+            ("loop_enabled", "Loop analysis stopped."),
+            ("market_hour_enabled", "Market hour analysis stopped."),
+        ):
+            self.state.reset()
+            setattr(self.state, setup, True)
+
+            message, *_rest = self._click()
+
+            self.assertEqual(message, expected, setup)
+
+    def test_screener_mode_needs_no_symbols(self):
+        message, *_rest = self._click(
+            tickers="", symbol_query_input="", screener_enabled=True
+        )
+
+        self.assertNotIn("at least one stock symbol", message)
+
+
+class AnalysisThreadTests(ControlButtonTests):
+    # Inherits the click helpers; the inherited button assertions run
+    # again here harmlessly and keep the fixture honest.
+
+    """The worker the button starts, run inline with the analysis stubbed."""
+
+    def setUp(self):
+        super().setUp()
+        # start_analysis is called positionally: ticker first, then the five
+        # analyst flags, depth, allow_shorts, and the two model names.
+        self.started = []
+
+        def record(*args, **kwargs):
+            self.started.append(
+                {
+                    "ticker": args[0],
+                    "research_depth": args[6],
+                    "allow_shorts": args[7],
+                    "quick_llm": args[8],
+                    "deep_llm": args[9],
+                    **kwargs,
+                }
+            )
+            return "started"
+
+        patch = mock.patch(
+            "webui.callbacks.control_callbacks.start_analysis", side_effect=record
+        )
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def _worker(self, **overrides):
+        self._click(**overrides)
+        self.assertEqual(len(self.threads), 1)
+        return self.threads[0]["target"]
+
+    def test_a_single_run_analyzes_each_queued_symbol(self):
+        worker = self._worker(tickers="NVDA,AAPL")
+
+        worker()
+
+        self.assertEqual(len(self.started), 2)
+        self.assertEqual(
+            [call["ticker"] for call in self.started], ["NVDA", "AAPL"]
+        )
+
+    def test_the_run_configuration_reaches_the_analysis(self):
+        worker = self._worker(
+            allow_shorts=True,
+            research_depth="Deep",
+            llm_provider="anthropic",
+            quick_llm="claude-haiku-4-5-20251001",
+            deep_llm="claude-opus-5",
+        )
+
+        worker()
+
+        call = self.started[0]
+        self.assertTrue(call["allow_shorts"])
+        self.assertEqual(call["research_depth"], "Deep")
+        self.assertEqual(call["llm_provider"], "anthropic")
+        self.assertEqual(call["deep_llm"], "claude-opus-5")
+
+    def test_a_failing_symbol_does_not_stop_the_rest(self):
+        """One provider outage must not abandon the remaining symbols."""
+        worker = self._worker(tickers="NVDA,AAPL")
+        calls = []
+
+        def flaky(*args, **_kwargs):
+            calls.append(args[0])
+            if args[0] == "NVDA":
+                raise RuntimeError("provider down")
+            return "ok"
+
+        with mock.patch("webui.callbacks.control_callbacks.start_analysis", flaky):
+            worker()
+
+        self.assertEqual(calls, ["NVDA", "AAPL"])
+
+    def test_the_run_clears_the_running_flag_when_it_finishes(self):
+        worker = self._worker()
+
+        worker()
+
+        self.assertFalse(self.state.analysis_running)
+
+    def test_the_running_flag_clears_even_when_the_worker_raises(self):
+        """Otherwise the UI shows a run that is already dead and the button
+        never returns to Start."""
+        worker = self._worker()
+
+        with mock.patch(
+            "webui.callbacks.control_callbacks.app_state.add_symbols_to_queue",
+            side_effect=RuntimeError("state corrupted"),
+        ):
+            with self.assertRaises(RuntimeError):
+                worker()
+
+        self.assertFalse(self.state.analysis_running)

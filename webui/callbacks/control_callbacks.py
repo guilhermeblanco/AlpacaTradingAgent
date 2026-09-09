@@ -937,6 +937,14 @@ def register_control_callbacks(app):
             app_state.init_symbol_state(symbol)
 
         def analysis_thread():
+            try:
+                _run_selected_mode()
+            finally:
+                # Without this the UI keeps showing a run that is already
+                # dead, and the button never returns to Start.
+                app_state.analysis_running = False
+
+        def _run_selected_mode():
             if market_hour_enabled:
                 # Start market hour mode with scheduling logic
                 market_hour_config = {
@@ -1236,19 +1244,22 @@ def register_control_callbacks(app):
                     symbol = app_state.get_next_symbol()
                     if symbol:
                         print(f"[SINGLE] Analyzing {symbol} with current market data...")
-                        start_analysis(
-                            symbol,
-                            analysts_market, analysts_social, analysts_news, analysts_fundamentals, analysts_macro,
-                            research_depth, allow_shorts, quick_llm, deep_llm,
-                            quick_llm_params, deep_llm_params,
-                            llm_provider=llm_provider,
-                            backend_url=backend_url,
-                            output_language=output_language,
-                            checkpoint_enabled=checkpoint_enabled,
-                            provider_settings=provider_settings,
-                        )
-
-            app_state.analysis_running = False
+                        try:
+                            start_analysis(
+                                symbol,
+                                analysts_market, analysts_social, analysts_news, analysts_fundamentals, analysts_macro,
+                                research_depth, allow_shorts, quick_llm, deep_llm,
+                                quick_llm_params, deep_llm_params,
+                                llm_provider=llm_provider,
+                                backend_url=backend_url,
+                                output_language=output_language,
+                                checkpoint_enabled=checkpoint_enabled,
+                                provider_settings=provider_settings,
+                            )
+                        except Exception as exc:
+                            # One symbol failing must not abandon the rest of
+                            # the batch.
+                            print(f"[SINGLE] Analysis failed for {symbol}: {exc}")
 
         if not app_state.analysis_running:
             app_state.analysis_running = True
