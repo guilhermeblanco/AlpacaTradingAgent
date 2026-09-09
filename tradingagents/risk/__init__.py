@@ -14,12 +14,14 @@ from tradingagents.risk.position_sizing import (
     compute_atr,
     kelly_position_fraction,
 )
+from tradingagents.risk.service import RiskSizingService
 
 __all__ = [
     "DEFAULT_CONFIDENCE_EDGE",
     "FALLBACK_STOP_PCT",
     "PositionSizer",
     "RiskParameters",
+    "RiskSizingService",
     "SizingDecision",
     "compute_atr",
     "kelly_position_fraction",
