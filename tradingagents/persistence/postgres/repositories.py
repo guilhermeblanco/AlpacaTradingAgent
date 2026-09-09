@@ -1789,6 +1789,15 @@ class PostgresWorkbenchRepository:
         return {}
 
     @staticmethod
+    def _intent_from(events: list[DecisionEventRow]) -> dict[str, Any]:
+        for row in events:
+            if row.event_type == "intent_received":
+                intent = (row.payload or {}).get("intent")
+                if isinstance(intent, dict):
+                    return intent
+        return {}
+
+    @staticmethod
     def _ledger_from(events: list[DecisionEventRow]) -> Optional[GateLedger]:
         for row in reversed(events):
             if row.event_type == "gate_ledger_recorded":
@@ -1863,6 +1872,7 @@ class PostgresWorkbenchRepository:
             orders=orders,
             outcomes=outcomes,
             events=tape_events,
+            intent=self._intent_from(events),
         )
 
     def board(

@@ -250,6 +250,55 @@ def create_workbench_panel():
                 ],
                 className="g-2 mb-3",
             ),
+            dbc.Card(
+                dbc.CardBody(
+                    [
+                        html.Div(
+                            [
+                                html.Strong("What would this do now?"),
+                                html.Small(
+                                    " Every gate re-evaluated against live "
+                                    "account state. Nothing reaches a broker.",
+                                    className="text-muted",
+                                ),
+                            ],
+                            className="mb-2",
+                        ),
+                        dbc.Row(
+                            [
+                                dbc.Col(
+                                    dbc.InputGroup(
+                                        [
+                                            dbc.InputGroupText("$"),
+                                            dbc.Input(
+                                                id="workbench-preview-notional",
+                                                type="number",
+                                                min=0,
+                                                step=100,
+                                                placeholder="Size to test",
+                                            ),
+                                        ]
+                                    ),
+                                    md=4,
+                                ),
+                                dbc.Col(
+                                    dbc.Button(
+                                        "Preview",
+                                        id="workbench-preview",
+                                        color="primary",
+                                        outline=True,
+                                        size="sm",
+                                    ),
+                                    md="auto",
+                                ),
+                            ],
+                            className="g-2 align-items-center",
+                        ),
+                        html.Div(id="workbench-preview-result", className="mt-2"),
+                    ]
+                ),
+                className="workbench-stage-card mb-3",
+            ),
             html.Div(id="workbench-tape"),
         ],
         className="workbench-panel",

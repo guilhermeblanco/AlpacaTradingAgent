@@ -90,6 +90,8 @@ class DecisionTape(BaseModel):
     gate_ledger: Optional[GateLedger] = None
     analysis: dict[str, Any] = Field(default_factory=dict)
     outcomes: list[dict[str, Any]] = Field(default_factory=list)
+    #: The typed intent as submitted, so a replay has something to re-run.
+    intent: dict[str, Any] = Field(default_factory=dict)
 
     def stage(self, key: str) -> Optional[TapeStage]:
         return next((item for item in self.stages if item.key == key), None)
@@ -292,6 +294,7 @@ def build_tape(
     orders: Optional[list[dict[str, Any]]] = None,
     outcomes: Optional[list[dict[str, Any]]] = None,
     events: Optional[list[TapeEvent]] = None,
+    intent: Optional[dict[str, Any]] = None,
 ) -> DecisionTape:
     """Assemble one tape from the pieces each layer persisted."""
     analysis = analysis or {}
@@ -319,6 +322,7 @@ def build_tape(
         gate_ledger=gate_ledger,
         analysis=analysis,
         outcomes=outcomes,
+        intent=intent or {},
     )
 
 

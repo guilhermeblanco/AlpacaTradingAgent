@@ -36,6 +36,8 @@ def create_vitals_strip():
         [
             dcc.Interval(id="vitals-interval", interval=10_000),
             html.Div(id="vitals-strip", className="vitals-strip"),
+            html.Div(id="vitals-overrides", className="mt-2"),
+            html.Div(id="vitals-override-result"),
         ],
         className="mb-3",
     )
