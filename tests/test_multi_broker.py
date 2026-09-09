@@ -227,3 +227,295 @@ class MultiBrokerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ScriptedTradier:
+    """Answers each Tradier path from a supplied table."""
+
+    def __init__(self, responses=None, error=None):
+        self.responses = responses or {}
+        self.error = error
+        self.calls = []
+
+    def __call__(self, method, path, *, params=None, data=None):
+        self.calls.append((method, path, params, data))
+        if self.error:
+            raise self.error
+        for suffix, payload in self.responses.items():
+            if path.endswith(suffix):
+                return payload() if callable(payload) else payload
+        return {}
+
+
+def _tradier(responses=None, error=None):
+    transport = ScriptedTradier(responses, error)
+    return (
+        TradierClient(token="t", account_id="a", transport=transport),
+        transport,
+    )
+
+
+class TradierClientTests(unittest.TestCase):
+    def test_both_halves_of_the_credential_are_required(self):
+        for token, account in (("", "a"), ("t", "")):
+            with self.assertRaises(ValueError):
+                TradierClient(token=token, account_id=account)
+
+    def test_sandbox_and_live_use_different_hosts(self):
+        sandbox = TradierClient(token="t", account_id="a", sandbox=True)
+        live = TradierClient(token="t", account_id="a", sandbox=False)
+
+        self.assertIn("sandbox.tradier.com", sandbox.base_url)
+        self.assertNotIn("sandbox", live.base_url)
+
+    def test_a_request_reaches_the_transport_with_its_parameters(self):
+        client, transport = _tradier()
+
+        client.request("GET", "/markets/quotes", params={"symbols": "AAPL"})
+
+        self.assertEqual(
+            transport.calls[0][:3], ("GET", "/markets/quotes", {"symbols": "AAPL"})
+        )
+
+
+class TradierQuoteTests(unittest.TestCase):
+    def _quote(self, payload):
+        client, _transport = _tradier({"/markets/quotes": payload})
+        return TradierSnapshotProvider(client).get_quote_snapshot("AAPL")
+
+    def test_a_quote_is_normalized(self):
+        quote = self._quote({"quotes": {"quote": {"bid": 99, "ask": 101, "last": 100}}})
+
+        self.assertEqual((quote.bid_price, quote.ask_price, quote.last_price), (99, 101, 100))
+
+    def test_a_list_of_quotes_takes_the_first(self):
+        quote = self._quote(
+            {"quotes": {"quote": [{"bid": 99, "ask": 101, "last": 100}, {"bid": 1}]}}
+        )
+
+        self.assertEqual(quote.bid_price, 99)
+
+    def test_the_previous_close_stands_in_for_a_missing_last_trade(self):
+        quote = self._quote({"quotes": {"quote": {"bid": 99, "ask": 101, "close": 98}}})
+
+        self.assertEqual(quote.last_price, 98)
+
+    def test_an_empty_quote_reads_as_unknown_not_zero(self):
+        quote = self._quote({"quotes": {}})
+
+        self.assertIsNone(quote.bid_price)
+        self.assertIsNone(quote.last_price)
+
+
+class TradierClosePositionTests(unittest.TestCase):
+    def _close(self, position=None, order=None):
+        responses = {
+            "/balances": {"balances": {"total_equity": 100000, "total_cash": 50000}},
+            "/positions": {"positions": {"position": position} if position else {}},
+            "/orders": order if order is not None else {"order": {"id": 9}},
+        }
+        client, transport = _tradier(responses)
+        return TradierExecutionGateway(client).close_position("AAPL"), transport
+
+    def test_a_long_position_is_sold(self):
+        result, transport = self._close(
+            {"symbol": "AAPL", "quantity": 10, "cost_basis": 900}
+        )
+
+        order = next(data for _m, path, _p, data in transport.calls if path.endswith("/orders"))
+        self.assertEqual(order["side"], "sell")
+        self.assertEqual(order["quantity"], 10)
+        self.assertTrue(result["success"])
+
+    def test_a_short_position_is_covered(self):
+        _result, transport = self._close(
+            {"symbol": "AAPL", "quantity": -10, "cost_basis": 900}
+        )
+
+        order = next(data for _m, path, _p, data in transport.calls if path.endswith("/orders"))
+        self.assertEqual(order["side"], "buy_to_cover")
+        self.assertEqual(order["quantity"], 10)
+
+    def test_closing_nothing_sends_no_order(self):
+        result, transport = self._close(position=None)
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["status"], "already_closed")
+        self.assertFalse(
+            [call for call in transport.calls if call[0] == "POST"]
+        )
+
+    def test_a_refused_close_is_reported(self):
+        result, _transport = self._close(
+            {"symbol": "AAPL", "quantity": 10, "cost_basis": 900}, order={"order": {}}
+        )
+
+        self.assertFalse(result["success"])
+
+
+class TradierOrderSnapshotTests(unittest.TestCase):
+    ORDER = {
+        "id": 123,
+        "symbol": "AAPL",
+        "side": "buy",
+        "quantity": 10,
+        "status": "filled",
+        "exec_quantity": 10,
+        "avg_fill_price": 100.5,
+        "tag": "ata-d1-0",
+    }
+
+    def _snapshot(self, responses, **kwargs):
+        client, transport = _tradier(responses)
+        return TradierExecutionGateway(client).get_order_snapshot(**kwargs), transport
+
+    def test_asking_for_neither_identifier_is_refused(self):
+        client, _transport = _tradier()
+
+        with self.assertRaises(ValueError):
+            TradierExecutionGateway(client).get_order_snapshot()
+
+    def test_a_tag_is_matched_against_the_order_list(self):
+        """The tag is our idempotency key; Tradier has no client order id."""
+        snapshot, _transport = self._snapshot(
+            {"/orders": {"orders": {"order": [self.ORDER]}}},
+            client_order_id="ata-d1-0",
+        )
+
+        self.assertEqual(snapshot.order_id, "123")
+        self.assertEqual(snapshot.client_order_id, "ata-d1-0")
+
+    def test_an_unknown_tag_is_reported_rather_than_guessed(self):
+        with self.assertRaises(KeyError):
+            self._snapshot(
+                {"/orders": {"orders": {"order": []}}}, client_order_id="missing"
+            )
+
+    def test_an_empty_order_list_is_reported(self):
+        with self.assertRaises(KeyError):
+            self._snapshot({"/orders": {"orders": "null"}}, client_order_id="x")
+
+    def test_a_response_with_no_order_is_refused(self):
+        with self.assertRaises(RuntimeError):
+            self._snapshot({"/orders/123": {"order": {}}}, order_id=123)
+
+    def test_each_status_is_mapped(self):
+        from tradingagents.execution.reconciliation import BrokerOrderStatus
+
+        cases = {
+            "pending": BrokerOrderStatus.NEW,
+            "open": BrokerOrderStatus.NEW,
+            "partially_filled": BrokerOrderStatus.PARTIALLY_FILLED,
+            "filled": BrokerOrderStatus.FILLED,
+            "canceled": BrokerOrderStatus.CANCELED,
+            "cancelled": BrokerOrderStatus.CANCELED,
+            "rejected": BrokerOrderStatus.REJECTED,
+            "error": BrokerOrderStatus.REJECTED,
+            "expired": BrokerOrderStatus.EXPIRED,
+            "something-new": BrokerOrderStatus.UNKNOWN,
+        }
+
+        for raw, expected in cases.items():
+            snapshot, _transport = self._snapshot(
+                {"/orders/123": {"order": {**self.ORDER, "status": raw}}},
+                order_id=123,
+            )
+
+            self.assertEqual(snapshot.status, expected, raw)
+
+    def test_a_short_cover_reads_as_a_buy(self):
+        snapshot, _transport = self._snapshot(
+            {"/orders/123": {"order": {**self.ORDER, "side": "buy_to_cover"}}},
+            order_id=123,
+        )
+
+        self.assertEqual(snapshot.side, "buy")
+
+    def test_a_short_sale_reads_as_a_sell(self):
+        snapshot, _transport = self._snapshot(
+            {"/orders/123": {"order": {**self.ORDER, "side": "sell_short"}}},
+            order_id=123,
+        )
+
+        self.assertEqual(snapshot.side, "sell")
+
+    def test_the_alternate_fill_quantity_field_is_read(self):
+        snapshot, _transport = self._snapshot(
+            {
+                "/orders/123": {
+                    "order": {
+                        **self.ORDER,
+                        "exec_quantity": None,
+                        "executed_quantity": 4,
+                    }
+                }
+            },
+            order_id=123,
+        )
+
+        self.assertEqual(snapshot.filled_quantity, 4.0)
+
+    def test_an_unfilled_order_has_no_fill_price(self):
+        snapshot, _transport = self._snapshot(
+            {
+                "/orders/123": {
+                    "order": {
+                        **self.ORDER,
+                        "status": "open",
+                        "exec_quantity": 0,
+                        "avg_fill_price": 0,
+                    }
+                }
+            },
+            order_id=123,
+        )
+
+        self.assertIsNone(snapshot.filled_avg_price)
+
+    def test_a_notional_order_has_no_requested_quantity(self):
+        snapshot, _transport = self._snapshot(
+            {"/orders/123": {"order": {**self.ORDER, "quantity": None}}},
+            order_id=123,
+        )
+
+        self.assertIsNone(snapshot.requested_quantity)
+
+    def test_multileg_orders_carry_their_legs(self):
+        from tradingagents.execution.reconciliation import BrokerOrderStatus
+
+        snapshot, _transport = self._snapshot(
+            {
+                "/orders/123": {
+                    "order": {
+                        **self.ORDER,
+                        "leg": [
+                            {
+                                "id": 1,
+                                "symbol": "AAPL",
+                                "side": "buy_to_open",
+                                "quantity": 5,
+                                "status": "filled",
+                                "exec_quantity": 5,
+                                "avg_fill_price": 100.0,
+                            },
+                            {
+                                "id": 2,
+                                "option_symbol": "AAPL260116C00200000",
+                                "side": "sell_to_open",
+                                "quantity": 5,
+                                "status": "no-such-status",
+                            },
+                        ],
+                    }
+                }
+            },
+            order_id=123,
+        )
+
+        first, second = snapshot.child_orders
+        self.assertEqual((first.side, first.status), ("buy", BrokerOrderStatus.FILLED))
+        self.assertEqual(second.symbol, "AAPL260116C00200000")
+        self.assertEqual(second.side, "sell")
+        self.assertEqual(second.status, BrokerOrderStatus.UNKNOWN)
+        self.assertEqual(second.filled_quantity, 0.0)
+        self.assertIsNone(second.filled_avg_price)
