@@ -533,7 +533,16 @@ def execute_autonomous_trade(
         if snapshot_provider is None:
             snapshot_provider = broker_runtime.snapshot_provider
         if gateway is None:
-            gateway = broker_runtime.execution_gateway
+            # A caller-supplied gateway is left alone; only the one resolved
+            # here answers to the dry-run setting. Applying it to an injected
+            # gateway made the setting depend on whether a snapshot provider
+            # happened to be injected alongside it.
+            if str(config.get("execution_gateway", "alpaca")).lower() == "dry-run":
+                from .dry_run_gateway import DryRunExecutionGateway
+
+                gateway = DryRunExecutionGateway()
+            else:
+                gateway = broker_runtime.execution_gateway
         if broker_capabilities is None:
             broker_capabilities = broker_runtime.capabilities
         if execution_control_service is None:
@@ -545,10 +554,6 @@ def execute_autonomous_trade(
                 broker_name,
                 configured=(config or {}).get("execution_quarantine_scope"),
             )
-        if str(config.get("execution_gateway", "alpaca")).lower() == "dry-run":
-            from .dry_run_gateway import DryRunExecutionGateway
-
-            gateway = DryRunExecutionGateway()
     if unit_of_work_factory is None:
         from tradingagents.persistence import build_persistence_runtime
 
