@@ -315,3 +315,118 @@ class DefiLlamaTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RedditOfflineFetchTests(unittest.TestCase):
+    """The offline corpus is jsonl-per-subreddit, filtered by day."""
+
+    def setUp(self):
+        import json
+        import tempfile
+        from pathlib import Path
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.category = self.root / "company_news"
+        self.category.mkdir(parents=True)
+
+        posts = [
+            {
+                "created_utc": 1_767_225_600,  # 2026-01-01
+                "title": "NVIDIA beats expectations",
+                "selftext": "Strong quarter for NVDA.",
+                "score": 100,
+                "ups": 100,
+                "num_comments": 20,
+                "url": "https://reddit.test/1",
+            },
+            {
+                "created_utc": 1_767_225_600,
+                "title": "Bread recipes",
+                "selftext": "Flour and water.",
+                "score": 5,
+                "ups": 5,
+                "num_comments": 1,
+                "url": "https://reddit.test/2",
+            },
+            {
+                "created_utc": 1_767_312_000,  # 2026-01-02
+                "title": "NVIDIA the next day",
+                "selftext": "More NVDA news.",
+                "score": 50,
+                "ups": 50,
+                "num_comments": 10,
+                "url": "https://reddit.test/3",
+            },
+        ]
+        with (self.category / "wallstreetbets.jsonl").open("w", encoding="utf-8") as fh:
+            for post in posts:
+                fh.write(json.dumps(post) + "\n")
+
+        reddit_utils._SEARCH_TERMS_CACHE.clear()
+        self.addCleanup(reddit_utils._SEARCH_TERMS_CACHE.clear)
+
+    def _fetch(self, date, query=None, max_limit=10):
+        with mock.patch.object(reddit_utils, "get_company_name", lambda t: t):
+            return reddit_utils.fetch_top_from_category(
+                "company_news", date, max_limit, query=query, data_path=str(self.root)
+            )
+
+    def test_only_that_day_is_returned(self):
+        posts = self._fetch("2026-01-01")
+
+        self.assertTrue(posts)
+        self.assertTrue(all("next day" not in post["title"] for post in posts))
+
+    def test_a_query_filters_to_relevant_posts(self):
+        posts = self._fetch("2026-01-01", query="NVDA")
+
+        titles = [post["title"] for post in posts]
+        self.assertIn("NVIDIA beats expectations", titles)
+        self.assertNotIn("Bread recipes", titles)
+
+    def test_without_a_query_everything_that_day_is_returned(self):
+        posts = self._fetch("2026-01-01")
+
+        self.assertEqual(len(posts), 2)
+
+    def test_a_day_with_no_posts_returns_nothing(self):
+        self.assertEqual(self._fetch("2020-05-05"), [])
+
+    def test_a_limit_below_the_file_count_is_refused(self):
+        """It could not fetch anything, so it says so rather than silently
+        returning an empty list."""
+        with self.assertRaises(ValueError):
+            self._fetch("2026-01-01", max_limit=0)
+
+    def test_non_jsonl_files_are_ignored(self):
+        (self.category / "notes.txt").write_text("ignore me", encoding="utf-8")
+
+        self.assertTrue(self._fetch("2026-01-01"))
+
+
+class RedditOnlineFetchTests(unittest.TestCase):
+    def test_no_credentials_yields_no_posts(self):
+        with mock.patch.object(
+            reddit_utils, "_get_reddit_client", lambda: None, create=True
+        ):
+            result = reddit_utils.fetch_top_from_category_online(
+                "company_news", "2026-01-01", "2026-01-02", 5, query="NVDA"
+            )
+
+        self.assertEqual(result, [])
+
+    def test_an_api_failure_yields_no_posts(self):
+        """Reddit is a supplementary source; an outage must not fail a run."""
+        with mock.patch.object(
+            reddit_utils,
+            "praw",
+            mock.MagicMock(side_effect=RuntimeError("api down")),
+            create=True,
+        ):
+            result = reddit_utils.fetch_top_from_category_online(
+                "company_news", "2026-01-01", "2026-01-02", 5, query="NVDA"
+            )
+
+        self.assertIsInstance(result, list)
