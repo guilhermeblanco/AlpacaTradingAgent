@@ -106,10 +106,13 @@ def _status_cards(status):
 
 def _account_snapshot():
     try:
-        from tradingagents.dataflows.alpaca_utils import AlpacaUtils
+        from tradingagents.broker import get_execution_broker_runtime
 
-        account, _ = AlpacaUtils._safety_context("_status_")
-        return account
+        snapshot = get_execution_broker_runtime().snapshot_provider.get_portfolio_snapshot()
+        return {
+            "equity": snapshot.account.equity,
+            "last_equity": snapshot.account.last_equity,
+        }
     except Exception:
         return None
 
