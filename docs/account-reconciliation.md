@@ -24,12 +24,20 @@ EXECUTION_QUARANTINE_SCOPE=execution:alpaca:paper-primary
 ACCOUNT_RECONCILIATION_QUANTITY_TOLERANCE=0.000001
 ```
 
-When the scope is omitted, direct execution defaults to `execution:<broker>`.
-The autonomous worker appends `AUTONOMOUS_ACCOUNT_KEY` when available, and the
-periodic account monitor pauses the same `EXECUTION_QUARANTINE_SCOPE`. Set the
-variable for the monitor too: without it the monitor pauses `execution:<broker>`
-while the trading processes check the account-specific scope, so a drift
-quarantine would never stop an order.
+All three processes — the execution pipeline, the autonomous worker, and the
+account monitor — derive the scope through
+`tradingagents.execution.quarantine`, so one environment yields one name:
+
+| `EXECUTION_QUARANTINE_SCOPE` | `AUTONOMOUS_ACCOUNT_KEY` | Scope |
+| --- | --- | --- |
+| set | anything | the value you set |
+| unset | unset | `execution:<broker>` |
+| unset | set | `execution:<broker>:<account key>` |
+
+Setting `AUTONOMOUS_ACCOUNT_KEY` therefore changes the scope every process
+uses, not just the worker's. Pin `EXECUTION_QUARANTINE_SCOPE` if you want a
+name that does not move, and check `tradingagents-control-plane status` after
+changing either variable so an existing pause is not left under the old name.
 
 ## Position drift versus cash drift
 

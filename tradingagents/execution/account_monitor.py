@@ -81,7 +81,9 @@ def compare_account_snapshots(
 
 
 def _default_quarantine_scope(broker: str) -> str:
-    return f"execution:{broker}"
+    from .quarantine import execution_quarantine_scope
+
+    return execution_quarantine_scope(broker)
 
 
 @dataclass
@@ -212,14 +214,17 @@ def build_monitor_from_env():
     runtime = get_execution_broker_runtime(config)
     # Every process sharing an account must quarantine the same scope the
     # execution pipeline checks before it submits an order.
-    scope = os.getenv("EXECUTION_QUARANTINE_SCOPE", "").strip()
+    from .quarantine import quarantine_scope_from_env
+
+    # Bound once at startup so the scope cannot drift mid-process.
+    scope = quarantine_scope_from_env(runtime.name)
     monitor = AccountReconciliationMonitor(
         persistence.unit_of_work_factory,
         lambda _broker: runtime.snapshot_provider,
         [runtime.name],
         mismatch_threshold=int(os.getenv("ACCOUNT_DRIFT_MISMATCH_THRESHOLD", "2")),
         cash_tolerance=float(os.getenv("ACCOUNT_DRIFT_CASH_TOLERANCE", "1")),
-        quarantine_scope=(lambda _broker, scope=scope: scope) if scope else None,
+        quarantine_scope=lambda _broker, scope=scope: scope,
         quarantine_on_cash_drift=os.getenv(
             "ACCOUNT_DRIFT_HALT_ON_CASH", "false"
         ).strip().lower()

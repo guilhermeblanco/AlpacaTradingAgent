@@ -20,6 +20,7 @@ from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.configuration import validate_application_config
 from tradingagents.execution import ExecutionPipeline
 from tradingagents.execution.dry_run_gateway import DryRunExecutionGateway
+from tradingagents.execution.quarantine import quarantine_scope_from_env
 from tradingagents.evaluation import (
     DeterministicExperimentAssigner,
     ExperimentVariant,
@@ -75,10 +76,7 @@ def build_scheduler_from_env():
         safety_guard=SafetyGuard(config),
         unit_of_work_factory=persistence.unit_of_work_factory,
         broker_capabilities=broker.capabilities,
-        execution_control_service=(
-            os.getenv("EXECUTION_QUARANTINE_SCOPE")
-            or f"execution:{broker.name}:{os.getenv('AUTONOMOUS_ACCOUNT_KEY', '')}"
-        ).rstrip(":"),
+        execution_control_service=quarantine_scope_from_env(broker.name),
         lifecycle_enabled=True,
         lifecycle_ttl_seconds=config["lifecycle_intent_ttl_seconds"],
     )
