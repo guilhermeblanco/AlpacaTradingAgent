@@ -414,3 +414,133 @@ class ReportCallbackTests(StateFixture):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReportNavigationTests(StateFixture):
+    MODULES = ("webui.callbacks.report_callbacks",)
+
+    def setUp(self):
+        super().setUp()
+        from webui.callbacks.report_callbacks import register_report_callbacks
+
+        self.app = _app(register_report_callbacks)
+
+    def test_the_symbol_label_names_the_paged_symbol(self):
+        self._prepare("NVDA")
+        self._prepare("AAPL")
+        callback = dash_callback(self.app, "current-symbol-report-display.children")
+
+        self.assertIn("NVDA", callback(1))
+        self.assertIn("AAPL", callback(2))
+
+    def test_a_stale_page_number_is_reported_rather_than_crashing(self):
+        """Browser storage can hand back a page from a longer previous run."""
+        self._prepare("NVDA")
+        callback = dash_callback(self.app, "current-symbol-report-display.children")
+
+        self.assertEqual(callback(99), "Invalid page")
+
+    def test_no_symbols_shows_no_label(self):
+        callback = dash_callback(self.app, "current-symbol-report-display.children")
+
+        self.assertEqual(callback(1), "")
+
+    def test_each_nav_button_selects_its_tab(self):
+        callback = dash_callback(self.app, "tabs.active_tab")
+
+        for trigger, expected in (
+            ("nav-market", "market-analysis"),
+            ("nav-social", "social-sentiment"),
+            ("nav-news", "news-analysis"),
+            ("nav-fundamentals", "fundamentals-analysis"),
+            ("nav-researcher", "researcher-debate"),
+            ("nav-research-mgr", "research-manager"),
+            ("nav-trader", "trader-plan"),
+            ("nav-final", "final-decision"),
+        ):
+            with mock.patch(
+                "webui.callbacks.report_callbacks.dash.callback_context",
+                mock.Mock(triggered=[{"prop_id": f"{trigger}.n_clicks"}]),
+            ):
+                self.assertEqual(callback(*([1] * 11)), expected, trigger)
+
+    def test_all_three_risk_buttons_open_the_shared_debate_tab(self):
+        callback = dash_callback(self.app, "tabs.active_tab")
+
+        for trigger in ("nav-risk-agg", "nav-risk-cons", "nav-risk-neut"):
+            with mock.patch(
+                "webui.callbacks.report_callbacks.dash.callback_context",
+                mock.Mock(triggered=[{"prop_id": f"{trigger}.n_clicks"}]),
+            ):
+                self.assertEqual(callback(*([1] * 11)), "risk-debate", trigger)
+
+    def test_the_market_tab_is_the_default(self):
+        callback = dash_callback(self.app, "tabs.active_tab")
+
+        with mock.patch(
+            "webui.callbacks.report_callbacks.dash.callback_context",
+            mock.Mock(triggered=[]),
+        ):
+            self.assertEqual(callback(*([None] * 11)), "market-analysis")
+
+
+class ModalCallbackTests(StateFixture):
+    MODULES = ("webui.callbacks.report_callbacks",)
+
+    def setUp(self):
+        super().setUp()
+        from webui.callbacks.report_callbacks import register_report_callbacks
+
+        self.app = _app(register_report_callbacks)
+
+    def test_nothing_triggered_leaves_the_prompt_modal_untouched(self):
+        callback = dash_callback(self.app, "prompt-modal.is_open")
+        state = {"is_open": False, "report_type": None}
+
+        with mock.patch(
+            "webui.callbacks.report_callbacks.ctx", mock.Mock(triggered=[])
+        ):
+            _open, _title, _content, returned = callback([], None, state)
+
+        self.assertEqual(returned, state)
+
+    def test_closing_the_prompt_modal_records_it_as_closed(self):
+        callback = dash_callback(self.app, "prompt-modal.is_open")
+
+        with mock.patch(
+            "webui.callbacks.report_callbacks.ctx",
+            mock.Mock(triggered=[{"prop_id": "close-prompt-modal-btn.n_clicks"}]),
+        ):
+            is_open, _title, _content, returned = callback([], 1, {"is_open": True})
+
+        self.assertFalse(is_open)
+        self.assertFalse(returned["is_open"])
+
+    def test_closing_the_tool_output_modal_records_it_as_closed(self):
+        callback = dash_callback(self.app, "tool-outputs-modal.is_open")
+
+        with mock.patch(
+            "webui.callbacks.report_callbacks.ctx",
+            mock.Mock(triggered=[{"prop_id": "close-tool-outputs-modal-btn.n_clicks"}]),
+        ):
+            is_open, _title, _content, returned = callback([], 1, {"is_open": True})
+
+        self.assertFalse(is_open)
+        self.assertFalse(returned["is_open"])
+
+    def test_the_copy_buttons_confirm_the_action(self):
+        for output in ("copy-prompt-btn.children", "copy-tool-outputs-btn.children"):
+            callback = dash_callback(self.app, output)
+
+            self.assertIn("Copied!", str(callback(1)), output)
+
+    def test_the_copy_buttons_reset_without_a_click(self):
+        for output in ("copy-prompt-btn.children", "copy-tool-outputs-btn.children"):
+            callback = dash_callback(self.app, output)
+
+            self.assertIn("Copy", str(callback(None)), output)
+
+    def test_the_export_button_confirms_the_action(self):
+        callback = dash_callback(self.app, "export-tool-outputs-btn.children")
+
+        self.assertIn("Exported!", str(callback(1)))
