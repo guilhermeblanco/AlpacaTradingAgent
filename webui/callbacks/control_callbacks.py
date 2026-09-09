@@ -744,7 +744,7 @@ def register_control_callbacks(app):
 
         return _status_panel(
             "Order execution enabled",
-            f"${amount:.2f} per order through the configured Alpaca account.",
+            f"${amount:,.2f} per order through the configured Alpaca account.",
             ["Review account mode", "Uses fractional shares"],
             tone="warning",
             icon="fa-bolt",
