@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from tradingagents.broker.models import PortfolioSnapshot, QuoteSnapshot
-from tradingagents.marketdata.provider import MarketDataProvider
-
 from .position_sizing import PositionSizer, RiskParameters, SizingDecision, compute_atr
+
+if TYPE_CHECKING:
+    from tradingagents.marketdata.provider import MarketDataProvider
 
 
 class RiskSizingService:
