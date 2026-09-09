@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta, timezone
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -21,6 +22,7 @@ from tradingagents.persistence.postgres import (
     create_session_factory,
 )
 from tradingagents.persistence.postgres.models import DecisionEventRow, LifecycleRow
+from tradingagents.safety.state import PostgresSafetyStateStore
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -178,6 +180,8 @@ def test_initial_migration_creates_all_persistence_tables(postgres_engine) -> No
         "broker_order_transitions",
         "broker_fills",
         "portfolio_reservations",
+        "safety_state",
+        "safety_token_usage",
         "portfolio_reservation_allocations",
         "portfolio_reservation_transitions",
         "reconciliation_leases",
@@ -186,6 +190,23 @@ def test_initial_migration_creates_all_persistence_tables(postgres_engine) -> No
         "integration_credentials",
         "integration_credential_audit",
     }.issubset(inspect(postgres_engine).get_table_names())
+
+
+def test_shared_safety_updates_serialize_across_postgres_sessions(postgres_engine) -> None:
+    sessions = create_session_factory(postgres_engine)
+    scope = f"concurrency-{uuid4()}"
+
+    def reject_and_count_tokens(_index: int) -> None:
+        store = PostgresSafetyStateStore(sessions, scope=scope)
+        store.record_order_result(False)
+        store.record_llm_tokens(date(2026, 9, 8), 100)
+
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        list(pool.map(reject_and_count_tokens, range(10)))
+
+    store = PostgresSafetyStateStore(sessions, scope=scope)
+    assert store.consecutive_rejections() == 10
+    assert store.llm_tokens_used(date(2026, 9, 8)) == 1_000
 
 
 def test_postgres_unit_of_work_contract(postgres_engine) -> None:
