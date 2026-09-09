@@ -301,10 +301,59 @@ def create_api_config_modal():
                         className="mb-3"
                     ),
                     html.Div(id="api-save-status", className="mb-3"),
+
+                    html.Div(
+                        [
+                            html.H5("Trading connection", className="mb-3"),
+                            dbc.Row(
+                                [
+                                    dbc.Col(
+                                        [
+                                            dbc.Label("Execution broker"),
+                                            dbc.Select(
+                                                id="integration-execution-broker",
+                                                options=[
+                                                    {"label": "Alpaca", "value": "alpaca"},
+                                                    {"label": "Tradier", "value": "tradier"},
+                                                    {"label": "Robinhood", "value": "robinhood"},
+                                                ],
+                                                value="alpaca",
+                                            ),
+                                        ],
+                                        md=6,
+                                    ),
+                                    dbc.Col(
+                                        [
+                                            dbc.Label("Research market data"),
+                                            dbc.Select(
+                                                id="integration-market-data-provider",
+                                                options=[
+                                                    {"label": "Alpaca", "value": "alpaca"},
+                                                    {"label": "Tradier", "value": "tradier"},
+                                                ],
+                                                value="alpaca",
+                                            ),
+                                        ],
+                                        md=6,
+                                    ),
+                                ],
+                                className="g-3",
+                            ),
+                            dbc.Button(
+                                [html.I(className="fas fa-plug me-2"), "Test connection"],
+                                id="test-broker-connection-btn",
+                                color="outline-info",
+                                size="sm",
+                                className="mt-3",
+                            ),
+                            html.Div(id="integration-health-results", className="mt-3"),
+                        ],
+                        className="integration-onboarding mb-4",
+                    ),
                     
                     html.Hr(),
                     
-                    # API key inputs
+                    html.H5("Credentials", className="mb-3"),
                     html.Div(api_inputs),
                     
                     html.Hr(),
