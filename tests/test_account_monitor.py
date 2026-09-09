@@ -33,6 +33,7 @@ class Baselines:
             mismatch_count=kwargs.get("mismatch_count", 0),
             updated_at=datetime.now(timezone.utc),
         )
+        return self.baseline
 
     def record_check(self, broker, report, *, mismatch_count):
         self.baseline.mismatch_count = mismatch_count
@@ -150,6 +151,112 @@ class AccountMonitorTests(unittest.TestCase):
         self.assertEqual(
             captured["quarantine_scope"]("alpaca"), "execution:alpaca:paper-primary"
         )
+
+    def test_cash_only_drift_does_not_halt_trading(self):
+        """Dividends, interest, fees, and transfers move cash without a trade."""
+        baseline = AccountBaseline(
+            broker="alpaca",
+            snapshot=snapshot(),
+            source="verified_fill",
+            mismatch_count=0,
+            updated_at=datetime.now(timezone.utc),
+        )
+        baselines = Baselines(baseline)
+        operations = Operations()
+        monitor = AccountReconciliationMonitor(
+            lambda: Uow(baselines, operations),
+            lambda broker: SimpleNamespace(
+                get_portfolio_snapshot=lambda: snapshot(cash=1200)
+            ),
+            ["alpaca"],
+            mismatch_threshold=2,
+        )
+
+        first = monitor.run_once()
+        second = monitor.run_once()
+
+        self.assertEqual(operations.paused, [])
+        self.assertEqual(first.quarantined, 0)
+        self.assertEqual(second.quarantined, 0)
+        self.assertEqual(first.resynced, 1)
+        # The adopted baseline means the next pass matches instead of
+        # re-reporting the same difference forever.
+        self.assertEqual(baselines.baseline.source, "cash_drift_resync")
+        self.assertEqual(second.matched, 1)
+
+    def test_cash_drift_can_still_halt_when_explicitly_requested(self):
+        baseline = AccountBaseline(
+            broker="alpaca",
+            snapshot=snapshot(),
+            source="verified_fill",
+            mismatch_count=1,
+            updated_at=datetime.now(timezone.utc),
+        )
+        operations = Operations()
+        monitor = AccountReconciliationMonitor(
+            lambda: Uow(Baselines(baseline), operations),
+            lambda broker: SimpleNamespace(
+                get_portfolio_snapshot=lambda: snapshot(cash=1200)
+            ),
+            ["alpaca"],
+            mismatch_threshold=2,
+            quarantine_on_cash_drift=True,
+        )
+
+        self.assertEqual(monitor.run_once().quarantined, 1)
+
+    def test_position_drift_still_halts(self):
+        baseline = AccountBaseline(
+            broker="alpaca",
+            snapshot=snapshot(),
+            source="verified_fill",
+            mismatch_count=1,
+            updated_at=datetime.now(timezone.utc),
+        )
+        baselines = Baselines(baseline)
+        operations = Operations()
+        monitor = AccountReconciliationMonitor(
+            lambda: Uow(baselines, operations),
+            lambda broker: SimpleNamespace(get_portfolio_snapshot=lambda: snapshot(8)),
+            ["alpaca"],
+            mismatch_threshold=2,
+        )
+
+        self.assertEqual(monitor.run_once().quarantined, 1)
+        # A halting drift must never be adopted as the new baseline.
+        self.assertEqual(baselines.baseline.source, "verified_fill")
+
+    def test_resync_baseline_breaks_the_quarantine_deadlock(self):
+        """Only a verified fill refreshes the baseline, and a quarantine
+        stops fills, so an operator needs an explicit reset."""
+        baseline = AccountBaseline(
+            broker="alpaca",
+            snapshot=snapshot(),
+            source="verified_fill",
+            mismatch_count=3,
+            updated_at=datetime.now(timezone.utc),
+        )
+        baselines = Baselines(baseline)
+        monitor = AccountReconciliationMonitor(
+            lambda: Uow(baselines, Operations()),
+            lambda broker: SimpleNamespace(get_portfolio_snapshot=lambda: snapshot(8)),
+            ["alpaca"],
+        )
+
+        resynced = monitor.resync_baseline("alpaca")
+
+        self.assertEqual(resynced.source, "operator_resync")
+        self.assertEqual(resynced.mismatch_count, 0)
+        self.assertEqual(monitor.run_once().matched, 1)
+
+    def test_report_separates_position_drift_from_cash_drift(self):
+        cash_only = compare_account_snapshots(snapshot(), snapshot(cash=900))
+        self.assertTrue(cash_only.positions_matched)
+        self.assertFalse(cash_only.cash_matched)
+
+        position_only = compare_account_snapshots(snapshot(), snapshot(quantity=8))
+        self.assertFalse(position_only.positions_matched)
+        self.assertTrue(position_only.cash_matched)
 
 if __name__ == "__main__":
     unittest.main()
