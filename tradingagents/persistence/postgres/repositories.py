@@ -27,6 +27,8 @@ from tradingagents.execution.reconciliation_queue import (
     ReconciliationLeaseLost,
     ReconciliationTask,
 )
+from tradingagents.execution.account_monitor import AccountBaseline, AccountDriftReport
+from tradingagents.broker.models import PortfolioSnapshot
 from tradingagents.portfolio.batch import BatchAllocationStatus, PortfolioDecisionBatch
 from tradingagents.portfolio.reservations import (
     AllocationReservationState,
@@ -36,6 +38,7 @@ from tradingagents.portfolio.reservations import (
 
 from .models import (
     AnalysisAdmissionRow,
+    AccountSnapshotBaselineRow,
     BrokerFillRow,
     BrokerOrderRow,
     BrokerOrderTransitionRow,
@@ -1338,6 +1341,65 @@ class PostgresPortfolioReservationRepository:
                 for decision_id, state in states.items()
             },
         )
+
+
+class PostgresAccountSnapshotRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def get(self, broker: str) -> Optional[AccountBaseline]:
+        row = self.session.get(AccountSnapshotBaselineRow, broker.lower().strip())
+        if row is None:
+            return None
+        return AccountBaseline(
+            broker=row.broker,
+            snapshot=PortfolioSnapshot.model_validate(row.snapshot),
+            source=row.source,
+            source_decision_id=row.source_decision_id,
+            mismatch_count=row.mismatch_count,
+            updated_at=row.updated_at,
+            checked_at=row.checked_at,
+        )
+
+    def upsert(
+        self,
+        broker: str,
+        snapshot: PortfolioSnapshot,
+        *,
+        source: str,
+        source_decision_id: Optional[str] = None,
+        mismatch_count: int = 0,
+    ) -> AccountBaseline:
+        key = broker.lower().strip()
+        row = self.session.get(AccountSnapshotBaselineRow, key)
+        now = _utcnow()
+        if row is None:
+            row = AccountSnapshotBaselineRow(
+                broker=key, snapshot={}, source=source, updated_at=now
+            )
+            self.session.add(row)
+        row.snapshot = snapshot.model_dump(mode="json")
+        row.source = source
+        row.source_decision_id = source_decision_id
+        row.mismatch_count = mismatch_count
+        row.updated_at = now
+        self.session.flush()
+        return self.get(key)
+
+    def record_check(
+        self,
+        broker: str,
+        report: AccountDriftReport,
+        *,
+        mismatch_count: int,
+    ) -> None:
+        row = self.session.get(AccountSnapshotBaselineRow, broker.lower().strip())
+        if row is None:
+            raise KeyError(f"No account baseline for {broker}")
+        row.mismatch_count = mismatch_count
+        row.last_report = report.model_dump(mode="json")
+        row.checked_at = report.checked_at
+        self.session.flush()
 
 
 class PostgresOperationalRepository:

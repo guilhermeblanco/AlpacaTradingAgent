@@ -5,6 +5,7 @@ from .models import Base
 from .unit_of_work import PostgresUnitOfWork
 from .repositories import (
     PostgresOrderLedger,
+    PostgresAccountSnapshotRepository,
     PostgresOutboxRepository,
     PostgresOperationalRepository,
     PostgresPortfolioReservationRepository,
@@ -18,6 +19,7 @@ __all__ = [
     "PostgresOutboxRepository",
     "PostgresOperationalRepository",
     "PostgresOrderLedger",
+    "PostgresAccountSnapshotRepository",
     "PostgresPortfolioReservationRepository",
     "PostgresReconciliationQueue",
     "create_database_engine",
