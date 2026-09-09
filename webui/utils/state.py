@@ -310,6 +310,9 @@ class AppState:
         self.analysis_queue = []
         self.symbol_states = {}
         self.current_symbol = None
+        # Left dangling this would point at a symbol whose state was just
+        # deleted, and it is what update_agent_status resolves to by default.
+        self.analyzing_symbol = None
         self.analysis_running = False
         self.analysis_trace = []
         self.tool_calls_count = 0

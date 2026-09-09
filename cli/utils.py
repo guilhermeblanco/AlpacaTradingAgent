@@ -1,11 +1,13 @@
 import questionary
 from typing import List, Optional, Tuple, Dict
-from rich import console
+from rich.console import Console
 from cli.models import AnalystType
 from tradingagents.openai_model_registry import (
     get_llm_provider_options,
     get_model_options_for_provider,
 )
+
+console = Console()
 
 ANALYST_ORDER = [
     ("Market Analyst", AnalystType.MARKET),
@@ -166,7 +168,7 @@ def get_output_language() -> str:
         default="English",
         style=questionary.Style([("text", "fg:green"), ("highlighted", "noinherit")]),
     ).ask()
-    return (language or "English").strip()
+    return (language or "").strip() or "English"
 
 
 def ask_gemini_thinking_config() -> str:
