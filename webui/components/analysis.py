@@ -73,18 +73,28 @@ def execute_trade_after_analysis(ticker, allow_shorts, trade_amount):
         # cap). Failure-isolated: any problem keeps the requested amount.
         try:
             from tradingagents.dataflows.config import get_config
+            from tradingagents.broker import get_execution_broker_runtime
+            from tradingagents.marketdata import get_research_market_data_provider
             from tradingagents.portfolio import (
                 PortfolioLimitsConfig,
                 adjust_new_position_notional,
-                gather_portfolio_state_via_alpaca,
+                gather_portfolio_state,
             )
+
+            portfolio_config = get_config() or {}
+            snapshot_provider = get_execution_broker_runtime(
+                portfolio_config
+            ).snapshot_provider
+            market_data = get_research_market_data_provider(portfolio_config)
 
             trade_amount = adjust_new_position_notional(
                 symbol=ticker,
                 action=recommended_action,
                 requested_notional=trade_amount,
-                gather_state=lambda: gather_portfolio_state_via_alpaca(ticker),
-                config=PortfolioLimitsConfig.from_config(get_config() or {}),
+                gather_state=lambda: gather_portfolio_state(
+                    ticker, snapshot_provider, market_data
+                ),
+                config=PortfolioLimitsConfig.from_config(portfolio_config),
             )
             if trade_amount <= 0:
                 print(

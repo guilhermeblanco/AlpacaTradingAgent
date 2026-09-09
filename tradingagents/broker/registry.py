@@ -235,3 +235,12 @@ def default_broker_registry() -> BrokerRegistry:
 
     registry.register("robinhood", robinhood)
     return registry
+
+
+def get_execution_broker_runtime(config: dict | None = None) -> BrokerRuntime:
+    if config is None:
+        from tradingagents.dataflows.config import get_config
+
+        config = get_config() or {}
+    name = str((config or {}).get("execution_broker") or "alpaca")
+    return default_broker_registry().create(name, config or {})

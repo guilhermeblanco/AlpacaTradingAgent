@@ -297,6 +297,9 @@ def gather_portfolio_state_via_alpaca(
     return equity, open_positions, price_history
 
 
+from .state import gather_portfolio_state
+
+
 from .batch import (
     BatchAllocationStatus,
     PortfolioAllocation,
@@ -326,5 +329,6 @@ __all__ = [
     "assess_new_position",
     "daily_returns",
     "gather_portfolio_state_via_alpaca",
+    "gather_portfolio_state",
     "realized_daily_vol",
 ]

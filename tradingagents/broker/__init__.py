@@ -11,6 +11,7 @@ from .registry import (
     BrokerRegistry,
     BrokerRuntime,
     default_broker_registry,
+    get_execution_broker_runtime,
 )
 
 __all__ = [
@@ -27,4 +28,5 @@ __all__ = [
     "BrokerRegistry",
     "BrokerRuntime",
     "default_broker_registry",
+    "get_execution_broker_runtime",
 ]
