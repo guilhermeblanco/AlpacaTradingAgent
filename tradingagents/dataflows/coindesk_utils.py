@@ -39,8 +39,13 @@ def get_news(symbol: str, n: int = 5):
             body = article.get("body", "")
             
             # Get and format the published timestamp
+            # UTC, like every other timestamp an analyst prompt sees: rendering
+            # in the server's local zone made the same article carry a
+            # different publication date depending on where the run happened.
             published_timestamp = article.get("published_on", 0)
-            published_date = datetime.datetime.fromtimestamp(published_timestamp).strftime('%Y-%m-%d %H:%M:%S')
+            published_date = datetime.datetime.fromtimestamp(
+                published_timestamp, tz=datetime.timezone.utc
+            ).strftime('%Y-%m-%d %H:%M:%S UTC')
 
             # Split body into sentences and take the first N.
             sentences = re.split(r"(?<=[.!?])\s+", body)
