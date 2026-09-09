@@ -15,6 +15,7 @@ from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.run_logger import get_run_audit_logger
 from tradingagents.dataflows.config import get_api_key
 import json
+import re
 import time
 from functools import wraps
 
@@ -54,6 +55,15 @@ VALID_SHORT_OUTPUT_PATTERNS = (
 )
 
 
+# "1." / "1)" style menu entries, as well as the bulleted kind.
+_MENU_ITEM_PATTERN = re.compile(r"^\d+[.)]\s")
+
+
+def _is_menu_item(line: str) -> bool:
+    stripped = line.strip()
+    return stripped.startswith(("- ", "* ")) or bool(_MENU_ITEM_PATTERN.match(stripped))
+
+
 def _is_trailing_interactive_followup(text: str) -> bool:
     if not text:
         return False
@@ -80,21 +90,26 @@ def _strip_trailing_interactive_followup(text: str) -> str:
 
     removed_any = False
     while lines:
+        # A follow-up offer introduces its menu, so the bullets sit below it
+        # rather than above. Look past them to find the line that offers.
+        index = len(lines) - 1
+        while index >= 0 and (_is_menu_item(lines[index]) or not lines[index].strip()):
+            index -= 1
+        if index < 0:
+            break
         tail = (
-            lines[-1]
+            lines[index]
             .strip()
             .lower()
-            .replace("’", "'")
-            .replace("‘", "'")
-            .replace("‑", "-")
-            .replace("–", "-")
-            .replace("—", "-")
+            .replace("\u2019", "'")
+            .replace("\u2018", "'")
+            .replace("\u2011", "-")
+            .replace("\u2013", "-")
+            .replace("\u2014", "-")
         )
         if any(pattern in tail for pattern in INTERACTIVE_FOLLOWUP_PATTERNS):
             removed_any = True
-            lines.pop()
-            while lines and lines[-1].strip().startswith(("- ", "* ")):
-                lines.pop()
+            del lines[index:]
             while lines and not lines[-1].strip():
                 lines.pop()
             continue
