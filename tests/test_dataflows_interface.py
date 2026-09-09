@@ -391,3 +391,212 @@ class EmptySearchFallbackTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class IndicatorColumnTests(unittest.TestCase):
+    """Some indicators are derived locally when stockstats omits them."""
+
+    def _frame(self):
+        import pandas as pd
+
+        return pd.DataFrame(
+            {
+                "timestamp": pd.date_range("2026-01-01", periods=30, freq="D"),
+                "close": [100 + index for index in range(30)],
+                "volume": [1000 + index * 10 for index in range(30)],
+            }
+        )
+
+    def test_an_existing_column_is_left_alone(self):
+        frame = self._frame()
+        frame["ema_10"] = 1.0
+
+        result = interface._ensure_indicator_column(frame, "ema_10")
+
+        self.assertTrue((result["ema_10"] == 1.0).all())
+
+    def test_each_derived_indicator_is_computed(self):
+        for column in ("ema_10", "sma_20", "volume_delta"):
+            result = interface._ensure_indicator_column(self._frame(), column)
+
+            self.assertIn(column, result.columns, column)
+
+    def test_an_unknown_indicator_is_not_invented(self):
+        result = interface._ensure_indicator_column(self._frame(), "not_an_indicator")
+
+        self.assertNotIn("not_an_indicator", result.columns)
+
+
+class IndicatorTableTests(unittest.TestCase):
+    def _frame(self, rows=5):
+        import pandas as pd
+
+        return pd.DataFrame(
+            {
+                "timestamp": pd.date_range("2026-01-01", periods=rows, freq="D"),
+                "rsi_14": [50.0 + index for index in range(rows)],
+                "volume": [1_234_567.0] * rows,
+                "macd": [0.12345] * rows,
+            }
+        )
+
+    def test_the_table_has_a_header_and_separator(self):
+        table = interface._format_indicator_history_table(
+            self._frame(), ["rsi_14"], max_points=5
+        )
+        lines = table.splitlines()
+
+        self.assertIn("RSI_14", lines[0])
+        self.assertTrue(set(lines[1]) <= set("|-"))
+
+    def test_only_the_most_recent_points_are_kept(self):
+        table = interface._format_indicator_history_table(
+            self._frame(rows=20), ["rsi_14"], max_points=3
+        )
+
+        self.assertEqual(len(table.splitlines()), 5)  # header, rule, 3 rows
+
+    def test_volume_is_grouped_and_prices_are_two_places(self):
+        table = interface._format_indicator_history_table(
+            self._frame(), ["rsi_14", "volume"], max_points=1
+        )
+
+        self.assertIn("1,234,567", table)
+        # Only the last row is kept, so this is the final rsi value.
+        self.assertIn("54.00", table)
+
+    def test_macd_keeps_four_places(self):
+        table = interface._format_indicator_history_table(
+            self._frame(), ["macd"], max_points=1
+        )
+
+        self.assertIn("0.1235", table)  # rounded to four places
+
+    def test_missing_values_render_as_not_available(self):
+        import numpy as np
+
+        frame = self._frame()
+        frame.loc[frame.index[-1], "rsi_14"] = np.nan
+
+        table = interface._format_indicator_history_table(
+            frame, ["rsi_14"], max_points=1
+        )
+
+        self.assertIn("N/A", table)
+
+    def test_a_zero_point_request_still_returns_a_row(self):
+        table = interface._format_indicator_history_table(
+            self._frame(), ["rsi_14"], max_points=0
+        )
+
+        self.assertGreaterEqual(len(table.splitlines()), 3)
+
+
+class IndicatorWindowTests(unittest.TestCase):
+    def test_each_day_in_the_window_is_reported(self):
+        with mock.patch.object(
+            interface.StockstatsUtils, "get_stock_stats", lambda **k: 55.0
+        ):
+            report = interface.get_stock_stats_indicators_window(
+                "NVDA", "rsi_14", "2026-09-09", 3, True
+            )
+
+        self.assertIn("2026-09-09", report)
+        self.assertEqual(report.count("55.0"), 4)  # 3 look-back days plus today
+
+    def test_a_failing_day_does_not_abort_the_window(self):
+        calls = {"count": 0}
+
+        def flaky(**_kwargs):
+            calls["count"] += 1
+            if calls["count"] == 2:
+                raise RuntimeError("no data for that day")
+            return 55.0
+
+        with mock.patch.object(interface.StockstatsUtils, "get_stock_stats", flaky):
+            report = interface.get_stock_stats_indicators_window(
+                "NVDA", "rsi_14", "2026-09-09", 3, True
+            )
+
+        self.assertIn("55.0", report)
+
+
+class MarketDataWindowTests(unittest.TestCase):
+    def _bars(self, rows=10):
+        import pandas as pd
+
+        return pd.DataFrame(
+            {
+                "timestamp": pd.date_range("2026-01-01", periods=rows, freq="D"),
+                "open": [100.0] * rows,
+                "high": [101.0] * rows,
+                "low": [99.0] * rows,
+                "close": [100.5] * rows,
+                "volume": [1000] * rows,
+            }
+        )
+
+    def _provider(self, frame):
+        provider = mock.MagicMock()
+        provider.get_bars.return_value = frame
+        return mock.patch(
+            "tradingagents.marketdata.get_research_market_data_provider",
+            lambda *a, **k: provider,
+        )
+
+    def test_bars_are_summarized(self):
+        with self._provider(self._bars()):
+            report = interface.get_market_data_window("NVDA", "2026-09-09", 30)
+
+        self.assertIn("NVDA", report)
+        self.assertIsInstance(report, str)
+
+    def test_no_bars_reports_the_absence(self):
+        import pandas as pd
+
+        with self._provider(pd.DataFrame()):
+            report = interface.get_market_data_window("NVDA", "2026-09-09", 30)
+
+        self.assertIsInstance(report, str)
+        self.assertTrue(report.strip())
+
+    def test_a_provider_failure_is_reported_rather_than_raised(self):
+        provider = mock.MagicMock()
+        provider.get_bars.side_effect = RuntimeError("provider down")
+
+        with mock.patch(
+            "tradingagents.marketdata.get_research_market_data_provider",
+            lambda *a, **k: provider,
+        ):
+            report = interface.get_market_data_window("NVDA", "2026-09-09", 30)
+
+        self.assertIsInstance(report, str)
+        self.assertIn("provider down", report)
+
+    def test_the_date_defaults_to_today(self):
+        with self._provider(self._bars()):
+            self.assertIsInstance(interface.get_market_data_window("NVDA"), str)
+
+
+class TechnicalBriefToolTests(unittest.TestCase):
+    def test_the_brief_is_serialized_for_the_analyst(self):
+        brief = mock.MagicMock()
+        brief.model_dump_json.return_value = '{"symbol": "NVDA"}'
+
+        with mock.patch(
+            "tradingagents.dataflows.technical_brief.build_technical_brief",
+            lambda *a, **k: brief,
+        ):
+            report = interface.get_technical_brief("NVDA", "2026-09-09")
+
+        self.assertIn("NVDA", report)
+
+    def test_a_failure_is_reported_rather_than_raised(self):
+        with mock.patch(
+            "tradingagents.dataflows.technical_brief.build_technical_brief",
+            side_effect=RuntimeError("no bars"),
+        ):
+            report = interface.get_technical_brief("NVDA", "2026-09-09")
+
+        self.assertIsInstance(report, str)
+        self.assertIn("no bars", report)
