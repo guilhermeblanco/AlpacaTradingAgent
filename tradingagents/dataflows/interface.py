@@ -19,7 +19,7 @@ from .earnings_utils import get_earnings_calendar_data, get_earnings_surprises_a
 from .macro_utils import get_macro_economic_summary, get_economic_indicators_report, get_treasury_yield_curve
 from dateutil.relativedelta import relativedelta
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import os
 import pandas as pd
@@ -263,7 +263,7 @@ def get_finnhub_news(
         for entry in live_entries:
             ts = entry.get("datetime", 0)
             if isinstance(ts, (int, float)) and ts > 0:
-                day = datetime.utcfromtimestamp(ts).strftime("%Y-%m-%d")
+                day = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
             else:
                 day = entry.get("date", curr_date)
             headline = entry.get("headline", "Untitled")

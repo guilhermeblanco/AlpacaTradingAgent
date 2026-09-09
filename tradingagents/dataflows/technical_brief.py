@@ -10,7 +10,7 @@ Timeframes: 1h, 4h, 1d (fixed set).
 from __future__ import annotations
 
 import warnings
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -833,7 +833,9 @@ def build_technical_brief(symbol: str, curr_date: str) -> TechnicalBrief:
 
     return TechnicalBrief(
         symbol=symbol,
-        generated_at=datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        generated_at=datetime.now(timezone.utc)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z"),
         timeframes=tf_briefs,
         key_levels=levels,
         signal_summary=signal,

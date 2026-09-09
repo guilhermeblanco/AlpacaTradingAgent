@@ -1,7 +1,7 @@
 import requests
 import time
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from contextlib import contextmanager
 from typing import Annotated, List
 import os
@@ -212,8 +212,8 @@ def fetch_top_from_category(
                 parsed_line = json.loads(line)
 
                 # select only lines that are from the date
-                post_date = datetime.utcfromtimestamp(
-                    parsed_line["created_utc"]
+                post_date = datetime.fromtimestamp(
+                    parsed_line["created_utc"], tz=timezone.utc
                 ).strftime("%Y-%m-%d")
                 if post_date != date:
                     continue
@@ -316,7 +316,11 @@ def fetch_top_from_category_online(
             created_utc = data.get("created_utc")
             if not created_utc:
                 continue
-            post_date = datetime.utcfromtimestamp(created_utc)
+            # Naive UTC: the window bounds this is compared against are
+            # parsed from bare date strings.
+            post_date = datetime.fromtimestamp(
+                created_utc, tz=timezone.utc
+            ).replace(tzinfo=None)
             if not in_window(post_date, start_dt, end_dt):
                 continue
 

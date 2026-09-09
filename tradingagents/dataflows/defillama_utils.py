@@ -100,7 +100,9 @@ def _get_chain_fundamentals(symbol: str, lookback_days: int = 30) -> str:
         past_tvl = past_points[-1]['tvl'] if past_points else None
         tvl_pct = ((latest_tvl - past_tvl) / past_tvl * 100) if past_tvl else None
         
-        latest_date = datetime.datetime.utcfromtimestamp(latest_ts).strftime("%Y-%m-%d")
+        latest_date = datetime.datetime.fromtimestamp(
+            latest_ts, tz=datetime.timezone.utc
+        ).strftime("%Y-%m-%d")
         
         # Assemble markdown report
         lines = [
@@ -199,7 +201,9 @@ def get_fundamentals(symbol: str, lookback_days: int = 30) -> str:
         # Some protocols or chains won’t have fee data; ignore.
         pass
 
-    latest_date = datetime.datetime.utcfromtimestamp(latest_ts).strftime("%Y-%m-%d")
+    latest_date = datetime.datetime.fromtimestamp(
+            latest_ts, tz=datetime.timezone.utc
+        ).strftime("%Y-%m-%d")
 
     # ---------------- Assemble markdown ----------------
     lines = [
