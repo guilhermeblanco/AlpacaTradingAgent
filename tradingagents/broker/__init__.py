@@ -1,6 +1,7 @@
 """Broker-neutral account and market snapshots."""
 
 from .models import AccountSnapshot, PortfolioSnapshot, PositionSnapshot, QuoteSnapshot
+from .instruments import InstrumentProvider, InstrumentSnapshot
 from .snapshot import SnapshotProvider
 from .registry import (
     ALPACA_CAPABILITIES,
@@ -16,6 +17,8 @@ from .registry import (
 
 __all__ = [
     "AccountSnapshot",
+    "InstrumentProvider",
+    "InstrumentSnapshot",
     "PortfolioSnapshot",
     "PositionSnapshot",
     "QuoteSnapshot",

@@ -44,14 +44,26 @@ DEFAULT_CRYPTO_UNIVERSE = [
 
 _latest_scan_status = {}
 
-def load_universe() -> Dict[str, str]:
+def load_universe(instrument_provider=None) -> Dict[str, str]:
     """
-    Loads all tradeable assets dynamically from Alpaca API and filters them.
+    Loads tradeable assets through the configured broker and filters them.
     Returns dict mapping symbol -> asset_type ('stock' or 'crypto').
     """
     try:
-        from tradingagents.dataflows.alpaca_utils import AlpacaUtils
-        dynamic = AlpacaUtils.get_tradeable_assets()
+        if instrument_provider is None:
+            from tradingagents.broker import get_execution_broker_runtime
+
+            instrument_provider = get_execution_broker_runtime().instrument_provider
+        instruments = (
+            instrument_provider.search_instruments("", limit=10000)
+            if instrument_provider is not None
+            else []
+        )
+        dynamic = {
+            item.symbol: item.asset_type
+            for item in instruments
+            if item.tradable
+        }
         if dynamic and len(dynamic) > 0:
             universe = dict(dynamic)
             
@@ -70,10 +82,10 @@ def load_universe() -> Dict[str, str]:
                 keys = list(universe.keys())[:SCREENER_MAX_UNIVERSE]
                 universe = {k: universe[k] for k in keys}
                 
-            logger.info(f"Loaded full tradeable universe from Alpaca: {len(universe)} tickers.")
+            logger.info(f"Loaded broker tradeable universe: {len(universe)} tickers.")
             return universe
     except Exception as e:
-        logger.debug(f"Failed to load dynamic universe from AlpacaUtils: {e}")
+        logger.debug(f"Failed to load broker instrument universe: {e}")
         pass
     
     # Fallback to DEFAULT lists

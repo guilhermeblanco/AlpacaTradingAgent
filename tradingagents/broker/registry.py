@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from tradingagents.broker.snapshot import SnapshotProvider
     from tradingagents.execution.gateway import ExecutionGateway
     from tradingagents.execution.models import ExecutionPlan
+    from tradingagents.broker.instruments import InstrumentProvider
 
 
 @dataclass(frozen=True)
@@ -126,6 +127,7 @@ class BrokerRuntime:
     capabilities: BrokerCapabilities
     snapshot_provider: SnapshotProvider
     execution_gateway: ExecutionGateway
+    instrument_provider: InstrumentProvider | None = None
 
 
 class BrokerRegistry:
@@ -152,6 +154,11 @@ def default_broker_registry() -> BrokerRegistry:
     from tradingagents.broker.alpaca_snapshot import AlpacaSnapshotProvider
     from tradingagents.dataflows.config import get_alpaca_use_paper
     from tradingagents.execution.alpaca_gateway import AlpacaExecutionGateway, AlpacaPaperExecutionGateway
+    from tradingagents.broker.instruments import (
+        AlpacaInstrumentProvider,
+        RobinhoodInstrumentProvider,
+        TradierInstrumentProvider,
+    )
     from .robinhood import (
         DEFAULT_ROBINHOOD_MCP_URL, RobinhoodExecutionGateway, RobinhoodMCPClient,
         RobinhoodSnapshotProvider, load_robinhood_access_token,
@@ -167,6 +174,7 @@ def default_broker_registry() -> BrokerRegistry:
             capabilities=replace(ALPACA_CAPABILITIES, paper_trading=paper),
             snapshot_provider=AlpacaSnapshotProvider(),
             execution_gateway=AlpacaPaperExecutionGateway() if paper else AlpacaExecutionGateway(),
+            instrument_provider=AlpacaInstrumentProvider(),
         )
 
     def tradier(config: dict) -> BrokerRuntime:
@@ -190,6 +198,7 @@ def default_broker_registry() -> BrokerRegistry:
             capabilities=replace(TRADIER_CAPABILITIES, paper_trading=sandbox),
             snapshot_provider=TradierSnapshotProvider(client),
             execution_gateway=TradierExecutionGateway(client),
+            instrument_provider=TradierInstrumentProvider(client),
         )
 
     registry.register("alpaca", alpaca)
@@ -231,6 +240,7 @@ def default_broker_registry() -> BrokerRegistry:
                 client, account_number=account_number, review_only=review_only,
                 live_orders_enabled=live_enabled,
             ),
+            instrument_provider=RobinhoodInstrumentProvider(client),
         )
 
     registry.register("robinhood", robinhood)
