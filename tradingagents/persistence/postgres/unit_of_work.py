@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from .repositories import (
     PostgresAdmissionPolicy,
+    PostgresAccountSnapshotRepository,
     PostgresEvaluationRepository,
     PostgresEventJournal,
     PostgresLifecycleRepository,
@@ -46,6 +47,7 @@ class PostgresUnitOfWork:
         )
         self.reconciliation_queue = PostgresReconciliationQueue(self.session)
         self.operations = PostgresOperationalRepository(self.session)
+        self.account_snapshots = PostgresAccountSnapshotRepository(self.session)
         return self
 
     def __exit__(

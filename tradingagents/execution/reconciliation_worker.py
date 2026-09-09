@@ -127,6 +127,17 @@ class ReconciliationWorker:
                                 )
                             },
                         )
+                        if account_report.checked and account_report.matched:
+                            account_snapshots = getattr(
+                                uow, "account_snapshots", None
+                            )
+                            if account_snapshots is not None:
+                                account_snapshots.upsert(
+                                    self._broker_name(task.broker),
+                                    portfolio,
+                                    source="verified_fill",
+                                    source_decision_id=execution.plan.decision_id,
+                                )
                     if quarantine:
                         scope = execution.plan.metadata.get(
                             "execution_quarantine_scope"

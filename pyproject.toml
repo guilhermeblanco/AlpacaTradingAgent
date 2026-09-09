@@ -122,6 +122,7 @@ dev = [
 [project.scripts]
 tradingagents = "cli.main:app"
 tradingagents-web = "run_webui_dash:main"
+tradingagents-account-monitor = "tradingagents.execution.account_monitor:main"
 
 [tool.setuptools]
 include-package-data = true

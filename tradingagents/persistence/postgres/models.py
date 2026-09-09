@@ -360,6 +360,19 @@ class SafetyStateRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class AccountSnapshotBaselineRow(Base):
+    __tablename__ = "account_snapshot_baselines"
+
+    broker: Mapped[str] = mapped_column(String(80), primary_key=True)
+    snapshot: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, nullable=False)
+    source: Mapped[str] = mapped_column(String(80), nullable=False)
+    source_decision_id: Mapped[Optional[str]] = mapped_column(String(160))
+    mismatch_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_report: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON_DOCUMENT)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    checked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+
 class SafetyTokenUsageRow(Base):
     __tablename__ = "safety_token_usage"
 
