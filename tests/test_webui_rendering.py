@@ -328,3 +328,77 @@ class RedditDataDirectoryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PromptCaptureInternalsTests(StateFixture):
+    def test_the_capture_records_against_the_analyzed_symbol(self):
+        self._prepare("NVDA")
+        self.state.analyzing_symbol = "NVDA"
+
+        with mock.patch("webui.utils.prompt_capture.get_run_audit_logger"):
+            capture_agent_prompt("news_report", "You are a news analyst.")
+
+        self.assertEqual(
+            get_agent_prompt("news_report", "NVDA"), "You are a news analyst."
+        )
+
+    def test_a_logging_failure_does_not_lose_the_prompt(self):
+        self._prepare("NVDA")
+
+        with mock.patch(
+            "webui.utils.prompt_capture.get_run_audit_logger",
+            side_effect=RuntimeError("disk full"),
+        ):
+            capture_agent_prompt("market_report", "the prompt", "NVDA")
+
+        self.assertEqual(get_agent_prompt("market_report", "NVDA"), "the prompt")
+
+    def test_capturing_for_an_unknown_symbol_does_not_raise(self):
+        with mock.patch("webui.utils.prompt_capture.get_run_audit_logger"):
+            capture_agent_prompt("market_report", "the prompt", "UNKNOWN")
+
+    def test_a_dict_prompt_is_reduced_to_text(self):
+        extracted = PromptCapture.extract_system_message_from_prompt(
+            {"system": "You are an analyst."}
+        )
+
+        self.assertIsInstance(extracted, str)
+
+    def test_a_none_prompt_yields_text(self):
+        self.assertIsInstance(
+            PromptCapture.extract_system_message_from_prompt(None), str
+        )
+
+
+class UpdateUiReportTests(StateFixture):
+    def test_the_reports_reach_their_panels(self):
+        self._prepare()
+        self.state.current_reports = {
+            "market_report": "market body",
+            "sentiment_report": "sentiment body",
+            "news_report": "news body",
+            "fundamentals_report": "fundamentals body",
+            "research_manager_report": "manager body",
+            "trader_investment_plan": "trader body",
+            "risky_report": "risky body",
+            "safe_report": "safe body",
+            "neutral_report": "neutral body",
+            "portfolio_decision": "portfolio body",
+            "final_trade_decision": "final body",
+        }
+
+        with mock.patch("webui.components.ui.create_welcome_chart", lambda: "chart"):
+            payload = update_ui()
+
+        self.assertEqual(payload["market_analysis_report"], "market body")
+        self.assertEqual(payload["trader_investment_plan"], "trader body")
+        self.assertEqual(payload["final_trade_decision"], "final body")
+
+    def test_a_recorded_chart_is_used_instead_of_the_welcome_chart(self):
+        self._prepare()
+        self.state.chart_data = "the real chart"
+
+        with mock.patch("webui.components.ui.create_welcome_chart", lambda: "welcome"):
+            payload = update_ui()
+
+        self.assertEqual(payload["stock_chart"], "the real chart")

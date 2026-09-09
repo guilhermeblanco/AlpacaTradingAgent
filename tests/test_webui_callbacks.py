@@ -700,3 +700,111 @@ class ReportTabRenderingTests(StateFixture):
         callback = dash_callback(self.app, "decision-summary.children")
 
         self.assertIsNotNone(callback(1, 1))
+
+
+class ReportSymbolClickTests(StateFixture):
+    MODULES = ("webui.callbacks.report_callbacks",)
+
+    def setUp(self):
+        super().setUp()
+        from webui.callbacks.report_callbacks import register_report_callbacks
+
+        self.app = _app(register_report_callbacks)
+        for symbol in ("NVDA", "AAPL", "MSFT"):
+            self._prepare(symbol)
+        self.state.current_symbol = "NVDA"
+        self.callback = dash_callback(self.app, "report-pagination.active_page")
+
+    def _click(self, index, clicks=None):
+        prop = '{"component":"reports","index":%d,"type":"symbol-btn"}.n_clicks' % index
+        with mock.patch(
+            "webui.callbacks.report_callbacks.ctx",
+            mock.Mock(triggered=[{"prop_id": prop}]),
+        ):
+            return self.callback(clicks or [0, 1, 0])
+
+    def test_clicking_a_symbol_selects_it_everywhere(self):
+        """Reports and the chart page together."""
+        report_page, chart_page, _buttons = self._click(1)
+
+        self.assertEqual(report_page, 2)
+        self.assertEqual(chart_page, 2)
+        self.assertEqual(self.state.current_symbol, "AAPL")
+
+    def test_the_clicked_button_becomes_the_active_one(self):
+        _report, _chart, buttons = self._click(1)
+
+        self.assertIn("AAPL", str(buttons))
+
+    def test_several_symbols_keep_their_count(self):
+        _report, _chart, buttons = self._click(1)
+
+        self.assertIn("Showing 3 symbols", str(buttons))
+
+    def test_an_out_of_range_index_changes_nothing(self):
+        before = self.state.current_symbol
+
+        self._click(99)
+
+        self.assertEqual(self.state.current_symbol, before)
+
+    def test_no_click_changes_nothing(self):
+        result = self._click(1, clicks=[0, 0, 0])
+
+        self.assertTrue(all(item is dash.no_update for item in result))
+
+
+class PromptModalOpenTests(StateFixture):
+    # The prompt lookup resolves through prompt_capture's own app_state.
+    MODULES = (
+        "webui.callbacks.report_callbacks",
+        "webui.utils.prompt_capture",
+    )
+
+    def setUp(self):
+        super().setUp()
+        from webui.callbacks.report_callbacks import register_report_callbacks
+
+        self.app = _app(register_report_callbacks)
+        self._prepare("NVDA")
+
+    def test_opening_a_prompt_shows_the_captured_text(self):
+        self.state.store_agent_prompt(
+            "market_report", "You are a market analyst.", symbol="NVDA"
+        )
+        callback = dash_callback(self.app, "prompt-modal.is_open")
+        prop = '{"report":"market_report","type":"show-prompt-btn"}.n_clicks'
+
+        with mock.patch(
+            "webui.callbacks.report_callbacks.ctx",
+            mock.Mock(triggered=[{"prop_id": prop}]),
+        ):
+            is_open, title, content, state = callback([1], None, {"is_open": False})
+
+        self.assertTrue(is_open)
+        self.assertIn("You are a market analyst.", str(content))
+        self.assertTrue(state["is_open"])
+
+    def test_opening_a_tool_output_view_shows_the_recorded_calls(self):
+        self.state.tool_calls_log.append(
+            {
+                "timestamp": "10:00:00",
+                "tool_name": "get_market_data_report",
+                "inputs": {"symbol": "NVDA"},
+                "output": "bars",
+                "status": "success",
+                "agent_type": "Market Analyst",
+                "symbol": "NVDA",
+            }
+        )
+        callback = dash_callback(self.app, "tool-outputs-modal.is_open")
+        prop = '{"report":"market_report","type":"show-tool-outputs-btn"}.n_clicks'
+
+        with mock.patch(
+            "webui.callbacks.report_callbacks.ctx",
+            mock.Mock(triggered=[{"prop_id": prop}]),
+        ):
+            is_open, title, content, state = callback([1], None, {"is_open": False})
+
+        self.assertTrue(is_open)
+        self.assertIn("get_market_data_report", str(content))

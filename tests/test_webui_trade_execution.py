@@ -405,3 +405,90 @@ class RunAnalysisGuardTests(unittest.TestCase):
             )
 
         self.assertEqual(built, [])
+
+
+class RunAnalysisConfigTests(unittest.TestCase):
+    """run_analysis turns UI selections into the graph's configuration."""
+
+    def setUp(self):
+        self.state = AppState()
+        patch = mock.patch("webui.components.analysis.app_state", self.state)
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.state.init_symbol_state("NVDA")
+        self.state.current_symbol = "NVDA"
+        self.state.analyzing_symbol = "NVDA"
+
+        self.built = {}
+        graph = mock.MagicMock()
+        graph.propagate.side_effect = RuntimeError("stop after configuration")
+
+        def build(analysts, config=None, **kwargs):
+            self.built["analysts"] = analysts
+            self.built["config"] = config
+            return graph
+
+        for target, replacement in (
+            ("TradingAgentsGraph", build),
+            ("get_run_audit_logger", mock.MagicMock()),
+        ):
+            layer = mock.patch.object(an, target, replacement)
+            layer.start()
+            self.addCleanup(layer.stop)
+
+    def _run(self, **overrides):
+        params = {
+            "ticker": "NVDA",
+            "selected_analysts": ["market"],
+            "research_depth_config": {"rounds": 3, "level": "Medium"},
+            "allow_shorts": False,
+            "quick_llm": "gpt-5.4-nano",
+            "deep_llm": "gpt-5.4-mini",
+        }
+        params.update(overrides)
+        an.run_analysis(**params)
+        return self.built.get("config") or {}
+
+    def test_the_depth_config_sets_both_debate_budgets(self):
+        config = self._run(research_depth_config={"rounds": 5, "level": "Deep"})
+
+        self.assertEqual(config["max_debate_rounds"], 5)
+        self.assertEqual(config["max_risk_discuss_rounds"], 5)
+        self.assertEqual(config["research_depth"], "Deep")
+
+    def test_an_integer_depth_is_still_accepted(self):
+        """Older callers passed the round count directly."""
+        config = self._run(research_depth_config=3)
+
+        self.assertEqual(config["max_debate_rounds"], 3)
+
+    def test_shorting_selects_trading_mode(self):
+        self.assertEqual(self._run(allow_shorts=True)["trading_mode"], "trading")
+        self.assertEqual(self._run(allow_shorts=False)["trading_mode"], "investment")
+
+    def test_the_models_and_provider_are_carried_over(self):
+        config = self._run(
+            quick_llm="claude-haiku-4-5-20251001",
+            deep_llm="claude-opus-5",
+            llm_provider="anthropic",
+        )
+
+        self.assertEqual(config["quick_think_llm"], "claude-haiku-4-5-20251001")
+        self.assertEqual(config["deep_think_llm"], "claude-opus-5")
+        self.assertEqual(config["llm_provider"], "anthropic")
+
+    def test_a_blank_endpoint_becomes_none(self):
+        self.assertIsNone(self._run(backend_url="")["backend_url"])
+
+    def test_the_output_language_defaults_to_english(self):
+        self.assertEqual(self._run(output_language="")["output_language"], "English")
+
+    def test_the_selected_analysts_reach_the_graph(self):
+        self._run(selected_analysts=["market", "macro"])
+
+        self.assertEqual(self.built["analysts"], ["market", "macro"])
+
+    def test_a_graph_failure_clears_the_running_flag(self):
+        self._run()
+
+        self.assertFalse(self.state.get_state("NVDA")["analysis_running"])

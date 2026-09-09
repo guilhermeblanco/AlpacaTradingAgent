@@ -281,3 +281,108 @@ class ChartPagerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SafetyPanelCallbackTests(unittest.TestCase):
+    def setUp(self):
+        from webui.callbacks.safety_callbacks import register_safety_callbacks
+
+        self.app = _app(register_safety_callbacks)
+
+    def _guard(self, **overrides):
+        status = {
+            "enabled": True,
+            "guards": {
+                "kill_switch": {"ok": True, "status": "ok", "detail": {}},
+                "trade_notional": {"ok": True, "status": "ok", "detail": {"cap": 25000}},
+                "concentration": {"ok": True, "status": "ok", "detail": {"limit": 5000}},
+                "daily_loss": {"ok": True, "status": "ok", "detail": {"change_pct": -1.2}},
+                "drawdown": {"ok": True, "status": "ok", "detail": {"drawdown_pct": 3.4}},
+                "rejection_streak": {"ok": True, "status": "ok", "detail": {"streak": 0}},
+                "llm_budget": {
+                    "ok": True,
+                    "status": "ok",
+                    "detail": {"used": 100, "budget": 5000},
+                },
+            },
+            "reasons": [],
+        }
+        status.update(overrides)
+        guard = mock.MagicMock()
+        guard.status.return_value = status
+        return guard
+
+    def test_every_guard_is_rendered(self):
+        callback = dash_callback(self.app, "safety-status-container.children")
+
+        with mock.patch("tradingagents.safety.get_safety_guard", lambda: self._guard()), \
+             mock.patch("webui.callbacks.safety_callbacks.ctx", mock.Mock(triggered_id=None)):
+            cards, _action = callback(1, None, None)
+
+        rendered = str(cards)
+        for label in ("Kill Switch", "Trade Size Cap", "Drawdown Breaker", "LLM Budget"):
+            self.assertIn(label, rendered)
+
+    def test_a_holding_guard_shows_its_reason(self):
+        callback = dash_callback(self.app, "safety-status-container.children")
+        guard = self._guard(reasons=["daily loss breaker tripped"])
+
+        with mock.patch("tradingagents.safety.get_safety_guard", lambda: guard), \
+             mock.patch("webui.callbacks.safety_callbacks.ctx", mock.Mock(triggered_id=None)):
+            cards, _action = callback(1, None, None)
+
+        self.assertIn("daily loss breaker tripped", str(cards))
+
+    def test_a_disabled_safety_layer_is_called_out(self):
+        callback = dash_callback(self.app, "safety-status-container.children")
+        guard = self._guard(enabled=False)
+
+        with mock.patch("tradingagents.safety.get_safety_guard", lambda: guard), \
+             mock.patch("webui.callbacks.safety_callbacks.ctx", mock.Mock(triggered_id=None)):
+            cards, _action = callback(1, None, None)
+
+        self.assertIn("DISABLED", str(cards))
+
+    def test_engaging_the_kill_switch_halts_order_flow(self):
+        callback = dash_callback(self.app, "safety-status-container.children")
+        guard = self._guard()
+
+        with mock.patch("tradingagents.safety.get_safety_guard", lambda: guard), \
+             mock.patch(
+                 "webui.callbacks.safety_callbacks.ctx",
+                 mock.Mock(triggered_id="safety-kill-switch-btn"),
+             ):
+            _cards, action = callback(1, 1, None)
+
+        guard.engage_kill_switch.assert_called_once()
+        self.assertIn("ENGAGED", str(action))
+
+    def test_releasing_the_kill_switch_resumes_order_flow(self):
+        callback = dash_callback(self.app, "safety-status-container.children")
+        guard = self._guard()
+
+        with mock.patch("tradingagents.safety.get_safety_guard", lambda: guard), \
+             mock.patch(
+                 "webui.callbacks.safety_callbacks.ctx",
+                 mock.Mock(triggered_id="safety-release-btn"),
+             ):
+            _cards, action = callback(1, None, 1)
+
+        guard.release_kill_switch.assert_called_once()
+        self.assertIn("released", str(action))
+
+    def test_a_skipped_guard_explains_why(self):
+        """Without account data a breaker cannot be evaluated."""
+        callback = dash_callback(self.app, "safety-status-container.children")
+        guard = self._guard()
+        guard.status.return_value["guards"]["daily_loss"] = {
+            "ok": True,
+            "status": "skipped",
+            "detail": {"detail": "no account data"},
+        }
+
+        with mock.patch("tradingagents.safety.get_safety_guard", lambda: guard), \
+             mock.patch("webui.callbacks.safety_callbacks.ctx", mock.Mock(triggered_id=None)):
+            cards, _action = callback(1, None, None)
+
+        self.assertIn("no account data", str(cards))
