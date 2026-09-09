@@ -13,22 +13,16 @@ def create_header():
     return dbc.Card(
         dbc.CardBody([
             dbc.Row([
-                # Left side spacer for balance
-                dbc.Col(width=2),
-                
-                # Center title
                 dbc.Col([
                     html.H1(
                         "AlpacaTradingAgent - Auditable Multi-Agent Trading Research Framework",
-                        className="text-center mb-0"
+                        className="app-title mb-0"
                     )
-                ], width=8, className="d-flex align-items-center justify-content-center"),
-                
-                # Right side with Config APIs button
+                ], xs=12, md=9, className="d-flex align-items-center"),
                 dbc.Col([
                     create_config_button()
-                ], width=2, className="d-flex align-items-center justify-content-end"),
-            ], className="align-items-center")
+                ], xs=12, md=3, className="app-header-actions d-flex align-items-center justify-content-end"),
+            ], className="align-items-center g-3")
         ]),
-        className="mb-4"
+        className="app-header mb-4"
     ) 
