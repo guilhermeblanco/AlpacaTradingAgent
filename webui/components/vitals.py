@@ -7,19 +7,13 @@ config form — which meant an operator had to go looking for the answer to
 "is this thing working right now?".
 """
 
-import dash_bootstrap_components as dbc
 from dash import dcc, html
 
-from webui.config.constants import COLORS
-
-TONE_COLORS = {
-    "ok": COLORS["completed"],
-    "busy": COLORS["in_progress"],
-    "bad": COLORS["error"],
-    "idle": COLORS["pending"],
-}
+from webui.config.tokens import status_color
 
 
+#: "ok", "busy", "bad", and "idle" are aliases in the shared vocabulary, so
+#: a healthy worker here is the same green as a completed stage on the tape.
 def vital(label, value, tone="idle", hint=""):
     """One reading: a label, a value, and a colour that means something."""
     return html.Div(
@@ -28,7 +22,7 @@ def vital(label, value, tone="idle", hint=""):
             html.Div(
                 value,
                 className="vitals-value",
-                style={"color": TONE_COLORS.get(tone, COLORS["text"])},
+                style={"color": status_color(tone)},
             ),
             html.Div(hint, className="vitals-hint") if hint else None,
         ],

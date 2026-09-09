@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from dash import dash_table, dcc, html
+from webui.config.tokens import PALETTE
 
 
 @dataclass
@@ -168,7 +169,7 @@ def _table_component(table: TableBlock):
             style_as_list_view=True,
             style_table={"overflowX": "auto", "minWidth": "100%"},
             style_header={
-                "backgroundColor": "#111827",
+                "backgroundColor": PALETTE["surface-sunken"],
                 "color": "#F8FAFC",
                 "fontWeight": "700",
                 "border": "0",

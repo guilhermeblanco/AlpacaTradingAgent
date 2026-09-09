@@ -10,6 +10,7 @@ from tradingagents.dataflows.alpaca_utils import AlpacaUtils
 from tradingagents.dataflows.config import get_alpaca_api_key, get_alpaca_secret_key
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from typing import Union
+from webui.config.tokens import PALETTE
 
 def create_chart(ticker: str, period: str = "1y", end_date: Union[str, datetime] = None):
     """
@@ -202,7 +203,7 @@ def create_screener_overview_chart():
         fig.add_annotation(
             x=0.5, y=0.5, xref='paper', yref='paper',
             text="🔍 Quantitative Screener Active<br>Scanning Stock & Crypto Markets...",
-            showarrow=False, font=dict(size=16, color='#00d4b1'),
+            showarrow=False, font=dict(size=16, color=PALETTE['positive']),
             align='center'
         )
         fig.update_layout(
@@ -214,7 +215,10 @@ def create_screener_overview_chart():
 
     symbols = [item['symbol'] for item in items]
     scores = [item['score'] for item in items]
-    colors = ['#00d4b1' if item.get('asset_type') == 'crypto' else '#3b82f6' for item in items]
+    colors = [
+        PALETTE['info'] if item.get('asset_type') == 'crypto' else PALETTE['accent']
+        for item in items
+    ]
 
     fig = go.Figure()
     fig.add_trace(go.Bar(

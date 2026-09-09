@@ -2,21 +2,26 @@
 Constants and configuration for TradingAgents WebUI
 """
 
+from webui.config.tokens import PALETTE
+
 # Define colors for consistency
+# A view onto webui.config.tokens.PALETTE under the names this codebase
+# already uses. The tokens module is the authority; changing a colour here
+# would only change it for Python and leave the stylesheet behind.
 COLORS = {
-    "primary": "#3B82F6",         # Bright blue
-    "secondary": "#10B981",       # Green
-    "background": "#0F172A",      # Dark blue background
-    "card": "#1E293B",            # Slightly lighter card background
-    "text": "#F1F5F9",            # Light text
-    "pending": "#94A3B8",         # Slate gray
-    "in_progress": "#F59E0B",     # Amber
-    "completed": "#10B981",       # Green
-    "error": "#EF4444",           # Red
-    "nav_active": "#F1F5F9",      # White for active nav
-    "nav_inactive": "#64748B",    # Slate for inactive nav
-    "border": "#334155",          # Border color
-    "hover": "#2563EB",           # Hover color
+    "primary": PALETTE["accent"],
+    "secondary": PALETTE["positive"],
+    "background": PALETTE["background"],
+    "card": PALETTE["surface"],
+    "text": PALETTE["text"],
+    "pending": PALETTE["neutral"],
+    "in_progress": PALETTE["caution"],
+    "completed": PALETTE["positive"],
+    "error": PALETTE["negative"],
+    "nav_active": PALETTE["text"],
+    "nav_inactive": PALETTE["text-faint"],
+    "border": PALETTE["border"],
+    "hover": PALETTE["accent-hover"],
 }
 
 # Fallback poll intervals, in milliseconds. The server-sent pulse is the

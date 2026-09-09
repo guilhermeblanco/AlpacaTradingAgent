@@ -11,31 +11,16 @@ from dash import dcc, html
 
 from tradingagents.workbench.tape import STAGES, StageState
 from webui.config.constants import COLORS
+from webui.config.tokens import status_badge, status_color
 
-#: One badge vocabulary, used by the tape, the board, and the gate ledger.
-STATE_COLORS = {
-    StageState.PENDING.value: COLORS["pending"],
-    StageState.RUNNING.value: COLORS["in_progress"],
-    StageState.DONE.value: COLORS["completed"],
-    StageState.BLOCKED.value: COLORS["error"],
-    StageState.FAILED.value: COLORS["error"],
-    StageState.SKIPPED.value: COLORS["nav_inactive"],
-}
-
-STATE_BADGES = {
-    StageState.PENDING.value: "secondary",
-    StageState.RUNNING.value: "warning",
-    StageState.DONE.value: "success",
-    StageState.BLOCKED.value: "danger",
-    StageState.FAILED.value: "danger",
-    StageState.SKIPPED.value: "secondary",
-}
-
+#: Stage and gate states share one vocabulary with agents and workers, so
+#: the same condition looks the same wherever it is drawn. See
+#: webui.config.tokens.
+STATE_COLORS = {state.value: status_color(state.value) for state in StageState}
+STATE_BADGES = {state.value: status_badge(state.value) for state in StageState}
 GATE_STATUS_COLORS = {
-    "passed": COLORS["completed"],
-    "clipped": COLORS["in_progress"],
-    "blocked": COLORS["error"],
-    "skipped": COLORS["nav_inactive"],
+    status: status_color(status)
+    for status in ("passed", "clipped", "blocked", "skipped")
 }
 
 CHART_LAYOUT = {
