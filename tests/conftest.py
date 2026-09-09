@@ -76,3 +76,38 @@ def postgres_session_factory(postgres_engine):
     from tradingagents.persistence.postgres import create_session_factory
 
     return create_session_factory(postgres_engine)
+
+
+def dash_callback(app, output_key: str):
+    """The undecorated function registered for a Dash output.
+
+    Dash wraps every callback in a dispatcher that expects the server's
+    request context, so tests reach past it to the function itself.
+    Multi-output callbacks are keyed as "..a.children...b.children..", so
+    the key is split into exact outputs rather than matched as a substring.
+    """
+
+    def outputs(key: str) -> list[str]:
+        if key.startswith("..") and key.endswith(".."):
+            return key[2:-2].split("...")
+        return [key]
+
+    matched = []
+    for key, spec in app.callback_map.items():
+        for item in outputs(key):
+            # Pattern-matching and allow_duplicate outputs carry a hash
+            # suffix after "@".
+            name, _, suffix = item.partition("@")
+            if name == output_key:
+                matched.append((bool(suffix), spec["callback"]))
+                break
+
+    if not matched:
+        raise KeyError(f"no callback registered for {output_key!r}")
+    # An allow_duplicate registration shadows the primary one; prefer the
+    # primary when both write the same output.
+    primary = [callback for duplicate, callback in matched if not duplicate]
+    candidates = primary or [callback for _duplicate, callback in matched]
+    if len(candidates) > 1:
+        raise KeyError(f"{output_key!r} matches {len(candidates)} callbacks")
+    return candidates[0].__wrapped__
