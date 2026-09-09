@@ -21,6 +21,24 @@ def initialize_config():
     global _config, DATA_DIR
     if _config is None:
         _config = validate_application_config()
+        try:
+            from tradingagents.integrations import get_configured_credential
+
+            stored_settings = {
+                key: get_configured_credential(key)
+                for key in (
+                    "execution_broker",
+                    "research_market_data_provider",
+                )
+            }
+            _config = validate_application_config(
+                {
+                    **_config,
+                    **{key: value for key, value in stored_settings.items() if value},
+                }
+            )
+        except Exception:
+            pass
         DATA_DIR = _config["data_dir"]
 
 

@@ -9,7 +9,7 @@ import dash_bootstrap_components as dbc
 from dash import Input, Output, State, ctx, html
 from dash.exceptions import PreventUpdate
 
-from tradingagents.dataflows.config import get_alpaca_use_paper
+from tradingagents.dataflows.config import get_alpaca_use_paper, get_config, set_config
 from tradingagents.integrations import get_integration_vault
 from webui.components.api_config_modal import get_api_configs
 
@@ -98,6 +98,8 @@ def register_api_config_callbacks(app):
             Output("api-alpaca-paper", "value"),
             *[Output(f"api-status-{api_id}", "color") for api_id in api_ids],
             *[Output(f"api-status-{api_id}", "title") for api_id in api_ids],
+            Output("integration-execution-broker", "value"),
+            Output("integration-market-data-provider", "value"),
             Output("env-file-status", "children"),
         ],
         Input("api-config-modal", "is_open"),
@@ -138,10 +140,13 @@ def register_api_config_callbacks(app):
                 color="success",
                 className="py-2 mb-0",
             )
+        config = get_config() or {}
         return tuple("" for _ in api_ids) + (
             _paper_value(),
             *colors,
             *titles,
+            config.get("execution_broker", "alpaca"),
+            config.get("research_market_data_provider", "alpaca"),
             summary,
         )
 
@@ -153,6 +158,8 @@ def register_api_config_callbacks(app):
         [
             *[State(f"api-input-{api_id}", "value") for api_id in api_ids],
             State("api-alpaca-paper", "value"),
+            State("integration-execution-broker", "value"),
+            State("integration-market-data-provider", "value"),
         ],
         prevent_initial_call=True,
     )
@@ -177,15 +184,72 @@ def register_api_config_callbacks(app):
         elif ctx.triggered_id == "save-api-keys-btn":
             secret_values = values[: len(api_ids)]
             paper = bool(values[len(api_ids)])
+            execution_broker = values[len(api_ids) + 1] or "alpaca"
+            market_data_provider = values[len(api_ids) + 2] or "alpaca"
             updates = {
                 config_key: value
                 for config_key, value in zip(config_keys, secret_values)
                 if str(value or "").strip()
             }
             updates["alpaca_use_paper"] = "true" if paper else "false"
+            updates["execution_broker"] = execution_broker
+            updates["research_market_data_provider"] = market_data_provider
             changed = vault.set_many(updates, actor="webui")
+            set_config(
+                {
+                    "execution_broker": execution_broker,
+                    "research_market_data_provider": market_data_provider,
+                }
+            )
             message = f"Saved {changed} encrypted integration value(s)."
         else:
             raise PreventUpdate
 
         return revision, dbc.Alert(message, color="success", className="py-2")
+
+    @app.callback(
+        Output("integration-health-results", "children"),
+        Input("test-broker-connection-btn", "n_clicks"),
+        State("integration-execution-broker", "value"),
+        prevent_initial_call=True,
+    )
+    def test_broker_connection(n_clicks, broker):
+        if not n_clicks:
+            raise PreventUpdate
+        from tradingagents.broker.preflight import certify_broker_runtime
+        from tradingagents.broker.registry import get_execution_broker_runtime
+
+        try:
+            runtime = get_execution_broker_runtime(
+                {**(get_config() or {}), "execution_broker": broker or "alpaca"}
+            )
+            report = certify_broker_runtime(
+                runtime,
+                symbol="AAPL",
+                require_paper=False,
+            )
+            rows = [
+                html.Div(
+                    [
+                        html.I(
+                            className=(
+                                "fas fa-check-circle text-success me-2"
+                                if check.status.value == "pass"
+                                else "fas fa-exclamation-circle text-warning me-2"
+                                if check.status.value == "warn"
+                                else "fas fa-times-circle text-danger me-2"
+                            )
+                        ),
+                        check.message,
+                    ],
+                    className="small mb-1",
+                )
+                for check in report.checks
+            ]
+            return dbc.Alert(
+                rows,
+                color="success" if report.ready else "danger",
+                className="py-2 mb-0",
+            )
+        except Exception as exc:
+            return dbc.Alert(f"Connection test failed: {exc}", color="danger")
