@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
+    from tradingagents.agents.schemas import TradeIntent
     from tradingagents.broker.snapshot import SnapshotProvider
     from tradingagents.execution.gateway import ExecutionGateway
+    from tradingagents.execution.models import ExecutionPlan
 
 
 @dataclass(frozen=True)
@@ -17,6 +19,105 @@ class BrokerCapabilities:
     options: bool = False
     native_brackets: bool = False
     paper_trading: bool = False
+    order_types: frozenset[str] = field(
+        default_factory=lambda: frozenset({"market"})
+    )
+    time_in_force: frozenset[str] = field(
+        default_factory=lambda: frozenset({"day"})
+    )
+    client_order_ids: bool = True
+    order_reconciliation: bool = True
+
+    def to_dict(self) -> dict:
+        return {
+            **{
+                name: getattr(self, name)
+                for name in (
+                    "equities",
+                    "crypto",
+                    "fractional_equities",
+                    "shorting",
+                    "options",
+                    "native_brackets",
+                    "paper_trading",
+                    "client_order_ids",
+                    "order_reconciliation",
+                )
+            },
+            "order_types": sorted(self.order_types),
+            "time_in_force": sorted(self.time_in_force),
+        }
+
+    def supports_asset_class(self, asset_class: str) -> bool:
+        normalized = str(asset_class or "").lower()
+        return (normalized == "equity" and self.equities) or (
+            normalized == "crypto" and self.crypto
+        )
+
+    def validate_intent(self, intent: TradeIntent) -> list[str]:
+        errors: list[str] = []
+        asset_class = intent.execution_constraints.asset_class.lower()
+        if not self.supports_asset_class(asset_class):
+            errors.append(f"Broker does not support {asset_class} execution.")
+        if intent.target_position.value == "SHORT" and not self.shorting:
+            errors.append("Broker does not support opening short positions.")
+        order_type = str(intent.order_intent.order_type or "none").lower()
+        if order_type not in {"none", "close_position"} and order_type not in self.order_types:
+            errors.append(f"Broker does not support {order_type} orders.")
+        tif = str(intent.order_intent.time_in_force or "").lower()
+        if tif and tif not in self.time_in_force:
+            errors.append(f"Broker does not support {tif} time in force.")
+        if (
+            intent.execution_constraints.broker_protective_orders_enabled
+            and not self.native_brackets
+        ):
+            errors.append("Broker adapter does not support native protective orders.")
+        return errors
+
+    def validate_plan(self, intent: TradeIntent, plan: ExecutionPlan) -> list[str]:
+        if self.fractional_equities:
+            return []
+        if intent.execution_constraints.asset_class.lower() != "equity":
+            return []
+        fractional = [
+            leg.quantity
+            for leg in plan.legs
+            if leg.quantity is not None
+            and abs(float(leg.quantity) - round(float(leg.quantity))) > 1e-9
+        ]
+        if fractional:
+            return ["Broker requires whole-share equity quantities."]
+        return []
+
+
+ALPACA_CAPABILITIES = BrokerCapabilities(
+    crypto=True,
+    fractional_equities=True,
+    shorting=True,
+    options=True,
+    native_brackets=True,
+    paper_trading=True,
+    time_in_force=frozenset({"day", "gtc"}),
+)
+
+TRADIER_CAPABILITIES = BrokerCapabilities(
+    shorting=True,
+    options=False,
+    native_brackets=False,
+    paper_trading=True,
+)
+
+ROBINHOOD_CAPABILITIES = BrokerCapabilities(
+    fractional_equities=True,
+    client_order_ids=True,
+    order_reconciliation=True,
+)
+
+BROKER_CAPABILITY_MATRIX = {
+    "alpaca": ALPACA_CAPABILITIES,
+    "tradier": TRADIER_CAPABILITIES,
+    "robinhood": ROBINHOOD_CAPABILITIES,
+}
 
 
 @dataclass(frozen=True)
@@ -63,10 +164,7 @@ def default_broker_registry() -> BrokerRegistry:
         paper = str(get_alpaca_use_paper()).strip().lower() in {"1", "true", "yes", "on"}
         return BrokerRuntime(
             name="alpaca",
-            capabilities=BrokerCapabilities(
-                crypto=True, fractional_equities=True, shorting=True, options=True,
-                native_brackets=True, paper_trading=paper,
-            ),
+            capabilities=replace(ALPACA_CAPABILITIES, paper_trading=paper),
             snapshot_provider=AlpacaSnapshotProvider(),
             execution_gateway=AlpacaPaperExecutionGateway() if paper else AlpacaExecutionGateway(),
         )
@@ -89,10 +187,7 @@ def default_broker_registry() -> BrokerRegistry:
         client = TradierClient(token=token, account_id=account_id, sandbox=sandbox)
         return BrokerRuntime(
             name="tradier",
-            capabilities=BrokerCapabilities(
-                equities=True, crypto=False, fractional_equities=False, shorting=True,
-                options=True, native_brackets=True, paper_trading=sandbox,
-            ),
+            capabilities=replace(TRADIER_CAPABILITIES, paper_trading=sandbox),
             snapshot_provider=TradierSnapshotProvider(client),
             execution_gateway=TradierExecutionGateway(client),
         )
@@ -130,10 +225,7 @@ def default_broker_registry() -> BrokerRegistry:
         }
         return BrokerRuntime(
             name="robinhood",
-            capabilities=BrokerCapabilities(
-                equities=True, crypto=False, fractional_equities=True, shorting=False,
-                options=False, native_brackets=False, paper_trading=False,
-            ),
+            capabilities=ROBINHOOD_CAPABILITIES,
             snapshot_provider=RobinhoodSnapshotProvider(client, account_number=account_number),
             execution_gateway=RobinhoodExecutionGateway(
                 client, account_number=account_number, review_only=review_only,

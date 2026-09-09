@@ -509,7 +509,7 @@ def build_trade_intent_from_risk_decision(
 
     warnings: list[str] = []
     if asset_class == "crypto" and target == TargetPosition.SHORT:
-        warnings.append("Crypto short exposure is not supported by Alpaca spot trading.")
+        warnings.append("Crypto short exposure is not supported by spot execution.")
     if target == TargetPosition.SHORT and not allow_shorts:
         warnings.append("Short exposure is disabled for this session.")
 
