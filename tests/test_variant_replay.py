@@ -221,16 +221,23 @@ class EpisodeTests(ReplayFixture):
 
 
 class PointInTimeTests(ReplayFixture):
-    def test_replaying_today_is_marked_verified(self):
-        outcome = self._run(_request(trade_date="2026-09-09"), now=NOW)
+    """Which replays could only see what the original run could.
+
+    Historical replays are clean: every source honours the window and the
+    hosted search stands down for a date it cannot constrain. A same-day
+    replay is not, because the search runs live and the original decision
+    was made earlier in the day.
+    """
+
+    def test_replaying_a_past_date_is_marked_verified(self):
+        outcome = self._run(_request(trade_date="2026-01-15"), now=NOW)
 
         self.assertTrue(outcome.point_in_time_verified)
         self.assertTrue(self.recorded[0].metadata["point_in_time_verified"])
 
-    def test_replaying_a_past_date_is_marked_unverified(self):
-        """The dated sources honour the window, but the hosted web search is
-        only given it as prose."""
-        outcome = self._run(_request(trade_date="2026-01-15"), now=NOW)
+    def test_replaying_today_is_marked_unverified(self):
+        """Live search can surface news published since the original ran."""
+        outcome = self._run(_request(trade_date="2026-09-09"), now=NOW)
 
         self.assertFalse(outcome.point_in_time_verified)
         self.assertFalse(self.recorded[0].metadata["point_in_time_verified"])
@@ -239,6 +246,15 @@ class PointInTimeTests(ReplayFixture):
         outcome = self._run(_request(trade_date="whenever"), now=NOW)
 
         self.assertFalse(outcome.point_in_time_verified)
+
+    def test_forcing_point_in_time_sourcing_verifies_a_same_day_replay(self):
+        with mock.patch(
+            "tradingagents.dataflows.config.get_config",
+            lambda: {"require_point_in_time_web_search": True},
+        ):
+            outcome = self._run(_request(trade_date="2026-09-09"), now=NOW)
+
+        self.assertTrue(outcome.point_in_time_verified)
 
 
 class FailureTests(ReplayFixture):
@@ -489,15 +505,20 @@ class PromotionViewTests(unittest.TestCase):
             for index in range(count)
         ]
 
-    def _uow(self, *, table=None, error=None):
+    def _uow(self, *, table=None, error=None, unverified=()):
         def outcomes(*, experiment_id=None, include_replays=True):
             if error:
                 raise error
             return list((table or {}).get((experiment_id, include_replays), []))
 
-        return SimpleNamespace(evaluation=SimpleNamespace(outcomes=outcomes))
+        return SimpleNamespace(
+            evaluation=SimpleNamespace(
+                outcomes=outcomes,
+                unverified_decision_ids=lambda: set(unverified),
+            )
+        )
 
-    def _view(self, table, **kwargs):
+    def _view(self, table, unverified=(), **kwargs):
         from tradingagents.workbench.promotion_view import build_promotion_view
 
         options = {
@@ -507,7 +528,9 @@ class PromotionViewTests(unittest.TestCase):
             "include_replays": False,
         }
         options.update(kwargs)
-        return build_promotion_view(self._uow(table=table), **options)
+        return build_promotion_view(
+            self._uow(table=table, unverified=unverified), **options
+        )
 
     def test_a_clearly_better_challenger_is_eligible(self):
         from tradingagents.evaluation import PromotionStatus
@@ -576,6 +599,7 @@ class PromotionViewTests(unittest.TestCase):
         self.assertEqual(view.challenger_replays, 30)
         self.assertEqual(view.replay_share_pct, 75.0)
         self.assertIn("came from replays", " ".join(view.notes))
+        self.assertIn("selected rather than drawn", " ".join(view.notes))
 
     def test_a_comparison_with_itself_is_refused(self):
         view = self._view({}, challenger="champion", champion="champion")
@@ -660,3 +684,47 @@ class ScorecardTests(PromotionViewTests):
         from tradingagents.workbench.promotion_view import scorecard_rows
 
         self.assertEqual(scorecard_rows(self._view({}, horizon="")), [])
+
+
+class LeakageNoteTests(PromotionViewTests):
+    """Selection and leakage are separate hazards and are reported apart."""
+
+    def test_unverified_outcomes_are_counted_and_named(self):
+        outcomes = self._outcomes(4)
+        table = {
+            ("deep", False): outcomes,
+            ("champion", False): self._outcomes(4),
+        }
+
+        view = self._view(table, unverified={"d0", "d1"})
+
+        self.assertEqual(view.challenger_unverified, 2)
+        self.assertIn("not fully date-bounded", " ".join(view.notes))
+
+    def test_a_fully_bounded_challenger_carries_no_leakage_note(self):
+        table = {
+            ("deep", False): self._outcomes(4),
+            ("champion", False): self._outcomes(4),
+        }
+
+        view = self._view(table)
+
+        self.assertEqual(view.challenger_unverified, 0)
+        self.assertNotIn("date-bounded", " ".join(view.notes))
+
+    def test_a_repository_without_the_query_does_not_break_the_view(self):
+        """An older ledger may not answer it; the verdict still stands."""
+        from tradingagents.workbench.promotion_view import build_promotion_view
+
+        uow = SimpleNamespace(
+            evaluation=SimpleNamespace(
+                outcomes=lambda **kwargs: self._outcomes(4),
+            )
+        )
+
+        view = build_promotion_view(
+            uow, challenger="deep", champion="champion", horizon="1d"
+        )
+
+        self.assertTrue(view.available)
+        self.assertEqual(view.challenger_unverified, 0)

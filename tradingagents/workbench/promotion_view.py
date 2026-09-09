@@ -6,10 +6,17 @@ to ask it about a specific pair of experiments from the workbench, and to
 say honestly how much of the evidence came from replays rather than from
 live cycles.
 
-That distinction matters. A replay of a past date can see information the
-original run could not, so a challenger built entirely out of replays is
-not evidence a champion should be replaced on. The scorecard therefore
-reports the replay share, and the caller can exclude replays outright.
+Two distinct hazards, and they are worth separating.
+
+*Selection*: you choose which decisions to replay, so a challenger built
+out of a hand-picked subset is biased however clean its sourcing is. That
+is why replays are excluded by default.
+
+*Leakage*: an episode whose sourcing was not fully date-bounded could see
+information the original run could not. Since the live-search gate landed
+that means a same-day replay, not a historical one — but the count is
+reported either way, because episodes recorded before the gate existed are
+still in the ledger.
 """
 
 from __future__ import annotations
@@ -31,6 +38,7 @@ class PromotionView(BaseModel):
     decision: Optional[PromotionDecision] = None
     challenger_replays: int = 0
     champion_replays: int = 0
+    challenger_unverified: int = 0
     unavailable: str = ""
     notes: list[str] = Field(default_factory=list)
 
@@ -93,8 +101,17 @@ def build_promotion_view(
         view.unavailable = f"Unable to read outcomes: {exc}"
         return view
 
+    # Count how much of the challenger's evidence carries a caveat, so the
+    # verdict can be read with that in mind.
+    try:
+        unverified = uow.evaluation.unverified_decision_ids()
+        view.challenger_unverified = sum(
+            1 for row in challenger_rows if row.decision_id in unverified
+        )
+    except Exception:
+        pass
+
     if include_replays:
-        # Count what is replayed so the verdict can be read with that in mind.
         try:
             live_challenger = _for_horizon(
                 uow.evaluation.outcomes(
@@ -122,8 +139,14 @@ def build_promotion_view(
     if view.challenger_replays:
         view.notes.append(
             f"{view.challenger_replays} of {view.decision.challenger.count} "
-            "challenger outcomes came from replays, which can see information "
-            "the original run could not."
+            "challenger outcomes came from replays. You chose which decisions "
+            "to replay, so the sample is selected rather than drawn."
+        )
+    if view.challenger_unverified:
+        view.notes.append(
+            f"{view.challenger_unverified} challenger outcome(s) came from a "
+            "run whose sources were not fully date-bounded, so they could see "
+            "information the original decision could not."
         )
     if not include_replays:
         view.notes.append("Replayed outcomes are excluded from this comparison.")

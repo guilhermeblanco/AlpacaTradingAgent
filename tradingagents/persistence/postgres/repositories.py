@@ -382,6 +382,19 @@ class PostgresEvaluationRepository:
             if (row.metadata_payload or {}).get("origin") == REPLAY_SOURCE
         }
 
+    def unverified_decision_ids(self) -> set[str]:
+        """Episodes whose sourcing was not fully date-bounded.
+
+        Since the live-search gate landed this means a same-day replay,
+        which can see intraday information the original decision could not.
+        """
+        rows = self.session.scalars(select(EvaluationEpisodeRow)).all()
+        return {
+            row.decision_id
+            for row in rows
+            if (row.metadata_payload or {}).get("point_in_time_verified") is False
+        }
+
     def outcomes(
         self,
         *,

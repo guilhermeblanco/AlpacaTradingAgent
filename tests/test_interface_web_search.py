@@ -422,7 +422,7 @@ class FallbackBriefingTests(unittest.TestCase):
 
         briefing = interface._build_empty_openai_stock_news_fallback("NVDA", "2026-09-09")
 
-        self.assertIn("No fallback stock-news items found for NVDA", briefing)
+        self.assertIn("No dated stock-news items found for NVDA", briefing)
 
     def test_the_global_briefing_uses_google_news_as_a_macro_proxy(self):
         self._sources()

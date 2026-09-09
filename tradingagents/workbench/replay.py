@@ -17,11 +17,13 @@ No gateway is constructed and no intent reaches the execution pipeline.
 Comparing a challenger scored from today against a champion scored from
 three days ago would not be a comparison.
 
-**A replay of a past date is not provably point-in-time clean.** The dated
-sources honour the window — Finnhub, SimFin, Google News, Reddit all bound
-their fetches by `trade_date` — but the hosted web-search tools are given
-the window as prose and can still surface later information. Replayed
-episodes are therefore marked, and the promotion gate can exclude them.
+**A replay of a past date uses only date-bounded sources.** Every dated
+source honours the window, and the hosted web-search tools now stand down
+for a historical date rather than searching against a window they cannot
+enforce (see `dataflows.search_window`). Episodes still record whether the
+sourcing was bounded, so a run made before that gate existed — or one whose
+date could not be read — stays distinguishable, and the promotion gate can
+exclude them.
 """
 
 from __future__ import annotations
@@ -106,12 +108,26 @@ def variants_from_env() -> list[ExperimentVariant]:
     ]
 
 
-def _is_past(trade_date: str, now: datetime) -> bool:
-    try:
-        parsed = datetime.strptime(str(trade_date), "%Y-%m-%d").date()
-    except (TypeError, ValueError):
-        return True
-    return parsed < now.astimezone(timezone.utc).date()
+def _sources_are_bounded(trade_date: str, now: datetime) -> bool:
+    """Whether this replay could only see what the original run could.
+
+    Asks the same gate the tools consult rather than inferring it from the
+    date, so the marker cannot drift away from the behaviour.
+
+    A *historical* replay is clean: every source honours the window and the
+    hosted search stands down. A *same-day* replay is not — the search runs
+    live, and the original decision was made earlier in the day, so anything
+    published since is visible to the challenger and was not to the
+    champion. Windows here are day-granular and do not model the hour.
+    """
+    from tradingagents.dataflows.search_window import (
+        live_search_allowed,
+        parse_analysis_date,
+    )
+
+    if parse_analysis_date(trade_date) is None:
+        return False
+    return not live_search_allowed(trade_date, now=now)
 
 
 def run_variant_replay(
@@ -136,7 +152,7 @@ def run_variant_replay(
         request=request,
         replay_decision_id=replay_decision_id,
         started_at=now,
-        point_in_time_verified=not _is_past(request.trade_date, now),
+        point_in_time_verified=_sources_are_bounded(request.trade_date, now),
     )
 
     try:

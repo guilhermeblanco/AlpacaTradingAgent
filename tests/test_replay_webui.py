@@ -160,12 +160,14 @@ class JobRenderTests(unittest.TestCase):
         self.assertIn("decided BUY", rendered)
         self.assertIn("shadow episode recorded", rendered)
 
-    def test_a_replay_of_a_past_date_is_flagged(self):
+    def test_a_replay_with_unbounded_sources_is_flagged(self):
+        """Since the search gate landed, that means a same-day replay."""
         rendered = str(
             replay_callbacks.render_jobs([_job(point_in_time_verified=False)])
         )
 
-        self.assertIn("may have seen information", rendered)
+        self.assertIn("not fully date-bounded", rendered)
+        self.assertIn("published since the original decision", rendered)
 
     def test_a_hold_reports_that_there_is_nothing_to_score(self):
         rendered = str(

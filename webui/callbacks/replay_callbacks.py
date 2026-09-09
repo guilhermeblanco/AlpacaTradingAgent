@@ -95,8 +95,9 @@ def render_jobs(jobs):
                 detail.append(outcome.note)
             if not outcome.point_in_time_verified:
                 detail.append(
-                    "replayed a past date, so it may have seen information the "
-                    "original run could not"
+                    "sources were not fully date-bounded — a same-day replay "
+                    "searches live and can see news published since the "
+                    "original decision"
                 )
         if job.error:
             detail.append(job.error)
