@@ -369,6 +369,56 @@ class PromptCaptureInternalsTests(StateFixture):
             PromptCapture.extract_system_message_from_prompt(None), str
         )
 
+    def test_a_message_carrying_plain_content_is_read(self):
+        from types import SimpleNamespace
+
+        template = SimpleNamespace(
+            messages=[SimpleNamespace(content="You are a market analyst.")]
+        )
+
+        self.assertEqual(
+            PromptCapture.extract_system_message_from_prompt(template),
+            "You are a market analyst.",
+        )
+
+    def test_an_object_carrying_the_prompt_as_an_attribute_is_read(self):
+        class Holder:
+            def __init__(self):
+                self.system_message = "You are a market analyst."
+
+        self.assertEqual(
+            PromptCapture.extract_system_message_from_prompt(Holder()),
+            "You are a market analyst.",
+        )
+
+    def test_an_unrecognized_shape_says_so_rather_than_raising(self):
+        """This is displayed in a modal, so it has to be readable text."""
+        extracted = PromptCapture.extract_system_message_from_prompt(object())
+
+        self.assertIn("not recognized", extracted)
+
+    def test_an_uncaptured_report_falls_back_to_a_stated_placeholder(self):
+        self._prepare("NVDA")
+
+        placeholder = get_agent_prompt("market_report", "NVDA")
+
+        self.assertIn("not yet captured", placeholder)
+
+    def test_an_unknown_report_type_says_no_prompt_is_available(self):
+        self._prepare("NVDA")
+
+        self.assertIn("No prompt available", get_agent_prompt("no_such_report", "NVDA"))
+
+    def test_a_failing_lookup_reports_itself_rather_than_raising(self):
+        with mock.patch.object(
+            self.state,
+            "get_agent_prompt",
+            mock.Mock(side_effect=RuntimeError("state corrupted")),
+        ):
+            answer = PromptCapture.get_prompt_for_report("market_report", "NVDA")
+
+        self.assertIn("Error retrieving prompt", answer)
+
 
 class UpdateUiReportTests(StateFixture):
     def test_the_reports_reach_their_panels(self):
