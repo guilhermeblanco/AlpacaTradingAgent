@@ -80,8 +80,12 @@ def throughput_figure(series) -> go.Figure:
     return figure
 
 
-def board_card(card):
-    """One decision as a card: symbol, state, and what is holding it."""
+def board_card(card, selected=None):
+    """One decision as a card: symbol, state, and what is holding it.
+
+    Clicking opens it on the tape. A live card has no decision to open yet,
+    so it says so instead of looking clickable and doing nothing.
+    """
     stage = card["stage_state"]
     accent = STATE_COLORS.get(stage, COLORS["pending"])
     children = [
@@ -100,16 +104,28 @@ def board_card(card):
     ]
     if card.get("hint"):
         children.append(html.Div(card["hint"], className="board-card-hint"))
+
+    classes = ["board-card"]
+    if card.get("live"):
+        classes.append("board-card-live")
+    if selected and card["id"] == selected:
+        classes.append("board-card-active")
     return html.Div(
         children,
-        className="board-card",
+        className=" ".join(classes),
         style={"borderLeftColor": accent},
         id={"type": "board-card", "decision": card["id"]},
         n_clicks=0,
+        title=(
+            "Still running — it has no decision id until the risk manager "
+            "produces an intent."
+            if card.get("live")
+            else "Open on the decision tape"
+        ),
     )
 
 
-def board_column(label, cards):
+def board_column(label, cards, selected=None):
     return html.Div(
         [
             html.Div(
@@ -120,7 +136,7 @@ def board_column(label, cards):
                 className="board-column-header",
             ),
             html.Div(
-                [board_card(card) for card in cards]
+                [board_card(card, selected) for card in cards]
                 or [html.Div("—", className="board-column-empty")],
                 className="board-column-body",
             ),
@@ -155,6 +171,8 @@ def create_pipeline_board():
                 className="d-flex justify-content-between align-items-start mb-3",
             ),
             dcc.Interval(id="board-interval", interval=8_000),
+            dcc.Store(id="board-scroll"),
+            html.Div(id="board-note", className="mb-2"),
             html.Div(id="pipeline-board", className="board-columns mb-3"),
             dbc.Row(
                 [

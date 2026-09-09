@@ -5,8 +5,10 @@ happening in this process, so it is never blank during exactly the minutes
 an operator is most likely to be watching it.
 """
 
+import time
+
 import dash_bootstrap_components as dbc
-from dash import Input, Output, html
+from dash import ALL, Input, Output, State, ctx, html, no_update
 
 from tradingagents.workbench.board import (
     card_from_tape,
@@ -26,6 +28,7 @@ from webui.components.pipeline_board import (
 )
 from webui.components.vitals import vital
 from webui.components.workbench import empty_figure
+from webui.callbacks.workbench_callbacks import decision_option, load_tape
 from webui.utils.persistence import get_persistence_runtime
 from webui.utils.state import app_state
 
@@ -158,8 +161,12 @@ def _budget_reading():
         return vital("Token budget", "—", "idle", "")
 
 
-def build_board():
-    """Columns, and the three charts that break the board down."""
+def build_board(selected=None):
+    """Columns, and the three charts that break the board down.
+
+    `selected` is whichever decision the tape is showing, so the board and
+    the tape visibly refer to the same thing.
+    """
     try:
         tapes = load_recent()
     except Exception as exc:
@@ -189,7 +196,7 @@ def build_board():
 
     grouped = group_by_stage(cards)
     columns = html.Div(
-        [board_column(label, grouped.get(key, [])) for key, label in STAGES],
+        [board_column(label, grouped.get(key, []), selected) for key, label in STAGES],
         className="board-columns",
     )
     return (
@@ -198,6 +205,44 @@ def build_board():
         halt_breakdown_figure(halt_counts(tapes)),
         throughput_figure(throughput_series(tapes)),
     )
+
+
+LIVE_CARD_NOTE = (
+    "That analysis is still running. It gets a decision — and a tape — once "
+    "the risk manager produces a typed intent."
+)
+
+#: The board sits above the tape, so opening a card has to bring the tape
+#: into view or the click looks like it did nothing.
+SCROLL_TO_TAPE = """
+function(signal) {
+    if (!signal) { return window.dash_clientside.no_update; }
+    const target = document.getElementById('workbench-tape');
+    if (target && target.scrollIntoView) {
+        target.scrollIntoView({behavior: 'smooth', block: 'start'});
+    }
+    return window.dash_clientside.no_update;
+}
+"""
+
+
+def open_on_tape(decision_id, options):
+    """Select a decision on the tape, adding its option if it is filtered out.
+
+    The board shows more decisions than the tape's dropdown, and the
+    dropdown can be narrowed by symbol, so a card can point at something the
+    dropdown does not currently list.
+    """
+    options = list(options or [])
+    if any(option.get("value") == decision_id for option in options):
+        return options, decision_id
+    try:
+        tape = load_tape(decision_id)
+    except Exception:
+        tape = None
+    if tape is None:
+        return options, decision_id
+    return [decision_option(tape), *options], decision_id
 
 
 def register_board_callbacks(app):
@@ -215,6 +260,46 @@ def register_board_callbacks(app):
         Output("board-throughput", "figure"),
         Input("board-interval", "n_intervals"),
         Input("board-refresh", "n_clicks"),
+        Input("workbench-selection", "value"),
     )
-    def update_board(_intervals, _clicks):
-        return build_board()
+    def update_board(_intervals, _clicks, selected):
+        return build_board(selected)
+
+    @app.callback(
+        Output("workbench-selection", "options", allow_duplicate=True),
+        Output("workbench-selection", "value", allow_duplicate=True),
+        Output("board-note", "children"),
+        Output("board-scroll", "data"),
+        Input({"type": "board-card", "decision": ALL}, "n_clicks"),
+        State("workbench-selection", "options"),
+        prevent_initial_call=True,
+    )
+    def open_card(clicks, options):
+        """Open the clicked card on the tape below.
+
+        The board re-renders every few seconds, which recreates the cards
+        with `n_clicks` back at zero and fires this callback; an all-zero
+        list is that re-render, not a click.
+        """
+        if not clicks or not any(clicks):
+            return no_update, no_update, no_update, no_update
+        decision_id = (ctx.triggered_id or {}).get("decision")
+        if not decision_id:
+            return no_update, no_update, no_update, no_update
+        if str(decision_id).startswith("live:"):
+            return (
+                no_update,
+                no_update,
+                dbc.Alert(LIVE_CARD_NOTE, color="info", className="py-2 mb-0"),
+                no_update,
+            )
+        options, value = open_on_tape(decision_id, options)
+        # A fresh value each time, so clicking the same card twice still
+        # scrolls rather than being deduplicated away.
+        return options, value, "", {"decision_id": value, "at": time.time()}
+
+    app.clientside_callback(
+        SCROLL_TO_TAPE,
+        Output("board-scroll", "id"),
+        Input("board-scroll", "data"),
+    )

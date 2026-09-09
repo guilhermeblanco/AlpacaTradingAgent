@@ -318,6 +318,18 @@ __TOKENS__
     color: var(--ta-text-faint);
     margin-top: 2px;
 }
+.board-card-active {
+    border-color: var(--ta-accent);
+    background-color: var(--ta-surface-raised);
+    box-shadow: inset 0 0 0 1px var(--ta-accent);
+}
+.board-card-live {
+    cursor: default;
+}
+.board-card-live:hover {
+    border-color: var(--ta-border);
+    transform: none;
+}
 """
 
 # .replace rather than %-formatting: the stylesheet is full of literal

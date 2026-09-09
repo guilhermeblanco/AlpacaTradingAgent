@@ -373,8 +373,8 @@ class BoardCallbackTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def _board(self):
-        return dash_callback(self.app, "pipeline-board.children")(0, 0)
+    def _board(self, selected=None):
+        return dash_callback(self.app, "pipeline-board.children")(0, 0, selected)
 
     def _vitals(self):
         return str(dash_callback(self.app, "vitals-strip.children")(0))
@@ -559,3 +559,171 @@ class VitalsTests(BoardCallbackTests):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CardSelectionTests(unittest.TestCase):
+    """Clicking a card opens it on the tape below."""
+
+    def test_the_open_decision_is_marked_on_its_card(self):
+        card = card_from_tape(_tape())
+
+        rendered = str(board_card(card, selected="decision-1"))
+
+        self.assertIn("board-card-active", rendered)
+
+    def test_another_decision_is_not_marked(self):
+        card = card_from_tape(_tape())
+
+        self.assertNotIn("board-card-active", str(board_card(card, selected="other")))
+
+    def test_a_card_says_it_opens_the_tape(self):
+        rendered = str(board_card(card_from_tape(_tape())))
+
+        self.assertIn("Open on the decision tape", rendered)
+
+    def test_a_live_card_says_it_has_no_decision_yet(self):
+        """It must not look clickable and then do nothing."""
+        card = live_cards({"NVDA": _statuses(**{"News Analyst": "in_progress"})})[0]
+
+        rendered = str(board_card(card))
+
+        self.assertIn("board-card-live", rendered)
+        self.assertIn("no decision id", rendered)
+
+    def test_the_selection_reaches_every_column(self):
+        cards = [card_from_tape(_tape(orders=[{"filled_quantity": 1.0}]))]
+
+        rendered = str(board_column("Order", cards, selected="decision-1"))
+
+        self.assertIn("board-card-active", rendered)
+
+
+class OpenOnTapeTests(unittest.TestCase):
+    def _open(self, decision_id, options, tape=None, error=None):
+        def load(_decision_id):
+            if error:
+                raise error
+            return tape
+
+        with mock.patch.object(board_callbacks, "load_tape", load):
+            return board_callbacks.open_on_tape(decision_id, options)
+
+    def test_a_decision_already_listed_is_simply_selected(self):
+        options = [{"label": "NVDA", "value": "decision-1"}]
+
+        result, value = self._open("decision-1", options)
+
+        self.assertEqual(result, options)
+        self.assertEqual(value, "decision-1")
+
+    def test_a_decision_the_dropdown_filtered_out_is_added_to_it(self):
+        """The board lists more than the dropdown, and the dropdown can be
+        narrowed by symbol."""
+        result, value = self._open(
+            "decision-1", [{"label": "AAPL", "value": "other"}], tape=_tape()
+        )
+
+        self.assertEqual([option["value"] for option in result],
+                         ["decision-1", "other"])
+        self.assertEqual(value, "decision-1")
+
+    def test_a_decision_that_cannot_be_loaded_is_still_selected(self):
+        result, value = self._open("decision-1", [], error=RuntimeError("gone"))
+
+        self.assertEqual(result, [])
+        self.assertEqual(value, "decision-1")
+
+    def test_an_empty_option_list_is_accepted(self):
+        result, value = self._open("decision-1", None, tape=_tape())
+
+        self.assertEqual(len(result), 1)
+
+
+class OpenCardCallbackTests(BoardCallbackTests):
+    def _click(self, clicks, decision="decision-1", options=None, tape=None):
+        def load(_decision_id):
+            return tape
+
+        with mock.patch.object(board_callbacks, "load_tape", load):
+            with mock.patch.object(
+                board_callbacks,
+                "ctx",
+                SimpleNamespace(
+                    triggered_id={"type": "board-card", "decision": decision}
+                ),
+            ):
+                return dash_callback(self.app, "board-note.children")(
+                    clicks, options or []
+                )
+
+    def test_clicking_a_card_selects_it_on_the_tape(self):
+        self._runtime(tapes=[])
+
+        options, value, note, scroll = self._click([1], tape=_tape())
+
+        self.assertEqual(value, "decision-1")
+        self.assertEqual(note, "")
+        self.assertEqual(scroll["decision_id"], "decision-1")
+
+    def test_clicking_scrolls_the_tape_into_view(self):
+        """The board sits above the tape; without this the click looks inert."""
+        self._runtime(tapes=[])
+
+        _options, _value, _note, scroll = self._click([1], tape=_tape())
+
+        self.assertIn("at", scroll)
+
+    def test_clicking_the_same_card_twice_still_scrolls(self):
+        self._runtime(tapes=[])
+
+        first = self._click([1], tape=_tape())[3]
+        second = self._click([2], tape=_tape())[3]
+
+        self.assertNotEqual(first["at"], second["at"])
+
+    def test_a_live_card_explains_why_it_has_no_tape(self):
+        self._runtime(tapes=[])
+
+        options, value, note, scroll = self._click([1], decision="live:NVDA")
+
+        self.assertIs(value, dash.no_update)
+        self.assertIn("still running", str(note))
+
+    def test_a_board_refresh_is_not_a_click(self):
+        """Re-rendering recreates the cards with n_clicks back at zero."""
+        self._runtime(tapes=[])
+
+        result = self._click([0, 0], tape=_tape())
+
+        self.assertTrue(all(value is dash.no_update for value in result))
+
+    def test_no_cards_at_all_changes_nothing(self):
+        self._runtime(tapes=[])
+
+        self.assertTrue(all(value is dash.no_update for value in self._click([])))
+
+    def test_a_click_with_no_decision_on_it_changes_nothing(self):
+        self._runtime(tapes=[])
+
+        with mock.patch.object(
+            board_callbacks, "ctx", SimpleNamespace(triggered_id=None)
+        ):
+            result = dash_callback(self.app, "board-note.children")([1], [])
+
+        self.assertTrue(all(value is dash.no_update for value in result))
+
+    def test_the_open_decision_is_marked_on_the_refreshed_board(self):
+        self._runtime(tapes=[_tape(orders=[{"filled_quantity": 1.0}])])
+
+        columns, *_rest = self._board(selected="decision-1")
+
+        self.assertIn("board-card-active", str(columns))
+
+
+class ScrollTests(unittest.TestCase):
+    def test_the_scroll_targets_the_tape(self):
+        self.assertIn("workbench-tape", board_callbacks.SCROLL_TO_TAPE)
+        self.assertIn("scrollIntoView", board_callbacks.SCROLL_TO_TAPE)
+
+    def test_an_empty_signal_scrolls_nothing(self):
+        self.assertIn("if (!signal)", board_callbacks.SCROLL_TO_TAPE)

@@ -194,3 +194,4 @@ def test_clientside_callbacks_are_attached_to_the_app(dash_app) -> None:
     }
 
     assert "pulse-listener.children" in attached
+    assert "board-scroll.id" in attached

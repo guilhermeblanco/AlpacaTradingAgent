@@ -40,7 +40,9 @@ def load_tape(decision_id):
         return uow.workbench.tape(decision_id)
 
 
-def _option(tape):
+def decision_option(tape):
+    """One dropdown entry. Shared with the board so a card and its option
+    read the same."""
     stamp = tape.created_at.strftime("%Y-%m-%d %H:%M") if tape.created_at else "—"
     halted = tape.halted_at
     marker = f" · halted at {halted}" if halted else ""
@@ -390,7 +392,7 @@ def register_workbench_callbacks(app):
         board = load_board(symbol=symbol)
         if not board:
             return [], None
-        options = [_option(tape) for tape in board]
+        options = [decision_option(tape) for tape in board]
         values = {option["value"] for option in options}
         return options, (
             selected if selected in values else options[0]["value"]
