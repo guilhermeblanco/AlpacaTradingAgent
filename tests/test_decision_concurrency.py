@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
-from alembic import command
-from alembic.config import Config
 
 from tradingagents.agents.schemas import (
     ExecutableAction,
@@ -25,15 +22,9 @@ from tradingagents.execution.journal import ExecutionJournal
 from tradingagents.execution.pipeline import ExecutionPipeline
 from tradingagents.lifecycle import LifecycleRepository, LifecycleService
 from tradingagents.persistence.postgres import (
-    DatabaseSettings,
     PostgresUnitOfWork,
-    create_database_engine,
-    create_session_factory,
 )
 from tradingagents.safety import SafetyGuard
-
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class FakeProvider:
@@ -108,21 +99,9 @@ def test_local_lifecycle_allows_only_one_concurrent_execution(tmp_path: Path) ->
     assert sum(bool(result.get("duplicate")) for result in results) == 1
 
 
-@pytest.fixture(scope="module")
-def postgres_unit_of_work_factory():
-    database_url = os.getenv("TEST_DATABASE_URL")
-    if not database_url:
-        pytest.skip("TEST_DATABASE_URL is not configured")
-    config = Config(str(REPO_ROOT / "alembic.ini"))
-    config.set_main_option("script_location", str(REPO_ROOT / "migrations"))
-    config.set_main_option("sqlalchemy.url", database_url)
-    command.upgrade(config, "head")
-    engine = create_database_engine(DatabaseSettings(url=database_url))
-    session_factory = create_session_factory(engine)
-    try:
-        yield lambda: PostgresUnitOfWork(session_factory)
-    finally:
-        engine.dispose()
+@pytest.fixture
+def postgres_unit_of_work_factory(postgres_session_factory):
+    return lambda: PostgresUnitOfWork(postgres_session_factory)
 
 
 def test_postgres_advisory_lock_allows_only_one_concurrent_execution(

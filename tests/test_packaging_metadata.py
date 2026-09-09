@@ -9,7 +9,7 @@ def test_pyproject_exposes_complete_and_component_install_profiles() -> None:
     project = metadata["project"]
     extras = project["optional-dependencies"]
 
-    assert project["requires-python"] == ">=3.11"
+    assert project["requires-python"] == ">=3.14"
     assert {"analysis", "brokers", "postgres", "cli", "web", "app", "dev"} <= set(
         extras
     )

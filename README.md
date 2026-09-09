@@ -129,7 +129,7 @@ git clone https://github.com/guilhermeblanco/AlpacaTradingAgent.git
 cd AlpacaTradingAgent
 ```
 
-Create an isolated Python 3.11+ environment and install the complete product:
+Create an isolated Python 3.14+ environment and install the complete product:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate

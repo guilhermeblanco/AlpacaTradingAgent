@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
-from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from alembic import command
-from alembic.config import Config
 from sqlalchemy import create_engine, func, inspect, select, text
 from sqlalchemy.exc import DBAPIError
 
@@ -18,14 +14,10 @@ from tradingagents.persistence.postgres import (
     Base,
     DatabaseSettings,
     PostgresUnitOfWork,
-    create_database_engine,
     create_session_factory,
 )
 from tradingagents.persistence.postgres.models import DecisionEventRow, LifecycleRow
 from tradingagents.safety.state import PostgresSafetyStateStore
-
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _exercise_unit_of_work(session_factory) -> str:
@@ -147,24 +139,6 @@ def test_database_settings_require_a_url(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.delenv("DATABASE_URL", raising=False)
     with pytest.raises(ValueError, match="DATABASE_URL is required"):
         DatabaseSettings.from_env()
-
-
-@pytest.fixture(scope="module")
-def postgres_engine():
-    database_url = os.getenv("TEST_DATABASE_URL")
-    if not database_url:
-        pytest.skip("TEST_DATABASE_URL is not configured")
-
-    config = Config(str(REPO_ROOT / "alembic.ini"))
-    config.set_main_option("script_location", str(REPO_ROOT / "migrations"))
-    config.set_main_option("sqlalchemy.url", database_url)
-    command.upgrade(config, "head")
-
-    engine = create_database_engine(DatabaseSettings(url=database_url))
-    try:
-        yield engine
-    finally:
-        engine.dispose()
 
 
 def test_initial_migration_creates_all_persistence_tables(postgres_engine) -> None:
