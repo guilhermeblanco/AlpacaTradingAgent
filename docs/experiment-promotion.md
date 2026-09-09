@@ -35,3 +35,12 @@ Configure variants with `AUTONOMOUS_EXPERIMENTS_JSON`. `config_overrides` is
 applied only to that variant's graph instance and can select challenger models,
 prompts, or analysis parameters. Promotion remains a separate human-reviewed
 operation; assignment never changes which variant is execution eligible.
+
+## In the WebUI
+
+The Decision Quality panel reads the same ledger. Pick a horizon for the
+realized scorecard — resolved decisions, hit rate, mean excess return
+against the benchmark, and estimated cost — then pick a challenger and a
+champion to run the promotion gates over. The verdict lists every gate the
+challenger failed, or confirms it cleared them all. It requires PostgreSQL,
+because that is where the shared evaluation ledger lives.

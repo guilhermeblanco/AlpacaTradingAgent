@@ -15,6 +15,7 @@ from .safety_callbacks import register_safety_callbacks
 from .cost_callbacks import register_cost_callbacks
 from .operations_callbacks import register_operations_callbacks
 from .decision_explorer_callbacks import register_decision_explorer_callbacks
+from .evaluation_callbacks import register_evaluation_callbacks
 
 def register_all_callbacks(app):
     """Register all callback functions with the Dash app"""
@@ -30,3 +31,4 @@ def register_all_callbacks(app):
     register_cost_callbacks(app)
     register_operations_callbacks(app)
     register_decision_explorer_callbacks(app)
+    register_evaluation_callbacks(app)

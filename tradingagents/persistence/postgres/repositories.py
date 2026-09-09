@@ -383,6 +383,16 @@ class PostgresEvaluationRepository:
             for row in self.session.scalars(statement).all()
         ]
 
+    def experiment_ids(self) -> list[str]:
+        """Distinct experiment ids that have recorded at least one episode."""
+        return list(
+            self.session.scalars(
+                select(EvaluationEpisodeRow.experiment_id)
+                .distinct()
+                .order_by(EvaluationEpisodeRow.experiment_id)
+            ).all()
+        )
+
     @staticmethod
     def _episode(row: EvaluationEpisodeRow) -> EvaluationEpisode:
         return EvaluationEpisode(

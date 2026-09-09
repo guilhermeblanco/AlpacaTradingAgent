@@ -202,3 +202,26 @@ def test_postgres_rejects_decision_event_mutation(postgres_engine) -> None:
                 {"event_id": event_id},
             )
         transaction.rollback()
+
+
+def test_experiment_ids_lists_distinct_recorded_experiments(postgres_session_factory) -> None:
+    """The evaluation panel needs the variants available to compare."""
+    now = datetime.now(timezone.utc)
+    with PostgresUnitOfWork(postgres_session_factory) as uow:
+        for index, experiment_id in enumerate(["variant-b", "default", "variant-b"]):
+            uow.evaluation.record_episode(
+                EvaluationEpisode(
+                    decision_id=f"decision-{index}",
+                    symbol="AAPL",
+                    action="BUY",
+                    decision_at=now,
+                    data_as_of=now - timedelta(minutes=1),
+                    reference_price=100.0,
+                    benchmark_price=500.0,
+                    experiment_id=experiment_id,
+                )
+            )
+        uow.commit()
+
+    with PostgresUnitOfWork(postgres_session_factory) as uow:
+        assert uow.evaluation.experiment_ids() == ["default", "variant-b"]
