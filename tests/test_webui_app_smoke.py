@@ -120,3 +120,62 @@ def test_broker_containers_exist_for_the_account_refresh_callback(dash_app) -> N
         "orders-pagination-container",
         "account-summary-container",
     } <= available
+
+
+def test_a_finished_analyst_report_is_filed_under_its_own_key(dash_app) -> None:
+    """Analysts run in parallel by default, so the market analyst routinely
+    finishes while the social one is still working. A workaround used to
+    reroute any market_report arriving in that window into sentiment_report,
+    which lost the market read and marked the social analyst done."""
+    from webui.utils.state import AppState
+
+    state = AppState()
+    state.init_symbol_state("NVDA")
+    state.current_symbol = "NVDA"
+    state.get_state("NVDA")["agent_statuses"]["Social Analyst"] = "in_progress"
+
+    state.process_chunk_updates({"market_report": "the market read"})
+
+    reports = state.get_state("NVDA")["current_reports"]
+    assert reports["market_report"] == "the market read"
+    assert not reports["sentiment_report"]
+    assert (
+        state.get_state("NVDA")["agent_statuses"]["Social Analyst"] == "in_progress"
+    )
+
+
+def test_running_the_app_serves_the_configured_address() -> None:
+    from unittest import mock
+
+    import webui.app_dash as app_dash
+
+    built = mock.MagicMock()
+    with mock.patch.object(app_dash, "create_app", lambda: built):
+        assert app_dash.run_app(port=1234, server_name="0.0.0.0") == 0
+
+    _args, kwargs = built.run.call_args
+    assert kwargs["port"] == 1234
+    assert kwargs["host"] == "0.0.0.0"
+    assert kwargs["use_reloader"] is False
+
+
+def test_debug_mode_enables_hot_reload() -> None:
+    from unittest import mock
+
+    import webui.app_dash as app_dash
+
+    built = mock.MagicMock()
+    with mock.patch.object(app_dash, "create_app", lambda: built):
+        app_dash.run_app(debug=True)
+
+    assert built.run.call_args.kwargs["dev_tools_hot_reload"] is True
+
+
+def test_the_module_level_app_is_built_lazily() -> None:
+    """Building it assembles the layout, which the package import must not do."""
+    import webui.app_dash as app_dash
+
+    assert app_dash.app is not None
+
+    with pytest.raises(AttributeError):
+        app_dash.no_such_thing
