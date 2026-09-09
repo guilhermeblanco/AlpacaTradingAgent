@@ -430,3 +430,149 @@ class RedditOnlineFetchTests(unittest.TestCase):
             )
 
         self.assertIsInstance(result, list)
+
+
+def _observations(*values):
+    """FRED returns newest first, with "." for a missing reading."""
+    return {
+        "observations": [
+            {"date": f"2026-0{index + 1}-01", "value": str(value)}
+            for index, value in enumerate(values)
+        ]
+    }
+
+
+class YieldCurveReportTests(unittest.TestCase):
+    def _report(self, by_series):
+        with mock.patch.object(macro_utils, "get_fred_api_key", lambda: "k"), \
+             mock.patch.object(
+                 macro_utils,
+                 "get_fred_data",
+                 lambda series_id, *a: by_series.get(series_id, {"error": "no series"}),
+             ):
+            return macro_utils.get_treasury_yield_curve("2026-09-09")
+
+    def test_each_maturity_appears_in_the_table(self):
+        report = self._report(
+            {"DGS2": _observations(4.0), "DGS10": _observations(4.5)}
+        )
+
+        self.assertIn("2 Year", report)
+        self.assertIn("10 Year", report)
+        self.assertIn("4.00%", report)
+
+    def test_a_normal_curve_is_described_as_healthy(self):
+        report = self._report(
+            {"DGS2": _observations(3.0), "DGS10": _observations(4.5)}
+        )
+
+        self.assertIn("NORMAL YIELD CURVE", report)
+
+    def test_a_flat_curve_is_called_out(self):
+        """20 basis points, inside the 50bp flat band."""
+        report = self._report(
+            {"DGS2": _observations(4.0), "DGS10": _observations(4.2)}
+        )
+
+        self.assertIn("FLAT YIELD CURVE", report)
+
+    def test_the_spread_is_reported_in_basis_points(self):
+        """It is labelled bps; comparing raw percentage points made every
+        non-inverted curve read as flat."""
+        report = self._report(
+            {"DGS2": _observations(3.0), "DGS10": _observations(4.5)}
+        )
+
+        self.assertIn("150 basis points", report)
+
+    def test_an_inverted_curve_is_flagged_as_a_recession_signal(self):
+        report = self._report(
+            {"DGS2": _observations(4.5), "DGS10": _observations(4.0)}
+        )
+
+        self.assertIn("INVERTED YIELD CURVE", report)
+
+    def test_a_missing_reading_is_skipped(self):
+        report = self._report({"DGS2": _observations("."), "DGS10": _observations(4.0)})
+
+        self.assertIn("10 Year", report)
+        self.assertNotIn("2 Year |", report)
+
+    def test_no_series_at_all_says_so(self):
+        report = self._report({})
+
+        self.assertIn("No recent yield curve data", report)
+
+
+class EconomicIndicatorReportTests(unittest.TestCase):
+    def _report(self, data):
+        with mock.patch.object(macro_utils, "get_fred_api_key", lambda: "k"), \
+             mock.patch.object(macro_utils, "get_fred_data", lambda *a: data):
+            return macro_utils.get_economic_indicators_report("2026-09-09")
+
+    def test_a_reading_and_its_change_are_reported(self):
+        report = self._report(_observations(3.5, 3.0))
+
+        self.assertIn("Latest Value", report)
+        self.assertIn("3.50", report)
+
+    def test_a_single_reading_still_reports(self):
+        report = self._report(_observations(3.5))
+
+        self.assertIn("Latest Value", report)
+
+    def test_a_series_with_no_observations_says_so(self):
+        report = self._report({"observations": []})
+
+        self.assertIn("No data available", report)
+
+    def test_a_series_of_only_missing_readings_says_so(self):
+        report = self._report(_observations(".", "."))
+
+        self.assertIn("No valid data available", report)
+
+    def test_a_failing_series_does_not_abort_the_report(self):
+        report = self._report({"error": "series unavailable"})
+
+        self.assertIsInstance(report, str)
+        self.assertTrue(report.strip())
+
+
+class FedCalendarTests(unittest.TestCase):
+    def _report(self, data):
+        with mock.patch.object(macro_utils, "get_fred_api_key", lambda: "k"), \
+             mock.patch.object(macro_utils, "get_fred_data", lambda *a: data):
+            return macro_utils.get_fed_calendar_and_minutes("2026-09-09")
+
+    def test_the_rate_history_is_tabulated_with_changes(self):
+        report = self._report(_observations(5.5, 5.25, 5.0))
+
+        self.assertIn("Recent Federal Funds Rate History", report)
+        self.assertIn("+0.25%", report)
+
+    def test_an_unchanged_rate_is_labelled(self):
+        report = self._report(_observations(5.5, 5.5))
+
+        self.assertIn("No change", report)
+
+    def test_a_single_reading_skips_the_history_table(self):
+        report = self._report(_observations(5.5))
+
+        self.assertNotIn("Recent Federal Funds Rate History", report)
+
+    def test_the_meeting_schedule_is_always_included(self):
+        report = self._report({"observations": []})
+
+        self.assertIn("FOMC Meeting", report)
+
+
+class MacroSummaryTests(unittest.TestCase):
+    def test_the_summary_pulls_the_component_reports_together(self):
+        with mock.patch.object(macro_utils, "get_fred_api_key", lambda: "k"), \
+             mock.patch.object(
+                 macro_utils, "get_fred_data", lambda *a: _observations(3.5, 3.0)
+             ):
+            summary = macro_utils.get_macro_economic_summary("2026-09-09")
+
+        self.assertIsInstance(summary, str)
+        self.assertTrue(summary.strip())
