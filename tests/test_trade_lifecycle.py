@@ -106,3 +106,69 @@ class TradeLifecycleTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LifecycleMonitorLoopTests(unittest.TestCase):
+    """The monitor expires protective intents that outlived their window.
+    Its loop has to be stoppable, or a shutdown hangs on a non-daemon thread."""
+
+    class Repository:
+        def __init__(self):
+            self.calls = []
+
+        def expire_due(self, now):
+            self.calls.append(now)
+            return len(self.calls)
+
+    def test_the_loop_runs_the_requested_number_of_iterations(self):
+        repository = self.Repository()
+
+        LifecycleMonitor(repository, interval_seconds=0.01).run(max_iterations=3)
+
+        self.assertEqual(len(repository.calls), 3)
+
+    def test_stopping_ends_the_loop(self):
+        repository = self.Repository()
+        monitor = LifecycleMonitor(repository, interval_seconds=0.01)
+        monitor.stop()
+
+        monitor.run(max_iterations=10)
+
+        self.assertEqual(len(repository.calls), 0)
+
+    def test_a_stop_mid_loop_is_honoured(self):
+        repository = self.Repository()
+        monitor = LifecycleMonitor(repository, interval_seconds=0.01)
+        original = repository.expire_due
+
+        def expire_then_stop(now):
+            monitor.stop()
+            return original(now)
+
+        repository.expire_due = expire_then_stop
+
+        monitor.run()
+
+        self.assertEqual(len(repository.calls), 1)
+
+    def test_the_interval_has_a_floor(self):
+        """A zero interval would spin the CPU."""
+        self.assertGreater(
+            LifecycleMonitor(self.Repository(), interval_seconds=0).interval_seconds, 0
+        )
+
+    def test_no_heartbeat_path_is_allowed(self):
+        repository = self.Repository()
+
+        self.assertEqual(LifecycleMonitor(repository).run_once(), 1)
+
+    def test_the_clock_defaults_to_now(self):
+        from datetime import datetime, timezone
+
+        repository = self.Repository()
+
+        LifecycleMonitor(repository).run_once()
+
+        self.assertLessEqual(
+            (datetime.now(timezone.utc) - repository.calls[0]).total_seconds(), 5
+        )
