@@ -25,6 +25,14 @@ from tradingagents.operations.explorer import (
     DecisionTimelineEvent,
 )
 from tradingagents.persistence.events import EventEnvelope
+from tradingagents.workbench.analysis_record import ANALYSIS_STAGES_EVENT
+from tradingagents.workbench.tape import (
+    DecisionTape,
+    TapeEvent,
+    build_tape,
+    stage_for_event,
+)
+from tradingagents.execution.gates import GateLedger, ledger_from_payload
 from tradingagents.execution.models import ExecutionResult, PlanAction
 from tradingagents.execution.order_ledger import BrokerOrderRecord
 from tradingagents.execution.reconciliation import BrokerOrderSnapshot, BrokerOrderStatus
@@ -1739,3 +1747,149 @@ class PostgresOperationalRepository:
             stale=stale,
             details=row.details or {},
         )
+
+
+class PostgresWorkbenchRepository:
+    """Assembles Decision Tapes: the analysis half joined to the execution half.
+
+    Reads only. The two halves are written by different processes at
+    different times — the graph records its stages when the analysis
+    finishes, the pipeline its gate ledger when the order resolves — and
+    they meet here on `decision_id`.
+    """
+
+    def __init__(self, session: Session):
+        self.session = session
+        self.explorer = PostgresDecisionExplorerRepository(session)
+
+    def _events_for(self, decision_ids: list[str]) -> dict[str, list[DecisionEventRow]]:
+        if not decision_ids:
+            return {}
+        rows = self.session.scalars(
+            select(DecisionEventRow)
+            .where(
+                DecisionEventRow.aggregate_type == "decision",
+                DecisionEventRow.aggregate_id.in_(decision_ids),
+            )
+            .order_by(DecisionEventRow.aggregate_version)
+        ).all()
+        grouped: dict[str, list[DecisionEventRow]] = {}
+        for row in rows:
+            grouped.setdefault(row.aggregate_id, []).append(row)
+        return grouped
+
+    @staticmethod
+    def _analysis_from(events: list[DecisionEventRow]) -> dict[str, Any]:
+        for row in reversed(events):
+            if row.event_type == ANALYSIS_STAGES_EVENT:
+                payload = row.payload or {}
+                analysis = payload.get("analysis")
+                if isinstance(analysis, dict):
+                    return analysis
+        return {}
+
+    @staticmethod
+    def _ledger_from(events: list[DecisionEventRow]) -> Optional[GateLedger]:
+        for row in reversed(events):
+            if row.event_type == "gate_ledger_recorded":
+                ledger = ledger_from_payload(row.payload)
+                if ledger is not None:
+                    return ledger
+        return None
+
+    def _orders_for(self, decision_id: str) -> list[dict[str, Any]]:
+        rows = self.session.scalars(
+            select(BrokerOrderRow).where(BrokerOrderRow.decision_id == decision_id)
+        ).all()
+        return [
+            {
+                "order_key": row.order_key,
+                "broker": row.broker,
+                "broker_order_id": row.broker_order_id,
+                "client_order_id": row.client_order_id,
+                "symbol": row.symbol,
+                "side": row.side,
+                "status": row.status,
+                "requested_quantity": row.requested_quantity,
+                "requested_notional": row.requested_notional,
+                "filled_quantity": row.filled_quantity,
+                "filled_avg_price": row.filled_avg_price,
+                "submitted_at": row.submitted_at,
+            }
+            for row in rows
+        ]
+
+    def _outcomes_for(self, decision_id: str) -> list[dict[str, Any]]:
+        rows = self.session.scalars(
+            select(EvaluationOutcomeRow)
+            .where(EvaluationOutcomeRow.decision_id == decision_id)
+            .order_by(EvaluationOutcomeRow.outcome_at)
+        ).all()
+        return [
+            {
+                "horizon": row.horizon,
+                "outcome_at": row.outcome_at,
+                "asset_return_pct": row.asset_return_pct,
+                "benchmark_return_pct": row.benchmark_return_pct,
+                "excess_return_pct": row.excess_return_pct,
+                "estimated_cost_pct": row.estimated_cost_pct,
+                "directionally_correct": row.directionally_correct,
+            }
+            for row in rows
+        ]
+
+    def tape(self, decision_id: str) -> DecisionTape:
+        """One decision, every stage, in pipeline order."""
+        detail = self.explorer.get_decision(decision_id)
+        events = self._events_for([decision_id]).get(decision_id, [])
+        orders = self._orders_for(decision_id)
+        outcomes = self._outcomes_for(decision_id)
+
+        tape_events = [
+            TapeEvent(
+                occurred_at=item.occurred_at,
+                stage=stage_for_event(item.category, item.label),
+                category=item.category,
+                label=item.label,
+                status=item.status,
+                details=item.details,
+            )
+            for item in detail.timeline
+        ]
+        return build_tape(
+            summary=detail.summary,
+            analysis=self._analysis_from(events),
+            gate_ledger=self._ledger_from(events),
+            orders=orders,
+            outcomes=outcomes,
+            events=tape_events,
+        )
+
+    def board(
+        self,
+        *,
+        limit: int = 50,
+        symbol: Optional[str] = None,
+        status: Optional[str] = None,
+    ) -> list[DecisionTape]:
+        """Recent decisions as tapes, newest first, for the pipeline board.
+
+        Skips the per-decision timeline: a board card needs the stage a
+        decision reached and what stopped it, not every event behind it.
+        """
+        summaries = self.explorer.list_decisions(
+            limit=limit, symbol=symbol, status=status
+        )
+        if not summaries:
+            return []
+        grouped = self._events_for([item.decision_id for item in summaries])
+        return [
+            build_tape(
+                summary=summary,
+                analysis=self._analysis_from(grouped.get(summary.decision_id, [])),
+                gate_ledger=self._ledger_from(grouped.get(summary.decision_id, [])),
+                orders=self._orders_for(summary.decision_id),
+                outcomes=self._outcomes_for(summary.decision_id),
+            )
+            for summary in summaries
+        ]

@@ -133,6 +133,68 @@ CSS = """
     50% { opacity: 1; }
     100% { opacity: 0.7; }
 }
+
+/* --- Decision workbench ------------------------------------------------ */
+.workbench-panel {
+    background-color: #1E293B;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 16px;
+}
+.workbench-rail {
+    display: flex;
+    align-items: center;
+    padding: 8px 4px;
+}
+.workbench-rail-node {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 64px;
+}
+.workbench-rail-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    transition: box-shadow 0.2s ease;
+}
+.workbench-rail-label {
+    font-size: 11px;
+    color: #94A3B8;
+    margin-top: 6px;
+    white-space: nowrap;
+}
+.workbench-rail-link {
+    flex: 1;
+    height: 2px;
+    background-color: #334155;
+    margin: 0 4px 18px 4px;
+}
+.workbench-stage-card {
+    background-color: #0F172A;
+    border: 1px solid #334155;
+}
+.workbench-stage-name {
+    font-weight: 600;
+    color: #F1F5F9;
+}
+.workbench-details {
+    border: 1px solid #334155;
+    border-radius: 6px;
+    margin-bottom: 8px;
+}
+.workbench-summary {
+    cursor: pointer;
+    padding: 6px 10px;
+    color: #F1F5F9;
+    font-size: 13px;
+}
+.workbench-dropdown .Select-control,
+.workbench-dropdown .Select-menu-outer {
+    background-color: #0F172A;
+    color: #F1F5F9;
+}
 """
 
 # JavaScript for auto-refresh and UI improvements

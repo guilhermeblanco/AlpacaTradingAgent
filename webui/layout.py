@@ -19,6 +19,7 @@ from webui.components.cost_panel import create_cost_panel
 from webui.components.api_config_modal import create_api_config_modal
 from webui.components.operations_panel import create_operations_panel
 from webui.components.decision_explorer import create_decision_explorer
+from webui.components.workbench import create_workbench_panel
 from webui.components.evaluation_panel import create_evaluation_panel
 from webui.config.constants import COLORS, REFRESH_INTERVALS
 
@@ -171,6 +172,7 @@ def create_main_layout():
             # Main content
             header,
             create_operations_panel(),
+            create_workbench_panel(),
             create_decision_explorer(),
             create_safety_panel(),
             alpaca_account_card,
