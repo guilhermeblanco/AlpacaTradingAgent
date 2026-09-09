@@ -537,9 +537,14 @@ def execute_autonomous_trade(
         if broker_capabilities is None:
             broker_capabilities = broker_runtime.capabilities
         if execution_control_service is None:
-            execution_control_service = (config or {}).get(
-                "execution_quarantine_scope"
-            ) or f"execution:{broker_name}"
+            # Derived the same way the autonomous worker and the account
+            # monitor derive it, so one environment yields one scope.
+            from .quarantine import resolve_execution_scope
+
+            execution_control_service = resolve_execution_scope(
+                broker_name,
+                configured=(config or {}).get("execution_quarantine_scope"),
+            )
         if str(config.get("execution_gateway", "alpaca")).lower() == "dry-run":
             from .dry_run_gateway import DryRunExecutionGateway
 

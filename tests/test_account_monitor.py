@@ -147,10 +147,9 @@ class AccountMonitorTests(unittest.TestCase):
             ),
         ):
             account_monitor.build_monitor_from_env()
+            resolved = captured["quarantine_scope"]("alpaca")
 
-        self.assertEqual(
-            captured["quarantine_scope"]("alpaca"), "execution:alpaca:paper-primary"
-        )
+        self.assertEqual(resolved, "execution:alpaca:paper-primary")
 
     def test_cash_only_drift_does_not_halt_trading(self):
         """Dividends, interest, fees, and transfers move cash without a trade."""

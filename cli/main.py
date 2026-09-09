@@ -63,6 +63,7 @@ class MessageBuffer:
             "Portfolio Manager": "pending",
         }
         self.current_agent = None
+        self.last_updated_section = None
         self.report_sections = {
             "market_report": None,
             "sentiment_report": None,
@@ -90,18 +91,18 @@ class MessageBuffer:
     def update_report_section(self, section_name, content):
         if section_name in self.report_sections:
             self.report_sections[section_name] = content
+            if content is not None:
+                self.last_updated_section = section_name
             self._update_current_report()
 
     def _update_current_report(self):
-        # For the panel display, only show the most recently updated section
-        latest_section = None
-        latest_content = None
-
-        # Find the most recently updated section
-        for section, content in self.report_sections.items():
-            if content is not None:
-                latest_section = section
-                latest_content = content
+        # For the panel display, only show the most recently updated section.
+        # Analysts finish out of order, so this tracks the actual last write
+        # rather than the last section that happens to hold content.
+        latest_section = self.last_updated_section
+        latest_content = (
+            self.report_sections.get(latest_section) if latest_section else None
+        )
 
         if latest_section and latest_content:
             # Format the current section for display
@@ -1106,6 +1107,12 @@ def run_analysis():
 
 @app.command()
 def analyze():
+    """Run an interactive TradingAgents analysis.
+
+    Typer collapses a single-command app, so this command's own help is
+    what `tradingagents --help` shows; the Typer(help=...) text above is
+    not used while `analyze` is the only command.
+    """
     run_analysis()
 
 
