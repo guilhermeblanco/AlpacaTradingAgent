@@ -1,6 +1,10 @@
 """Deterministic trade planning and broker execution boundaries."""
 
 from .gateway import ExecutionGateway
+from .account_reconciliation import (
+    AccountReconciliationReport,
+    reconcile_account_position,
+)
 from .models import ExecutionLeg, ExecutionPlan, ExecutionResult, PlanAction
 from .order_ledger import BrokerOrderRecord, OrderLedgerPort
 from .pipeline import ExecutionPipeline, execute_autonomous_trade
@@ -15,6 +19,7 @@ from .reconciliation_queue import ReconciliationLeaseLost, ReconciliationTask
 
 __all__ = [
     "ExecutionGateway",
+    "AccountReconciliationReport",
     "ExecutionLeg",
     "BrokerOrderRecord",
     "ExecutionPipeline",
@@ -29,5 +34,6 @@ __all__ = [
     "ReconciliationReport",
     "ReconciliationLeaseLost",
     "ReconciliationTask",
+    "reconcile_account_position",
     "execute_autonomous_trade",
 ]

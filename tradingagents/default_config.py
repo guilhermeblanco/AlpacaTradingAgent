@@ -99,6 +99,10 @@ DEFAULT_CONFIG = {
     "execution_reconciliation_enabled": True,
     "execution_reconciliation_poll_seconds": 2.0,
     "execution_reconciliation_timeout_seconds": 120.0,
+    "execution_quarantine_scope": os.getenv("EXECUTION_QUARANTINE_SCOPE"),
+    "account_reconciliation_quantity_tolerance": float(
+        os.getenv("ACCOUNT_RECONCILIATION_QUANTITY_TOLERANCE", "0.000001")
+    ),
     "batch_max_workers": 4,
     "batch_provider_max_concurrency": 2,
     "batch_provider_min_interval_seconds": 0.25,

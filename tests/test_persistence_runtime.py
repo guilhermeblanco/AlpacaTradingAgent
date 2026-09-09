@@ -143,6 +143,35 @@ def test_transition_rolls_back_when_event_append_fails(
         )
 
 
+def test_pipeline_fails_closed_when_execution_scope_is_quarantined(
+    session_factory, tmp_path: Path
+) -> None:
+    with PostgresUnitOfWork(session_factory) as uow:
+        uow.operations.set_paused(
+            "execution:alpaca:test",
+            paused=True,
+            reason="account position drift",
+            updated_by="test",
+        )
+        uow.commit()
+
+    class FailingProvider(FakeProvider):
+        def get_portfolio_snapshot(self):
+            raise AssertionError("quarantine must block before broker access")
+
+    result = ExecutionPipeline(
+        FailingProvider(),
+        DryRunExecutionGateway(),
+        journal=ExecutionJournal(tmp_path),
+        unit_of_work_factory=lambda: PostgresUnitOfWork(session_factory),
+        execution_control_service="execution:alpaca:test",
+    ).execute("AAPL", buy_intent(), 1_000)
+
+    assert not result["success"]
+    assert "quarantined" in result["error"]
+    assert result["validations"][0]["stage"] == "execution_quarantine"
+
+
 def test_runtime_selects_local_and_rejects_unknown_backends() -> None:
     runtime = build_persistence_runtime({"persistence_backend": "local"})
     assert runtime.backend == "local"

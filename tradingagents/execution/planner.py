@@ -40,7 +40,11 @@ class ExecutionPlanner:
                 delta_notional_usd=0.0,
                 reference_price=reference_price,
                 legs=[ExecutionLeg(action=PlanAction.HOLD, reason="Portfolio intent requested HOLD.")],
-                metadata={"intent_type": intent.intent_type.value, **intent.metadata},
+                metadata={
+                    "intent_type": intent.intent_type.value,
+                    **intent.metadata,
+                    "pre_trade_quantity": current_quantity,
+                },
             )
 
         if intent.target_portfolio_pct is None:
@@ -92,7 +96,11 @@ class ExecutionPlanner:
             reference_price=reference_price,
             legs=legs,
             warnings=warnings,
-            metadata={"intent_type": intent.intent_type.value, **intent.metadata},
+            metadata={
+                "intent_type": intent.intent_type.value,
+                **intent.metadata,
+                "pre_trade_quantity": current_quantity,
+            },
         )
 
     def _target_legs(self, current, target, delta, price, current_quantity):
@@ -173,5 +181,6 @@ class ExecutionPlanner:
                 "intent_type": intent.intent_type.value,
                 "legacy_action": action,
                 **intent.metadata,
+                "pre_trade_quantity": current_quantity,
             },
         )

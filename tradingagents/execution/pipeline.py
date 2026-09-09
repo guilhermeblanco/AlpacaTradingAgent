@@ -32,6 +32,7 @@ class ExecutionPipeline:
         lifecycle: Optional[LifecycleService] = None,
         unit_of_work_factory: Optional[Callable[[], Any]] = None,
         broker_capabilities: Optional[BrokerCapabilities] = None,
+        execution_control_service: Optional[str] = None,
         lifecycle_enabled: bool = True,
         lifecycle_ttl_seconds: int = 900,
     ):
@@ -43,6 +44,7 @@ class ExecutionPipeline:
         self.risk_sizer = risk_sizer
         self.lifecycle = lifecycle
         self.broker_capabilities = broker_capabilities
+        self.execution_control_service = execution_control_service
         self.persistence = ExecutionPersistence(
             self.journal,
             lifecycle=lifecycle,
@@ -105,6 +107,36 @@ class ExecutionPipeline:
                 "error": str(exc),
                 "duplicate": True,
                 "lifecycle_status": exc.record.status.value,
+            }
+        paused_reason = self.persistence.paused_reason(
+            self.execution_control_service or ""
+        )
+        if paused_reason:
+            reason = f"Execution is quarantined: {paused_reason}"
+            self._record(
+                "execution_quarantined",
+                parsed,
+                run_id,
+                payload={
+                    "service": self.execution_control_service,
+                    "reason": paused_reason,
+                },
+                status=LifecycleStatus.BLOCKED,
+                error=reason,
+            )
+            return {
+                "success": False,
+                "decision_id": parsed.decision_id,
+                "symbol": parsed.symbol,
+                "error": reason,
+                "validations": [
+                    {
+                        "stage": "execution_quarantine",
+                        "allowed": False,
+                        "reasons": [paused_reason],
+                    }
+                ],
+                "journal_path": journal_path,
             }
         errors = validate_intent(parsed, execution_symbol)
         if self.broker_capabilities is not None:
@@ -180,6 +212,10 @@ class ExecutionPipeline:
             plan.metadata["leg_idempotency_keys"] = [
                 f"{lifecycle_record.idempotency_key}-{index}" for index, _ in enumerate(plan.legs)
             ]
+        if self.execution_control_service:
+            plan.metadata["execution_quarantine_scope"] = (
+                self.execution_control_service
+            )
         self._record(
             "plan_created",
             parsed,
@@ -440,6 +476,7 @@ def execute_autonomous_trade(
     lifecycle=None,
     unit_of_work_factory=None,
     broker_capabilities=None,
+    execution_control_service=None,
     run_id: Optional[str] = None,
 ) -> dict[str, Any]:
     config = None
@@ -470,6 +507,10 @@ def execute_autonomous_trade(
             gateway = broker_runtime.execution_gateway
         if broker_capabilities is None:
             broker_capabilities = broker_runtime.capabilities
+        if execution_control_service is None:
+            execution_control_service = (config or {}).get(
+                "execution_quarantine_scope"
+            ) or f"execution:{broker_name}"
         if str(config.get("execution_gateway", "alpaca")).lower() == "dry-run":
             from .dry_run_gateway import DryRunExecutionGateway
 
@@ -518,6 +559,7 @@ def execute_autonomous_trade(
             lifecycle=lifecycle,
             unit_of_work_factory=unit_of_work_factory,
             broker_capabilities=broker_capabilities,
+            execution_control_service=execution_control_service,
             lifecycle_enabled=(config or {}).get("lifecycle_enabled", True),
             lifecycle_ttl_seconds=(config or {}).get(
                 "lifecycle_intent_ttl_seconds", 900

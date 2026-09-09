@@ -26,6 +26,16 @@ class ExecutionPersistence:
         self.lifecycle_enabled = lifecycle_enabled
         self.lifecycle_ttl_seconds = lifecycle_ttl_seconds
 
+    def paused_reason(self, service: str) -> Optional[str]:
+        if self.unit_of_work_factory is None or not service:
+            return None
+        with self.unit_of_work_factory() as uow:
+            operations = getattr(uow, "operations", None)
+            if operations is None:
+                return None
+            control = operations.control(service)
+            return (control.reason or "operator quarantine") if control.paused else None
+
     def begin(
         self,
         *,

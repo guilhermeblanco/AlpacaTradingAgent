@@ -73,6 +73,10 @@ def build_scheduler_from_env():
         safety_guard=SafetyGuard(config),
         unit_of_work_factory=persistence.unit_of_work_factory,
         broker_capabilities=broker.capabilities,
+        execution_control_service=(
+            os.getenv("EXECUTION_QUARANTINE_SCOPE")
+            or f"execution:{broker.name}:{os.getenv('AUTONOMOUS_ACCOUNT_KEY', '')}"
+        ).rstrip(":"),
         lifecycle_enabled=True,
         lifecycle_ttl_seconds=config["lifecycle_intent_ttl_seconds"],
     )
