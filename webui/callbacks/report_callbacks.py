@@ -92,7 +92,9 @@ def normalize_markdown_tables(content):
             line = re.sub(r"\s*\|\s*\|\s*", "\n| ", line)
         # Split separator rows concatenated on the same line
         line = re.sub(r"\s*\|\s*\|\s*-", "\n|-", line)
-        split_lines.extend(line.splitlines())
+        # "".splitlines() is empty, which would drop the blank line and run
+        # every paragraph in the report together.
+        split_lines.extend(line.splitlines() or [""])
 
     # Normalize table blocks
     output_lines = []
