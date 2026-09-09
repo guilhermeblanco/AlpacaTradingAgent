@@ -10,6 +10,11 @@ from .reconciliation import BrokerOrderSnapshot, BrokerOrderStatus
 class AlpacaExecutionGateway:
     name = "alpaca"
 
+    def close_position(self, symbol: str) -> dict:
+        from tradingagents.dataflows.alpaca_utils import AlpacaUtils
+
+        return AlpacaUtils.close_position(symbol)
+
     def get_order_snapshot(self, *, order_id=None, client_order_id=None) -> BrokerOrderSnapshot:
         from tradingagents.dataflows.alpaca_utils import get_alpaca_trading_client
         from alpaca.trading.requests import GetOrderByIdRequest
@@ -82,6 +87,7 @@ class AlpacaExecutionGateway:
                     and leg.quantity is not None
                     and int(leg.quantity) >= 1
                     and (stop or target)
+                    and plan.metadata.get("protection_mode", "native") == "native"
                 )
                 if protected:
                     result = AlpacaUtils.place_protected_market_order(

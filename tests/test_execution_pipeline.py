@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 
 from tradingagents.agents.schemas import (
@@ -142,7 +143,7 @@ class ExecutionPipelineTests(unittest.TestCase):
             self.assertIn("whole-share", result["error"])
             self.assertEqual(result["validations"][0]["stage"], "plan")
 
-    def test_broker_capabilities_reject_unimplemented_protective_orders(self):
+    def test_broker_without_native_protection_uses_software_mode(self):
         intent = build_trade_intent_from_risk_decision(
             symbol="AAPL",
             trading_mode="investment",
@@ -158,14 +159,15 @@ class ExecutionPipelineTests(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as tmp:
             result = ExecutionPipeline(
-                FakeProvider(fail=True),
+                FakeProvider(),
                 DryRunExecutionGateway(),
                 journal=ExecutionJournal(tmp),
                 broker_capabilities=BrokerCapabilities(native_brackets=False),
+                safety_guard=SimpleNamespace(enabled=False),
             ).execute("AAPL", intent, 1_000)
 
-            self.assertFalse(result["success"])
-            self.assertIn("native protective orders", result["error"])
+            self.assertTrue(result["success"])
+            self.assertEqual(result["plan"]["metadata"]["protection_mode"], "software")
 
 
 if __name__ == "__main__":

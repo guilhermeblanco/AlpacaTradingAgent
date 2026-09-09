@@ -104,6 +104,32 @@ class TradierExecutionGateway:
     def __init__(self, client: TradierClient):
         self.client = client
 
+    def close_position(self, symbol: str) -> dict:
+        position = self._position(symbol)
+        if position is None:
+            return {"success": True, "status": "already_closed", "symbol": symbol}
+        side = "sell" if position.quantity > 0 else "buy_to_cover"
+        response = self.client.request(
+            "POST",
+            f"/accounts/{self.client.account_id}/orders",
+            data={
+                "class": "equity",
+                "symbol": symbol,
+                "side": side,
+                "quantity": int(abs(position.quantity)),
+                "type": "market",
+                "duration": "day",
+            },
+        )
+        order = response.get("order") or {}
+        success = bool(order.get("id") or order.get("result"))
+        return {"success": success, "order_id": order.get("id"), "raw": order}
+
+    def _position(self, symbol: str):
+        return TradierSnapshotProvider(self.client).get_portfolio_snapshot().position_for(
+            symbol
+        )
+
     def get_order_snapshot(
         self, *, order_id=None, client_order_id=None
     ) -> BrokerOrderSnapshot:

@@ -13,6 +13,7 @@ from .gateway import ExecutionGateway, SubmissionUncertain
 from .journal import ExecutionJournal, snapshot_hash
 from .models import ExecutionResult, PlanAction
 from .planner import ExecutionPlanner
+from .protection import ProtectionMode, select_protection_mode
 from .persistence import ExecutionPersistence
 from .validator import validate_intent, validate_plan_semantics, validate_snapshot
 
@@ -33,6 +34,7 @@ class ExecutionPipeline:
         unit_of_work_factory: Optional[Callable[[], Any]] = None,
         broker_capabilities: Optional[BrokerCapabilities] = None,
         execution_control_service: Optional[str] = None,
+        protective_stop_store=None,
         lifecycle_enabled: bool = True,
         lifecycle_ttl_seconds: int = 900,
     ):
@@ -45,6 +47,7 @@ class ExecutionPipeline:
         self.lifecycle = lifecycle
         self.broker_capabilities = broker_capabilities
         self.execution_control_service = execution_control_service
+        self.protective_stop_store = protective_stop_store
         self.persistence = ExecutionPersistence(
             self.journal,
             lifecycle=lifecycle,
@@ -246,6 +249,12 @@ class ExecutionPipeline:
                 "journal_path": journal_path,
             }
 
+        protection_mode, protection_prices = select_protection_mode(
+            parsed, plan, self.broker_capabilities
+        )
+        plan.metadata["protection_mode"] = protection_mode.value
+        plan.metadata["protective_prices"] = protection_prices
+
         if self.risk_sizer is not None:
             for leg in plan.legs:
                 if leg.action == PlanAction.HOLD or leg.risk_reducing:
@@ -427,6 +436,24 @@ class ExecutionPipeline:
             (action.get("result", action) or {}).get("order_id")
             for action in result.actions
         )
+        if (
+            result.success
+            and has_remote_order
+            and protection_mode == ProtectionMode.SOFTWARE
+        ):
+            store = self.protective_stop_store
+            if store is None:
+                from tradingagents.dataflows.virtual_stops_manager import VirtualStopsManager
+
+                store = VirtualStopsManager
+            store.add_virtual_stop(
+                symbol=parsed.symbol,
+                stop_loss_price=protection_prices["stop_loss_price"],
+                take_profit_price=protection_prices["take_profit_price"],
+                notional=abs(plan.delta_notional_usd),
+                entry_price=plan.reference_price,
+                broker=self.gateway.name.replace("-paper", ""),
+            )
         needs_reconciliation = bool(has_remote_order) or result.submission_uncertain
         submission_only = not plan.is_noop and needs_reconciliation
         event = (
@@ -561,6 +588,7 @@ def execute_autonomous_trade(
             unit_of_work_factory=unit_of_work_factory,
             broker_capabilities=broker_capabilities,
             execution_control_service=execution_control_service,
+            protective_stop_store=(config or {}).get("protective_stop_store"),
             lifecycle_enabled=(config or {}).get("lifecycle_enabled", True),
             lifecycle_ttl_seconds=(config or {}).get(
                 "lifecycle_intent_ttl_seconds", 900

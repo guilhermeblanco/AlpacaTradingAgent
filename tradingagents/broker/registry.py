@@ -68,11 +68,6 @@ class BrokerCapabilities:
         tif = str(intent.order_intent.time_in_force or "").lower()
         if tif and tif not in self.time_in_force:
             errors.append(f"Broker does not support {tif} time in force.")
-        if (
-            intent.execution_constraints.broker_protective_orders_enabled
-            and not self.native_brackets
-        ):
-            errors.append("Broker adapter does not support native protective orders.")
         return errors
 
     def validate_plan(self, intent: TradeIntent, plan: ExecutionPlan) -> list[str]:
