@@ -125,12 +125,16 @@ def get_treasury_yield_curve(curr_date: str) -> str:
         ten_year = next((item for item in yield_data if item["maturity"] == "10 Year"), None)
         
         if two_year and ten_year:
-            spread = ten_year["yield"] - two_year["yield"]
-            result += f"- **2Y-10Y Spread**: {spread:.2f} basis points\n"
-            
-            if spread < 0:
+            # FRED reports yields in percent. The thresholds below are basis
+            # points, so comparing the raw percentage-point difference made
+            # every non-inverted curve look flat and put "NORMAL" out of
+            # reach: a healthy 150bp spread read as 1.5 < 50.
+            spread_bps = (ten_year["yield"] - two_year["yield"]) * 100
+            result += f"- **2Y-10Y Spread**: {spread_bps:.0f} basis points\n"
+
+            if spread_bps < 0:
                 result += "- **⚠️ INVERTED YIELD CURVE**: Potential recession signal\n"
-            elif spread < 50:
+            elif spread_bps < 50:
                 result += "- **📊 FLAT YIELD CURVE**: Economic uncertainty\n"
             else:
                 result += "- **📈 NORMAL YIELD CURVE**: Healthy economic expectations\n"

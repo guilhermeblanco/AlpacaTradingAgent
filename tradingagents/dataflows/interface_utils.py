@@ -4,6 +4,11 @@ from typing import Any, List
 
 from .config import get_config
 
+import re
+
+# "1." / "1)" style menu entries, as well as the bulleted kind.
+_MENU_ITEM_PATTERN = re.compile(r"^\d+[.)]\s")
+
 
 _TRAILING_INTERACTIVE_PATTERNS = (
     "would you like",
@@ -47,23 +52,38 @@ def _strip_trailing_interactive_followup(text: str) -> str:
     while lines and not lines[-1].strip():
         lines.pop()
 
+    def _normalize(line: str) -> str:
+        return (
+            line.strip()
+            .lower()
+            .replace("\u2019", "'")
+            .replace("\u2018", "'")
+            .replace("\u2011", "-")
+            .replace("\u2013", "-")
+            .replace("\u2014", "-")
+        )
+
+    def _is_menu_item(line: str) -> bool:
+        stripped = line.strip()
+        return stripped.startswith(("- ", "* ")) or bool(
+            _MENU_ITEM_PATTERN.match(stripped)
+        )
+
     removed_any = False
     while lines:
-        tail = (
-            lines[-1]
-            .strip()
-            .lower()
-            .replace("’", "'")
-            .replace("‘", "'")
-            .replace("‑", "-")
-            .replace("–", "-")
-            .replace("—", "-")
-        )
-        if any(pattern in tail for pattern in _TRAILING_INTERACTIVE_PATTERNS):
+        # A follow-up offer introduces its menu, so the bullets sit below it
+        # rather than above. Look past them to find the line that offers.
+        index = len(lines) - 1
+        while index >= 0 and (_is_menu_item(lines[index]) or not lines[index].strip()):
+            index -= 1
+        if index < 0:
+            break
+        if any(
+            pattern in _normalize(lines[index])
+            for pattern in _TRAILING_INTERACTIVE_PATTERNS
+        ):
             removed_any = True
-            lines.pop()
-            while lines and lines[-1].strip().startswith(("- ", "* ")):
-                lines.pop()
+            del lines[index:]
             while lines and not lines[-1].strip():
                 lines.pop()
             continue

@@ -19,7 +19,7 @@ from .earnings_utils import get_earnings_calendar_data, get_earnings_surprises_a
 from .macro_utils import get_macro_economic_summary, get_economic_indicators_report, get_treasury_yield_curve
 from dateutil.relativedelta import relativedelta
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import os
 import pandas as pd
@@ -139,13 +139,14 @@ def _quick_model_params_for_tool(
     max_output_tokens: int,
     store_responses: bool,
 ) -> Dict:
-    params = normalize_model_params(
-        model,
-        config.get("quick_llm_params"),
-        role="quick",
-    )
+    configured = config.get("quick_llm_params") or {}
+    params = normalize_model_params(model, configured, role="quick")
     params.setdefault("max_output_tokens", max_output_tokens)
-    params.setdefault("store", store_responses)
+    # normalize_model_params always supplies a `store` default, so a plain
+    # setdefault could never carry openai_store_responses through and the
+    # setting had no effect. An explicit per-model choice still wins.
+    if "store" not in configured:
+        params["store"] = store_responses
     return params
 
 
@@ -262,7 +263,7 @@ def get_finnhub_news(
         for entry in live_entries:
             ts = entry.get("datetime", 0)
             if isinstance(ts, (int, float)) and ts > 0:
-                day = datetime.utcfromtimestamp(ts).strftime("%Y-%m-%d")
+                day = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
             else:
                 day = entry.get("date", curr_date)
             headline = entry.get("headline", "Untitled")
@@ -1496,10 +1497,14 @@ def get_defillama_fundamentals(
     Returns:
         str: Markdown-formatted fundamentals report for the cryptocurrency
     """
-    # Clean the ticker - remove any USD/USDT suffix if present
-    clean_ticker = ticker.upper().replace("USD", "").replace("USDT", "")
+    # Clean the ticker - remove any USD/USDT suffix if present. Split the
+    # pair first and strip the longer suffix first, or BTCUSDT loses its
+    # "USD" and DeFi Llama gets asked about "BTCT".
+    clean_ticker = ticker.upper()
     if "/" in clean_ticker:
         clean_ticker = clean_ticker.split("/")[0]
+    else:
+        clean_ticker = clean_ticker.replace("USDT", "").replace("USD", "")
         
     try:
         return get_defillama_fundamentals_util(clean_ticker, lookback_days)

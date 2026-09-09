@@ -119,21 +119,29 @@ class FinancialSituationMemory:
         if query_embedding is None:
             return []
 
-        results = self.situation_collection.query(
-            query_embeddings=[query_embedding],
-            n_results=n_matches,
-            include=["metadatas", "documents", "distances"],
-        )
-
-        matched_results = []
-        for i in range(len(results["documents"][0])):
-            matched_results.append(
-                {
-                    "matched_situation": results["documents"][0][i],
-                    "recommendation": results["metadatas"][0][i]["recommendation"],
-                    "similarity_score": 1 - results["distances"][0][i],
-                }
+        # Reflections are advisory: the embedding path above already degrades
+        # to "no lessons" when OpenAI is unreachable, and a sick vector store
+        # deserves the same treatment rather than aborting the graph node that
+        # asked for them.
+        try:
+            results = self.situation_collection.query(
+                query_embeddings=[query_embedding],
+                n_results=n_matches,
+                include=["metadatas", "documents", "distances"],
             )
+
+            matched_results = []
+            for i in range(len(results["documents"][0])):
+                matched_results.append(
+                    {
+                        "matched_situation": results["documents"][0][i],
+                        "recommendation": results["metadatas"][0][i]["recommendation"],
+                        "similarity_score": 1 - results["distances"][0][i],
+                    }
+                )
+        except Exception as exc:
+            print(f"[MEMORY] Lesson lookup failed; continuing without it. ({exc})")
+            return []
 
         return matched_results
 

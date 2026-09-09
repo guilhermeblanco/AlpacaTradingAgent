@@ -5,7 +5,6 @@ This module provides utilities to capture and store the prompts used by each age
 when generating reports, allowing users to view the exact prompts via "Show Prompt" buttons.
 """
 
-import re
 from typing import Dict, Optional, Any
 from webui.utils.state import app_state
 from tradingagents.run_logger import get_run_audit_logger
@@ -46,39 +45,6 @@ class PromptCapture:
             print(f"[PROMPT_CAPTURE] Error extracting prompt: {e}")
             
         return "Prompt extraction failed - format not recognized"
-    
-    @staticmethod
-    def extract_prompt_from_agent_file(agent_file_path: str, agent_type: str) -> str:
-        """
-        Extract the system message directly from an agent file by reading its content
-        """
-        try:
-            with open(agent_file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-                
-            # Look for system_message variable assignment
-            system_msg_pattern = r'system_message\s*=\s*\(\s*["\']([^"\']*(?:["\'][^"\']*)*)["\']'
-            match = re.search(system_msg_pattern, content, re.DOTALL)
-            
-            if match:
-                system_message = match.group(1)
-                # Clean up the extracted message
-                system_message = re.sub(r'\s+', ' ', system_message.strip())
-                return system_message
-                
-            # Fallback: look for any long string that might be a prompt
-            long_string_pattern = r'["\']([^"\']{200,})["\']'
-            matches = re.findall(long_string_pattern, content, re.DOTALL)
-            
-            if matches:
-                # Return the longest string found (likely the main prompt)
-                longest_match = max(matches, key=len)
-                return re.sub(r'\s+', ' ', longest_match.strip())
-                
-        except Exception as e:
-            print(f"[PROMPT_CAPTURE] Error reading agent file {agent_file_path}: {e}")
-            
-        return f"Could not extract prompt from {agent_type} agent file"
     
     @staticmethod
     def get_default_prompts() -> Dict[str, str]:

@@ -165,6 +165,43 @@ class MaintainMemoryTests(unittest.TestCase):
         self.assertEqual(summary["kept"], 0)
 
 
+class LookupResilienceTests(unittest.TestCase):
+    """Reflections are advisory, so a sick store must not abort the node
+    that asked for them — the embedding path already degrades this way."""
+
+    def test_lessons_are_returned_when_the_store_is_healthy(self):
+        memory = _fresh_memory()
+        _add(memory, "gap up on earnings", [1.0, 0.0])
+        memory.get_embedding = lambda _t: [1.0, 0.0]
+
+        found = memory.get_memories("gap up on earnings", n_matches=1)
+
+        self.assertEqual(found[0]["recommendation"], "advice for gap up on earnings")
+
+    def test_a_failing_vector_store_yields_no_lessons_rather_than_raising(self):
+        memory = _fresh_memory()
+        memory.get_embedding = lambda _t: [1.0, 0.0]
+
+        def explode(**_kwargs):
+            raise RuntimeError("vector store unavailable")
+
+        memory.situation_collection.query = explode
+
+        self.assertEqual(memory.get_memories("any situation"), [])
+
+    def test_no_embedding_yields_no_lessons(self):
+        memory = _fresh_memory()
+        memory.get_embedding = lambda _t: None
+
+        self.assertEqual(memory.get_memories("any situation"), [])
+
+    def test_disabled_embeddings_yield_no_lessons(self):
+        memory = _fresh_memory()
+        memory.embeddings_enabled = False
+
+        self.assertEqual(memory.get_memories("any situation"), [])
+
+
 class ConfigWiringTests(unittest.TestCase):
     def test_default_config_exposes_maintenance_keys(self):
         from tradingagents.default_config import DEFAULT_CONFIG

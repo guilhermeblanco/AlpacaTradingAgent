@@ -157,3 +157,241 @@ class MockedTradingGraphTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SymbolConversionTests(unittest.TestCase):
+    """Reflection fetches outcome prices from Yahoo, which spells pairs with
+    a hyphen."""
+
+    def _graph(self, tmp_path, **overrides):
+        config = DEFAULT_CONFIG.copy()
+        config.update(
+            {
+                "llm_provider": "local_openai",
+                "backend_url": "http://localhost:11434/v1",
+                "data_cache_dir": str(tmp_path / "cache"),
+                "results_dir": str(tmp_path / "results"),
+                "memory_log_path": str(tmp_path / "memory.md"),
+                "agent_memory_dir": str(tmp_path / "agent-memory"),
+            }
+        )
+        config.update(overrides)
+        with patch(
+            "tradingagents.graph.trading_graph.create_llm_client",
+            return_value=FakeClient(),
+        ), patch(
+            "tradingagents.graph.trading_graph.GraphSetup.setup_graph",
+            return_value=FakeWorkflow({}),
+        ):
+            return TradingAgentsGraph(
+                selected_analysts=["market"], config=config, debug=False
+            )
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.addCleanup(self._tmp.cleanup)
+        self.graph = self._graph(Path(self._tmp.name))
+
+    def test_a_pair_is_converted_to_yahoo_spelling(self):
+        self.assertEqual(self.graph._ticker_for_yfinance("BTC/USD"), "BTC-USD")
+
+    def test_an_equity_passes_through(self):
+        self.assertEqual(self.graph._ticker_for_yfinance("NVDA"), "NVDA")
+
+    def test_an_unconvertible_symbol_falls_back_to_a_hyphen(self):
+        with patch(
+            "tradingagents.graph.trading_graph.TickerUtils.convert_for_api",
+            side_effect=RuntimeError("cannot normalize"),
+        ):
+            self.assertEqual(self.graph._ticker_for_yfinance("BTC/USD"), "BTC-USD")
+
+    def test_an_equity_is_measured_against_the_index(self):
+        self.assertEqual(self.graph._benchmark_for("NVDA"), "SPY")
+
+    def test_the_index_is_not_measured_against_itself(self):
+        self.assertIsNone(self.graph._benchmark_for("SPY"))
+
+    def test_a_token_is_measured_against_bitcoin(self):
+        self.assertEqual(self.graph._benchmark_for("ETH/USD"), "BTC-USD")
+
+    def test_bitcoin_is_not_measured_against_itself(self):
+        self.assertIsNone(self.graph._benchmark_for("BTC/USD"))
+
+
+class OutcomeReturnTests(SymbolConversionTests):
+    """The realized return is what turns a decision into a lesson."""
+
+    def _download(self, frame, error=None):
+        def download(symbol, **kwargs):
+            if error:
+                raise error
+            return frame
+
+        return patch("tradingagents.graph.trading_graph.yf.download", download)
+
+    @staticmethod
+    def _closes(values):
+        import pandas as pd
+
+        return pd.DataFrame(
+            {"Close": values},
+            index=pd.date_range("2026-01-02", periods=len(values), freq="D"),
+        )
+
+    def _fetch(self, frame, *, error=None, start=None, holding_days=5):
+        from datetime import date
+
+        with self._download(frame, error):
+            return self.graph._fetch_return(
+                "NVDA", start or date(2026, 1, 2), holding_days
+            )
+
+    def test_the_return_is_measured_across_the_window(self):
+        self.assertAlmostEqual(self._fetch(self._closes([100.0, 110.0])), 0.10)
+
+    def test_a_window_that_has_not_closed_yet_is_not_measured(self):
+        from datetime import date, timedelta
+
+        self.assertIsNone(
+            self._fetch(self._closes([100.0, 110.0]), start=date.today())
+        )
+        self.assertIsNone(
+            self._fetch(
+                self._closes([100.0, 110.0]),
+                start=date.today() - timedelta(days=1),
+            )
+        )
+
+    def test_a_failed_download_yields_no_measurement(self):
+        self.assertIsNone(
+            self._fetch(None, error=RuntimeError("yahoo unreachable"))
+        )
+
+    def test_an_empty_response_yields_no_measurement(self):
+        import pandas as pd
+
+        self.assertIsNone(self._fetch(pd.DataFrame()))
+        self.assertIsNone(self._fetch(None))
+
+    def test_a_response_without_closes_yields_no_measurement(self):
+        import pandas as pd
+
+        self.assertIsNone(self._fetch(pd.DataFrame({"Open": [100.0, 110.0]})))
+
+    def test_a_single_session_is_not_a_return(self):
+        self.assertIsNone(self._fetch(self._closes([100.0])))
+
+    def test_a_multiindex_response_takes_the_first_column(self):
+        import pandas as pd
+
+        frame = pd.concat({"NVDA": self._closes([100.0, 110.0])}, axis=1)
+        frame.columns = pd.MultiIndex.from_tuples([("Close", "NVDA")])
+
+        self.assertAlmostEqual(self._fetch(frame), 0.10)
+
+    def test_a_zero_opening_price_is_not_divided_by(self):
+        self.assertIsNone(self._fetch(self._closes([0.0, 110.0])))
+
+    def test_missing_sessions_are_dropped_before_measuring(self):
+        import numpy as np
+
+        frame = self._closes([100.0, np.nan, 110.0])
+
+        self.assertAlmostEqual(self._fetch(frame), 0.10)
+
+
+class OutcomeResolutionTests(SymbolConversionTests):
+    """Pending decisions are resolved once their holding window has closed."""
+
+    def _resolve(self, entries, *, returns=None, reflect_error=None,
+                 trade_date="2026-02-01"):
+        recorded = []
+        reflected = []
+
+        self.graph.memory_log.get_pending_entries = lambda ticker: list(entries)
+        self.graph.memory_log.update_with_outcome = lambda **kwargs: recorded.append(
+            kwargs
+        )
+        self.graph._reflect_agents_on_outcome = lambda *args: reflected.append(args)
+
+        def fetch(ticker, start, holding_days):
+            return (returns or {}).get(ticker)
+
+        self.graph._fetch_return = fetch
+        if reflect_error:
+            self.graph.reflector.reflect_on_final_decision = mock_raiser(reflect_error)
+        else:
+            self.graph.reflector.reflect_on_final_decision = (
+                lambda decision, raw, alpha: "the lesson"
+            )
+
+        self.graph._resolve_memory_log_outcomes("NVDA", trade_date)
+        return recorded, reflected
+
+    ENTRY = {"date": "2026-01-02", "decision": "BUY"}
+
+    def test_a_closed_decision_is_recorded_with_its_alpha(self):
+        recorded, reflected = self._resolve(
+            [self.ENTRY], returns={"NVDA": 0.10, "SPY": 0.04}
+        )
+
+        self.assertAlmostEqual(recorded[0]["raw_return"], 0.10)
+        self.assertAlmostEqual(recorded[0]["alpha_return"], 0.06)
+        self.assertEqual(recorded[0]["reflection"], "the lesson")
+        self.assertEqual(len(reflected), 1)
+
+    def test_without_a_benchmark_reading_there_is_no_alpha(self):
+        recorded, _reflected = self._resolve([self.ENTRY], returns={"NVDA": 0.10})
+
+        self.assertIsNone(recorded[0]["alpha_return"])
+
+    def test_an_entry_from_today_is_not_yet_resolvable(self):
+        recorded, _reflected = self._resolve(
+            [{"date": "2026-02-01", "decision": "BUY"}], returns={"NVDA": 0.10}
+        )
+
+        self.assertEqual(recorded, [])
+
+    def test_an_entry_with_no_date_is_skipped(self):
+        recorded, _reflected = self._resolve(
+            [{"decision": "BUY"}], returns={"NVDA": 0.10}
+        )
+
+        self.assertEqual(recorded, [])
+
+    def test_an_entry_with_an_unreadable_date_is_skipped(self):
+        recorded, _reflected = self._resolve(
+            [{"date": "whenever", "decision": "BUY"}], returns={"NVDA": 0.10}
+        )
+
+        self.assertEqual(recorded, [])
+
+    def test_a_decision_with_no_price_data_stays_pending(self):
+        recorded, _reflected = self._resolve([self.ENTRY], returns={})
+
+        self.assertEqual(recorded, [])
+
+    def test_a_failed_reflection_still_records_the_outcome(self):
+        """The number is the fact; the prose is commentary."""
+        recorded, _reflected = self._resolve(
+            [self.ENTRY],
+            returns={"NVDA": 0.10},
+            reflect_error=RuntimeError("model unavailable"),
+        )
+
+        self.assertAlmostEqual(recorded[0]["raw_return"], 0.10)
+        self.assertIn("reflection generation failed", recorded[0]["reflection"])
+
+    def test_an_unreadable_run_date_falls_back_to_today(self):
+        recorded, _reflected = self._resolve(
+            [self.ENTRY], returns={"NVDA": 0.10}, trade_date="whenever"
+        )
+
+        self.assertEqual(len(recorded), 1)
+
+
+def mock_raiser(error):
+    def raise_it(*_args, **_kwargs):
+        raise error
+
+    return raise_it

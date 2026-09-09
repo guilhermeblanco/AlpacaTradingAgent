@@ -1,0 +1,865 @@
+"""Tests for the individual data sources behind the analyst tools.
+
+Each of these talks to an external API. What matters offline is the shape
+around the call: how a missing key, an outage, or an empty response is
+reported, and the filtering that decides whether a post or series is even
+relevant to the symbol being analyzed.
+"""
+
+from __future__ import annotations
+
+import unittest
+from types import SimpleNamespace
+from unittest import mock
+
+from tradingagents.dataflows import defillama_utils, earnings_utils, macro_utils
+from tradingagents.dataflows import reddit_utils
+
+
+class FredCredentialTests(unittest.TestCase):
+    def test_a_configured_key_is_used(self):
+        with mock.patch.object(macro_utils, "get_api_key", lambda *a: "fred-key"):
+            self.assertEqual(macro_utils.get_fred_api_key(), "fred-key")
+
+    def test_a_lookup_failure_falls_back_to_the_environment(self):
+        with mock.patch.object(
+            macro_utils, "get_api_key", side_effect=RuntimeError("vault locked")
+        ), mock.patch.dict("os.environ", {"FRED_API_KEY": "from-env"}):
+            self.assertEqual(macro_utils.get_fred_api_key(), "from-env")
+
+    def test_no_key_anywhere_reads_as_absent(self):
+        with mock.patch.object(macro_utils, "get_api_key", lambda *a: None), \
+             mock.patch.dict("os.environ", {}, clear=True):
+            self.assertIsNone(macro_utils.get_fred_api_key())
+
+
+class FredVintageTests(unittest.TestCase):
+    """FRED rejects a vintage in the future, and the series' own calendar is
+    Central time."""
+
+    def test_a_past_date_is_kept(self):
+        self.assertEqual(macro_utils._fred_vintage_date("2020-01-01"), "2020-01-01")
+
+    def test_a_future_date_is_clamped_to_today(self):
+        clamped = macro_utils._fred_vintage_date("2999-01-01")
+
+        self.assertNotEqual(clamped, "2999-01-01")
+        self.assertLess(clamped, "2999-01-01")
+
+
+class FredFetchTests(unittest.TestCase):
+    def test_a_missing_key_is_reported_rather_than_requested(self):
+        with mock.patch.object(macro_utils, "get_fred_api_key", lambda: None):
+            result = macro_utils.get_fred_data("FEDFUNDS", "2026-01-01", "2026-06-01")
+
+        self.assertIn("error", result)
+        self.assertIn("FRED API key", result["error"])
+
+    def test_a_successful_response_is_returned(self):
+        response = mock.MagicMock()
+        response.json.return_value = {"observations": [{"value": "5.0"}]}
+
+        with mock.patch.object(macro_utils, "get_fred_api_key", lambda: "k"), \
+             mock.patch.object(macro_utils.requests, "get", lambda *a, **k: response):
+            result = macro_utils.get_fred_data("FEDFUNDS", "2026-01-01", "2026-06-01")
+
+        self.assertEqual(result["observations"][0]["value"], "5.0")
+
+    def test_an_outage_is_reported_rather_than_raised(self):
+        def explode(*_a, **_k):
+            raise RuntimeError("connection reset")
+
+        with mock.patch.object(macro_utils, "get_fred_api_key", lambda: "k"), \
+             mock.patch.object(macro_utils.requests, "get", explode):
+            result = macro_utils.get_fred_data("FEDFUNDS", "2026-01-01", "2026-06-01")
+
+        self.assertIn("error", result)
+        self.assertIn("connection reset", result["error"])
+
+    def test_the_request_pins_the_vintage_to_both_ends(self):
+        captured = {}
+
+        def capture(_url, params=None, timeout=None):
+            captured.update(params or {})
+            response = mock.MagicMock()
+            response.json.return_value = {}
+            return response
+
+        with mock.patch.object(macro_utils, "get_fred_api_key", lambda: "k"), \
+             mock.patch.object(macro_utils.requests, "get", capture):
+            macro_utils.get_fred_data("FEDFUNDS", "2026-01-01", "2026-06-01")
+
+        self.assertEqual(captured["realtime_start"], captured["realtime_end"])
+        self.assertEqual(captured["series_id"], "FEDFUNDS")
+
+
+class MacroReportTests(unittest.TestCase):
+    def _no_key(self):
+        return mock.patch.object(macro_utils, "get_fred_api_key", lambda: None)
+
+    def test_the_yield_curve_reports_a_missing_key(self):
+        with self._no_key():
+            report = macro_utils.get_treasury_yield_curve("2026-09-09")
+
+        self.assertIsInstance(report, str)
+        self.assertTrue(report.strip())
+
+    def test_the_indicator_report_survives_a_missing_key(self):
+        with self._no_key():
+            report = macro_utils.get_economic_indicators_report("2026-09-09")
+
+        self.assertIsInstance(report, str)
+
+    def test_the_macro_summary_survives_a_missing_key(self):
+        with self._no_key():
+            report = macro_utils.get_macro_economic_summary("2026-09-09")
+
+        self.assertIsInstance(report, str)
+
+    def test_the_fed_calendar_survives_a_missing_key(self):
+        with self._no_key():
+            self.assertIsInstance(
+                macro_utils.get_fed_calendar_and_minutes("2026-09-09"), str
+            )
+
+
+class RedditSearchTermTests(unittest.TestCase):
+    def setUp(self):
+        reddit_utils._SEARCH_TERMS_CACHE.clear()
+        self.addCleanup(reddit_utils._SEARCH_TERMS_CACHE.clear)
+
+    def test_a_ticker_yields_itself_and_its_cashtag(self):
+        with mock.patch.object(reddit_utils, "get_company_name", lambda t: t):
+            terms = reddit_utils.get_search_terms("NVDA")
+
+        self.assertIn("NVDA", terms)
+        self.assertIn("$NVDA", terms)
+
+    def test_a_company_name_is_added_and_trimmed_of_suffixes(self):
+        with mock.patch.object(
+            reddit_utils, "get_company_name", lambda _t: "NVIDIA Corporation"
+        ):
+            terms = reddit_utils.get_search_terms("NVDA")
+
+        self.assertIn("NVIDIA Corporation", terms)
+        self.assertIn("NVIDIA", terms)
+
+    def test_alias_names_become_separate_terms(self):
+        with mock.patch.object(
+            reddit_utils, "get_company_name", lambda _t: "Alphabet OR Google"
+        ):
+            terms = reddit_utils.get_search_terms("GOOGL")
+
+        self.assertIn("Alphabet", terms)
+        self.assertIn("Google", terms)
+
+    def test_an_empty_ticker_yields_no_terms(self):
+        self.assertEqual(reddit_utils.get_search_terms(""), [])
+
+    def test_terms_are_deduplicated(self):
+        with mock.patch.object(reddit_utils, "get_company_name", lambda _t: "NVDA"):
+            terms = reddit_utils.get_search_terms("NVDA")
+
+        self.assertEqual(len(terms), len(set(terms)))
+
+    def test_the_result_is_cached_per_ticker(self):
+        calls = {"count": 0}
+
+        def counted(_ticker):
+            calls["count"] += 1
+            return "NVIDIA Corp"
+
+        with mock.patch.object(reddit_utils, "get_company_name", counted):
+            reddit_utils.get_search_terms("NVDA")
+            reddit_utils.get_search_terms("NVDA")
+
+        self.assertEqual(calls["count"], 1)
+
+
+class RedditRelevanceTests(unittest.TestCase):
+    """Reddit is noisy; a two-letter ticker matches almost anything."""
+
+    TERMS = ["NVDA", "$NVDA", "NVIDIA"]
+
+    def test_a_post_naming_the_company_is_relevant(self):
+        self.assertTrue(
+            reddit_utils._post_relevant_to_company(
+                "NVIDIA earnings", "strong quarter", self.TERMS
+            )
+        )
+
+    def test_a_post_naming_the_ticker_is_relevant(self):
+        self.assertTrue(
+            reddit_utils._post_relevant_to_company("NVDA up", "", self.TERMS)
+        )
+
+    def test_an_unrelated_post_is_not_relevant(self):
+        self.assertFalse(
+            reddit_utils._post_relevant_to_company(
+                "Bread recipes", "flour and water", self.TERMS
+            )
+        )
+
+    def test_a_term_inside_a_word_does_not_match(self):
+        self.assertFalse(
+            reddit_utils._post_relevant_to_company("NVDAX fund", "", ["NVDA"])
+        )
+
+    def test_a_very_short_ticker_only_matches_as_a_cashtag(self):
+        """Otherwise 'F' or 'A' matches nearly every post."""
+        self.assertFalse(
+            reddit_utils._post_relevant_to_company("A day of trading", "", ["F"])
+        )
+        self.assertTrue(
+            reddit_utils._post_relevant_to_company("$F is up", "", ["$F"])
+        )
+
+    def test_no_terms_lets_everything_through(self):
+        self.assertTrue(reddit_utils._post_relevant_to_company("anything", "", []))
+
+    def test_matching_ignores_case(self):
+        self.assertTrue(
+            reddit_utils._post_relevant_to_company("nvidia rally", "", ["NVIDIA"])
+        )
+
+
+class EarningsCalendarTests(unittest.TestCase):
+    def test_a_missing_key_is_reported(self):
+        with mock.patch.object(
+            earnings_utils, "get_earnings_calendar_api_key", lambda: None
+        ):
+            report = earnings_utils.get_finnhub_earnings_calendar("NVDA", "2026-09-01", "2026-09-30")
+
+        self.assertIsInstance(report, str)
+        self.assertTrue(report.strip())
+
+    def test_an_outage_is_reported_rather_than_raised(self):
+        def explode(*_a, **_k):
+            raise RuntimeError("connection reset")
+
+        with mock.patch.object(
+            earnings_utils, "get_earnings_calendar_api_key", lambda: "k"
+        ), mock.patch.object(earnings_utils.requests, "get", explode):
+            report = earnings_utils.get_finnhub_earnings_calendar("NVDA", "2026-09-01", "2026-09-30")
+
+        self.assertIsInstance(report, str)
+
+    def test_crypto_symbols_get_their_own_calendar_equivalent(self):
+        report = earnings_utils.get_crypto_earnings_equivalent("BTC/USD", "2026-09-01", "2026-09-30")
+
+        self.assertIsInstance(report, str)
+        self.assertTrue(report.strip())
+
+    def test_the_dispatcher_routes_crypto_away_from_finnhub(self):
+        with mock.patch.object(
+            earnings_utils,
+            "get_finnhub_earnings_calendar",
+            lambda *a, **k: "equity path",
+        ), mock.patch.object(
+            earnings_utils,
+            "get_crypto_earnings_equivalent",
+            lambda *a, **k: "crypto path",
+        ):
+            self.assertEqual(
+                earnings_utils.get_earnings_calendar_data("BTC/USD", "2026-09-01", "2026-09-30"),
+                "crypto path",
+            )
+            self.assertEqual(
+                earnings_utils.get_earnings_calendar_data("NVDA", "2026-09-01", "2026-09-30"),
+                "equity path",
+            )
+
+    def test_the_surprise_analysis_survives_a_missing_key(self):
+        with mock.patch.object(
+            earnings_utils, "get_earnings_calendar_api_key", lambda: None
+        ):
+            self.assertIsInstance(
+                earnings_utils.get_earnings_surprises_analysis("NVDA", "2026-09-09"),
+                str,
+            )
+
+
+class DefiLlamaTests(unittest.TestCase):
+    def test_an_outage_is_reported_rather_than_raised(self):
+        with mock.patch.object(
+            defillama_utils, "_fetch_json", side_effect=RuntimeError("gateway timeout")
+        ):
+            report = defillama_utils.get_fundamentals("ETH/USD")
+
+        self.assertIsInstance(report, str)
+        self.assertTrue(report.strip())
+
+    def test_an_unknown_symbol_is_reported(self):
+        with mock.patch.object(defillama_utils, "_get_protocols", lambda: []):
+            report = defillama_utils.get_fundamentals("NOTACOIN/USD")
+
+        self.assertIsInstance(report, str)
+
+    def test_a_known_protocol_is_located_by_symbol(self):
+        protocols = [
+            {"slug": "uniswap", "symbol": "UNI", "name": "Uniswap", "tvl": 1_000_000}
+        ]
+
+        with mock.patch.object(defillama_utils, "_get_protocols", lambda: protocols):
+            slug, name = defillama_utils._find_slug("UNI")
+
+        self.assertEqual(slug, "uniswap")
+        self.assertEqual(name, "Uniswap")
+
+    def test_an_unmatched_symbol_locates_nothing(self):
+        with mock.patch.object(defillama_utils, "_get_protocols", lambda: []):
+            slug, name = defillama_utils._find_slug("NOPE")
+
+        self.assertIsNone(slug)
+        self.assertIsNone(name)
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class RedditOfflineFetchTests(unittest.TestCase):
+    """The offline corpus is jsonl-per-subreddit, filtered by day."""
+
+    def setUp(self):
+        import json
+        import tempfile
+        from pathlib import Path
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.category = self.root / "company_news"
+        self.category.mkdir(parents=True)
+
+        posts = [
+            {
+                "created_utc": 1_767_225_600,  # 2026-01-01
+                "title": "NVIDIA beats expectations",
+                "selftext": "Strong quarter for NVDA.",
+                "score": 100,
+                "ups": 100,
+                "num_comments": 20,
+                "url": "https://reddit.test/1",
+            },
+            {
+                "created_utc": 1_767_225_600,
+                "title": "Bread recipes",
+                "selftext": "Flour and water.",
+                "score": 5,
+                "ups": 5,
+                "num_comments": 1,
+                "url": "https://reddit.test/2",
+            },
+            {
+                "created_utc": 1_767_312_000,  # 2026-01-02
+                "title": "NVIDIA the next day",
+                "selftext": "More NVDA news.",
+                "score": 50,
+                "ups": 50,
+                "num_comments": 10,
+                "url": "https://reddit.test/3",
+            },
+        ]
+        with (self.category / "wallstreetbets.jsonl").open("w", encoding="utf-8") as fh:
+            for post in posts:
+                fh.write(json.dumps(post) + "\n")
+
+        reddit_utils._SEARCH_TERMS_CACHE.clear()
+        self.addCleanup(reddit_utils._SEARCH_TERMS_CACHE.clear)
+
+    def _fetch(self, date, query=None, max_limit=10):
+        with mock.patch.object(reddit_utils, "get_company_name", lambda t: t):
+            return reddit_utils.fetch_top_from_category(
+                "company_news", date, max_limit, query=query, data_path=str(self.root)
+            )
+
+    def test_only_that_day_is_returned(self):
+        posts = self._fetch("2026-01-01")
+
+        self.assertTrue(posts)
+        self.assertTrue(all("next day" not in post["title"] for post in posts))
+
+    def test_a_query_filters_to_relevant_posts(self):
+        posts = self._fetch("2026-01-01", query="NVDA")
+
+        titles = [post["title"] for post in posts]
+        self.assertIn("NVIDIA beats expectations", titles)
+        self.assertNotIn("Bread recipes", titles)
+
+    def test_without_a_query_everything_that_day_is_returned(self):
+        posts = self._fetch("2026-01-01")
+
+        self.assertEqual(len(posts), 2)
+
+    def test_a_day_with_no_posts_returns_nothing(self):
+        self.assertEqual(self._fetch("2020-05-05"), [])
+
+    def test_a_limit_below_the_file_count_is_refused(self):
+        """It could not fetch anything, so it says so rather than silently
+        returning an empty list."""
+        with self.assertRaises(ValueError):
+            self._fetch("2026-01-01", max_limit=0)
+
+    def test_non_jsonl_files_are_ignored(self):
+        (self.category / "notes.txt").write_text("ignore me", encoding="utf-8")
+
+        self.assertTrue(self._fetch("2026-01-01"))
+
+
+class RedditOnlineFetchTests(unittest.TestCase):
+    def test_no_credentials_yields_no_posts(self):
+        with mock.patch.object(
+            reddit_utils, "_get_reddit_client", lambda: None, create=True
+        ):
+            result = reddit_utils.fetch_top_from_category_online(
+                "company_news", "2026-01-01", "2026-01-02", 5, query="NVDA"
+            )
+
+        self.assertEqual(result, [])
+
+    def test_an_api_failure_yields_no_posts(self):
+        """Reddit is a supplementary source; an outage must not fail a run."""
+        with mock.patch.object(
+            reddit_utils,
+            "praw",
+            mock.MagicMock(side_effect=RuntimeError("api down")),
+            create=True,
+        ):
+            result = reddit_utils.fetch_top_from_category_online(
+                "company_news", "2026-01-01", "2026-01-02", 5, query="NVDA"
+            )
+
+        self.assertIsInstance(result, list)
+
+
+def _observations(*values):
+    """FRED returns newest first, with "." for a missing reading."""
+    return {
+        "observations": [
+            {"date": f"2026-0{index + 1}-01", "value": str(value)}
+            for index, value in enumerate(values)
+        ]
+    }
+
+
+class YieldCurveReportTests(unittest.TestCase):
+    def _report(self, by_series):
+        with mock.patch.object(macro_utils, "get_fred_api_key", lambda: "k"), \
+             mock.patch.object(
+                 macro_utils,
+                 "get_fred_data",
+                 lambda series_id, *a: by_series.get(series_id, {"error": "no series"}),
+             ):
+            return macro_utils.get_treasury_yield_curve("2026-09-09")
+
+    def test_each_maturity_appears_in_the_table(self):
+        report = self._report(
+            {"DGS2": _observations(4.0), "DGS10": _observations(4.5)}
+        )
+
+        self.assertIn("2 Year", report)
+        self.assertIn("10 Year", report)
+        self.assertIn("4.00%", report)
+
+    def test_a_normal_curve_is_described_as_healthy(self):
+        report = self._report(
+            {"DGS2": _observations(3.0), "DGS10": _observations(4.5)}
+        )
+
+        self.assertIn("NORMAL YIELD CURVE", report)
+
+    def test_a_flat_curve_is_called_out(self):
+        """20 basis points, inside the 50bp flat band."""
+        report = self._report(
+            {"DGS2": _observations(4.0), "DGS10": _observations(4.2)}
+        )
+
+        self.assertIn("FLAT YIELD CURVE", report)
+
+    def test_the_spread_is_reported_in_basis_points(self):
+        """It is labelled bps; comparing raw percentage points made every
+        non-inverted curve read as flat."""
+        report = self._report(
+            {"DGS2": _observations(3.0), "DGS10": _observations(4.5)}
+        )
+
+        self.assertIn("150 basis points", report)
+
+    def test_an_inverted_curve_is_flagged_as_a_recession_signal(self):
+        report = self._report(
+            {"DGS2": _observations(4.5), "DGS10": _observations(4.0)}
+        )
+
+        self.assertIn("INVERTED YIELD CURVE", report)
+
+    def test_a_missing_reading_is_skipped(self):
+        report = self._report({"DGS2": _observations("."), "DGS10": _observations(4.0)})
+
+        self.assertIn("10 Year", report)
+        self.assertNotIn("2 Year |", report)
+
+    def test_no_series_at_all_says_so(self):
+        report = self._report({})
+
+        self.assertIn("No recent yield curve data", report)
+
+
+class EconomicIndicatorReportTests(unittest.TestCase):
+    def _report(self, data):
+        with mock.patch.object(macro_utils, "get_fred_api_key", lambda: "k"), \
+             mock.patch.object(macro_utils, "get_fred_data", lambda *a: data):
+            return macro_utils.get_economic_indicators_report("2026-09-09")
+
+    def test_a_reading_and_its_change_are_reported(self):
+        report = self._report(_observations(3.5, 3.0))
+
+        self.assertIn("Latest Value", report)
+        self.assertIn("3.50", report)
+
+    def test_a_single_reading_still_reports(self):
+        report = self._report(_observations(3.5))
+
+        self.assertIn("Latest Value", report)
+
+    def test_a_series_with_no_observations_says_so(self):
+        report = self._report({"observations": []})
+
+        self.assertIn("No data available", report)
+
+    def test_a_series_of_only_missing_readings_says_so(self):
+        report = self._report(_observations(".", "."))
+
+        self.assertIn("No valid data available", report)
+
+    def test_a_failing_series_does_not_abort_the_report(self):
+        report = self._report({"error": "series unavailable"})
+
+        self.assertIsInstance(report, str)
+        self.assertTrue(report.strip())
+
+
+class FedCalendarTests(unittest.TestCase):
+    def _report(self, data):
+        with mock.patch.object(macro_utils, "get_fred_api_key", lambda: "k"), \
+             mock.patch.object(macro_utils, "get_fred_data", lambda *a: data):
+            return macro_utils.get_fed_calendar_and_minutes("2026-09-09")
+
+    def test_the_rate_history_is_tabulated_with_changes(self):
+        report = self._report(_observations(5.5, 5.25, 5.0))
+
+        self.assertIn("Recent Federal Funds Rate History", report)
+        self.assertIn("+0.25%", report)
+
+    def test_an_unchanged_rate_is_labelled(self):
+        report = self._report(_observations(5.5, 5.5))
+
+        self.assertIn("No change", report)
+
+    def test_a_single_reading_skips_the_history_table(self):
+        report = self._report(_observations(5.5))
+
+        self.assertNotIn("Recent Federal Funds Rate History", report)
+
+    def test_the_meeting_schedule_is_always_included(self):
+        report = self._report({"observations": []})
+
+        self.assertIn("FOMC Meeting", report)
+
+
+class MacroSummaryTests(unittest.TestCase):
+    def test_the_summary_pulls_the_component_reports_together(self):
+        with mock.patch.object(macro_utils, "get_fred_api_key", lambda: "k"), \
+             mock.patch.object(
+                 macro_utils, "get_fred_data", lambda *a: _observations(3.5, 3.0)
+             ):
+            summary = macro_utils.get_macro_economic_summary("2026-09-09")
+
+        self.assertIsInstance(summary, str)
+        self.assertTrue(summary.strip())
+
+
+class RedditCompanyNameTests(unittest.TestCase):
+    """The company name is what makes a Reddit search find anything: nobody
+    posts "NVDA earnings", they post "Nvidia earnings"."""
+
+    def _name(self, *, alpaca="NVDA", yfinance=None, yf_error=None):
+        info = yfinance if yfinance is not None else {}
+
+        class Ticker:
+            def __init__(self, symbol):
+                self.symbol = symbol
+
+            @property
+            def info(self):
+                if yf_error:
+                    raise yf_error
+                return info
+
+        with mock.patch(
+            "tradingagents.dataflows.alpaca_utils.AlpacaUtils.get_company_name",
+            lambda symbol: alpaca,
+        ):
+            with mock.patch.dict(
+                "sys.modules", {"yfinance": SimpleNamespace(Ticker=Ticker)}
+            ):
+                return reddit_utils.get_company_name("nvda")
+
+    def test_the_broker_name_is_preferred(self):
+        self.assertEqual(self._name(alpaca="NVIDIA Corporation"), "NVIDIA Corporation")
+
+    def test_yfinance_stands_in_when_the_broker_only_echoes_the_ticker(self):
+        self.assertEqual(
+            self._name(yfinance={"shortName": "NVIDIA Corp"}), "NVIDIA Corp"
+        )
+
+    def test_the_alternate_yfinance_name_fields_are_tried(self):
+        for field in ("longName", "displayName"):
+            self.assertEqual(self._name(yfinance={field: "NVIDIA"}), "NVIDIA")
+
+    def test_a_yfinance_failure_leaves_the_ticker(self):
+        self.assertEqual(self._name(yf_error=RuntimeError("offline")), "NVDA")
+
+    def test_a_yfinance_name_that_only_echoes_the_ticker_is_ignored(self):
+        self.assertEqual(self._name(yfinance={"shortName": "nvda"}), "NVDA")
+
+    def test_a_blank_ticker_comes_straight_back(self):
+        self.assertEqual(reddit_utils.get_company_name("  "), "  ")
+
+
+class RedditOnlineFetchTests(unittest.TestCase):
+    """The live fallback runs when the downloaded dataset is absent. It has
+    to survive Reddit throttling one subreddit, dedupe across subreddits, and
+    never return a post from outside the requested window."""
+
+    SUBREDDITS = ["investing", "stocks"]
+
+    def setUp(self):
+        patcher = mock.patch.object(reddit_utils.time, "sleep")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        reddit_utils._SEARCH_TERMS_CACHE.clear()
+        self.addCleanup(reddit_utils._SEARCH_TERMS_CACHE.clear)
+
+    @staticmethod
+    def _post(title="A post", *, created="2026-09-08", ups=10, selftext="",
+              url="https://reddit.example/a", permalink=None):
+        from datetime import datetime, timezone
+
+        stamp = datetime.strptime(created, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        data = {
+            "title": title,
+            "selftext": selftext,
+            "ups": ups,
+            "created_utc": stamp.timestamp(),
+        }
+        if url:
+            data["url"] = url
+        if permalink:
+            data["permalink"] = permalink
+        return {"data": data}
+
+    def _fetch(self, responses, *, category="global_news", query=None,
+               start="2026-09-01", end="2026-09-09", max_limit=10):
+        served = list(responses)
+        requested = []
+
+        def get(url, headers=None, params=None, timeout=None):
+            requested.append((url, params))
+            item = served.pop(0) if served else {"data": {"children": []}}
+            if isinstance(item, Exception):
+                raise item
+            status, payload = item if isinstance(item, tuple) else (200, item)
+            return SimpleNamespace(
+                status_code=status, json=lambda: payload
+            )
+
+        with mock.patch.dict(
+            reddit_utils.REDDIT_CATEGORY_SUBREDDITS,
+            {category: self.SUBREDDITS},
+            clear=False,
+        ):
+            with mock.patch.object(reddit_utils.requests, "get", get):
+                posts = reddit_utils.fetch_top_from_category_online(
+                    category=category,
+                    start_date=start,
+                    end_date=end,
+                    max_limit=max_limit,
+                    query=query,
+                )
+        return posts, requested
+
+    def test_a_post_inside_the_window_comes_back_normalized(self):
+        posts, _requested = self._fetch(
+            [{"data": {"children": [self._post("Rates hold", selftext="body")]}}]
+        )
+
+        self.assertEqual(posts[0]["title"], "Rates hold")
+        self.assertEqual(posts[0]["content"], "body")
+        self.assertEqual(posts[0]["upvotes"], 10)
+        self.assertEqual(posts[0]["posted_date"], "2026-09-08")
+        self.assertEqual(posts[0]["subreddit"], "investing")
+
+    def test_every_configured_subreddit_is_searched(self):
+        _posts, requested = self._fetch([])
+
+        self.assertEqual(
+            [url for url, _params in requested],
+            [
+                "https://www.reddit.com/r/investing/search.json",
+                "https://www.reddit.com/r/stocks/search.json",
+            ],
+        )
+
+    def test_a_post_outside_the_window_is_dropped(self):
+        posts, _requested = self._fetch(
+            [{"data": {"children": [self._post(created="2020-01-01")]}}]
+        )
+
+        self.assertEqual(posts, [])
+
+    def test_an_undated_post_is_dropped(self):
+        posts, _requested = self._fetch(
+            [{"data": {"children": [{"data": {"title": "no date"}}]}}]
+        )
+
+        self.assertEqual(posts, [])
+
+    def test_the_same_post_in_two_subreddits_is_returned_once(self):
+        page = {"data": {"children": [self._post("Crossposted")]}}
+
+        posts, _requested = self._fetch([page, page])
+
+        self.assertEqual(len(posts), 1)
+
+    def test_a_post_without_a_url_falls_back_to_its_permalink(self):
+        posts, _requested = self._fetch(
+            [
+                {
+                    "data": {
+                        "children": [self._post(url=None, permalink="/r/investing/x")]
+                    }
+                }
+            ]
+        )
+
+        self.assertEqual(posts[0]["url"], "https://www.reddit.com/r/investing/x")
+
+    def test_posts_come_back_most_upvoted_first(self):
+        posts, _requested = self._fetch(
+            [
+                {
+                    "data": {
+                        "children": [
+                            self._post("quiet", ups=1),
+                            self._post("loud", ups=99, url="https://x/b"),
+                        ]
+                    }
+                }
+            ]
+        )
+
+        self.assertEqual([post["title"] for post in posts], ["loud", "quiet"])
+
+    def test_the_result_count_is_capped(self):
+        children = [
+            self._post(f"post {i}", ups=i, url=f"https://x/{i}") for i in range(10)
+        ]
+
+        posts, _requested = self._fetch(
+            [{"data": {"children": children}}], max_limit=3
+        )
+
+        self.assertEqual(len(posts), 3)
+
+    def test_a_throttled_subreddit_does_not_lose_the_others(self):
+        posts, _requested = self._fetch(
+            [
+                (429, {}),
+                {"data": {"children": [self._post("From the second")]}},
+            ]
+        )
+
+        self.assertEqual([post["title"] for post in posts], ["From the second"])
+
+    def test_an_unreachable_subreddit_does_not_lose_the_others(self):
+        posts, _requested = self._fetch(
+            [
+                RuntimeError("connection reset"),
+                {"data": {"children": [self._post("From the second")]}},
+            ]
+        )
+
+        self.assertEqual(len(posts), 1)
+
+    def test_a_malformed_payload_is_skipped(self):
+        posts, _requested = self._fetch([{"data": {"children": ["junk", None]}}])
+
+        self.assertEqual(posts, [])
+
+    def test_nothing_requested_fetches_nothing(self):
+        posts, requested = self._fetch([], max_limit=0)
+
+        self.assertEqual(posts, [])
+        self.assertEqual(requested, [])
+
+    def test_an_inverted_window_is_corrected(self):
+        posts, _requested = self._fetch(
+            [{"data": {"children": [self._post(created="2026-09-08")]}}],
+            start="2026-09-09",
+            end="2026-09-01",
+        )
+
+        self.assertEqual(len(posts), 1)
+
+    def test_a_category_with_no_subreddits_fetches_nothing(self):
+        with mock.patch.dict(
+            reddit_utils.REDDIT_CATEGORY_SUBREDDITS, {"global_news": []}, clear=False
+        ):
+            self.assertEqual(
+                reddit_utils.fetch_top_from_category_online(
+                    category="global_news",
+                    start_date="2026-09-01",
+                    end_date="2026-09-09",
+                    max_limit=5,
+                ),
+                [],
+            )
+
+    def test_the_global_query_looks_for_macro_terms(self):
+        _posts, requested = self._fetch([])
+
+        self.assertIn("inflation", requested[0][1]["q"])
+
+    def test_a_company_query_uses_the_longest_aliases_first(self):
+        with mock.patch.object(
+            reddit_utils, "get_company_name", lambda _t: "NVIDIA Corporation"
+        ):
+            _posts, requested = self._fetch(
+                [], category="company_news", query="NVDA"
+            )
+
+        query = requested[0][1]["q"]
+        self.assertIn("NVIDIA", query)
+        self.assertLess(query.index("NVIDIA Corporation"), query.index("NVDA"))
+
+    def test_an_off_topic_post_is_dropped_from_a_company_search(self):
+        with mock.patch.object(
+            reddit_utils, "get_company_name", lambda _t: "NVIDIA Corporation"
+        ):
+            posts, _requested = self._fetch(
+                [
+                    {
+                        "data": {
+                            "children": [
+                                self._post("Bitcoin is up"),
+                                self._post("NVIDIA beats", url="https://x/b"),
+                            ]
+                        }
+                    }
+                ],
+                category="company_news",
+                query="NVDA",
+            )
+
+        self.assertEqual([post["title"] for post in posts], ["NVIDIA beats"])

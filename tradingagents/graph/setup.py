@@ -54,14 +54,29 @@ class GraphSetup:
         """Wrap a graph node so its outputs are persisted to the per-run audit log."""
 
         def wrapped_node(state):
-            logger = get_run_audit_logger()
+            # Audit logging is observability, not analysis: a failure in it
+            # must never turn a completed node into a failed one.
+            try:
+                logger = get_run_audit_logger()
+            except Exception as exc:
+                print(f"[RUN-LOG] {node_name}: audit logger unavailable: {exc}")
+                logger = None
             symbol = state.get("company_of_interest")
             start_time = time.time()
+
+            def record(method, **kwargs):
+                if logger is None:
+                    return
+                try:
+                    getattr(logger, method)(**kwargs)
+                except Exception as exc:
+                    print(f"[RUN-LOG] {node_name}: audit logging failed: {exc}")
 
             try:
                 result = node_fn(state)
                 elapsed = time.time() - start_time
-                logger.log_event(
+                record(
+                    "log_event",
                     event_type="node_execution",
                     symbol=symbol,
                     payload={
@@ -72,7 +87,8 @@ class GraphSetup:
                 )
             except Exception as e:
                 elapsed = time.time() - start_time
-                logger.log_event(
+                record(
+                    "log_event",
                     event_type="node_error",
                     symbol=symbol,
                     payload={
@@ -101,7 +117,8 @@ class GraphSetup:
             for output_key in output_keys:
                 output_value = result.get(output_key)
                 if output_value:
-                    logger.log_agent_output(
+                    record(
+                        "log_agent_output",
                         output_type=output_key,
                         content=output_value,
                         symbol=symbol,
@@ -109,7 +126,8 @@ class GraphSetup:
                     )
 
             if "report_context" in result and isinstance(result["report_context"], dict):
-                logger.log_agent_output(
+                record(
+                    "log_agent_output",
                     output_type="report_context_stats",
                     content=result["report_context"].get("stats", {}),
                     symbol=symbol,
@@ -117,7 +135,8 @@ class GraphSetup:
                 )
                 evidence_scoreboard = result["report_context"].get("evidence_scoreboard")
                 if evidence_scoreboard:
-                    logger.log_agent_output(
+                    record(
+                        "log_agent_output",
                         output_type="report_context_evidence_scoreboard",
                         content=evidence_scoreboard,
                         symbol=symbol,
@@ -128,7 +147,8 @@ class GraphSetup:
             if isinstance(investment_debate_state, dict):
                 current_response = investment_debate_state.get("current_response")
                 if current_response:
-                    logger.log_agent_output(
+                    record(
+                        "log_agent_output",
                         output_type="investment_debate_response",
                         content=current_response,
                         symbol=symbol,
@@ -145,7 +165,8 @@ class GraphSetup:
                 }
                 speaker_response = risk_debate_state.get(speaker_key_map.get(latest_speaker, ""))
                 if speaker_response:
-                    logger.log_agent_output(
+                    record(
+                        "log_agent_output",
                         output_type="risk_debate_response",
                         content=speaker_response,
                         symbol=symbol,

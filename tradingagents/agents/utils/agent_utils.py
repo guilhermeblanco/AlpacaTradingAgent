@@ -15,6 +15,7 @@ from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.run_logger import get_run_audit_logger
 from tradingagents.dataflows.config import get_api_key
 import json
+import re
 import time
 from functools import wraps
 
@@ -54,6 +55,15 @@ VALID_SHORT_OUTPUT_PATTERNS = (
 )
 
 
+# "1." / "1)" style menu entries, as well as the bulleted kind.
+_MENU_ITEM_PATTERN = re.compile(r"^\d+[.)]\s")
+
+
+def _is_menu_item(line: str) -> bool:
+    stripped = line.strip()
+    return stripped.startswith(("- ", "* ")) or bool(_MENU_ITEM_PATTERN.match(stripped))
+
+
 def _is_trailing_interactive_followup(text: str) -> bool:
     if not text:
         return False
@@ -80,21 +90,26 @@ def _strip_trailing_interactive_followup(text: str) -> str:
 
     removed_any = False
     while lines:
+        # A follow-up offer introduces its menu, so the bullets sit below it
+        # rather than above. Look past them to find the line that offers.
+        index = len(lines) - 1
+        while index >= 0 and (_is_menu_item(lines[index]) or not lines[index].strip()):
+            index -= 1
+        if index < 0:
+            break
         tail = (
-            lines[-1]
+            lines[index]
             .strip()
             .lower()
-            .replace("’", "'")
-            .replace("‘", "'")
-            .replace("‑", "-")
-            .replace("–", "-")
-            .replace("—", "-")
+            .replace("\u2019", "'")
+            .replace("\u2018", "'")
+            .replace("\u2011", "-")
+            .replace("\u2013", "-")
+            .replace("\u2014", "-")
         )
         if any(pattern in tail for pattern in INTERACTIVE_FOLLOWUP_PATTERNS):
             removed_any = True
-            lines.pop()
-            while lines and lines[-1].strip().startswith(("- ", "* ")):
-                lines.pop()
+            del lines[index:]
             while lines and not lines[-1].strip():
                 lines.pop()
             continue
@@ -1314,299 +1329,6 @@ class Toolkit:
         except Exception as e:
             # Fallback to original if any processing fails
             return raw_result
-
-    @staticmethod
-    @tool
-    @timing_wrapper("MARKET")
-    def get_indicators_table(
-        symbol: Annotated[str, "ticker symbol (stocks: AAPL, NVDA; crypto: ETH/USD, BTC/USD)"],
-        curr_date: Annotated[str, "Current date in yyyy-mm-dd format"],
-        look_back_days: Annotated[int, "how many days to look back"] = 90,
-    ) -> str:
-        """
-        Retrieve comprehensive technical indicators table for stocks and crypto over a lookback period.
-        Returns a full table with Date and all key technical indicators calculated over the specified time window.
-        Includes: EMAs, SMAs, RSI, MACD, Bollinger Bands, Stochastic, Williams %R, OBV, MFI, ATR.
-        
-        For crypto symbols, use format with slash: ETH/USD, BTC/USD, SOL/USD
-        For stock symbols, use standard format: AAPL, NVDA, TSLA
-        
-        Args:
-            symbol (str): Ticker symbol - stocks: AAPL, NVDA; crypto: ETH/USD, BTC/USD
-            curr_date (str): The current trading date in YYYY-mm-dd format
-            look_back_days (int): How many days to look back (default 90)
-            
-        Returns:
-            str: A comprehensive table containing Date and all technical indicators for the lookback period
-        """
-        
-        # Define the key indicators optimized for swing trading
-        key_indicators = [
-            'close_8_ema',      # 8-day EMA (faster trend detection for swing trading)
-            'close_21_ema',     # 21-day EMA (key swing level)
-            'close_50_sma',     # 50-day SMA (major trend)
-            'rsi_14',           # 14-day RSI (optimal for daily signals)
-            'macd',             # MACD Line (12,26,9 default)
-            'macds',            # MACD Signal Line
-            'macdh',            # MACD Histogram
-            'boll_ub',          # Bollinger Upper (20,2 default)
-            'boll_lb',          # Bollinger Lower (20,2 default)
-            'kdjk_9',           # Stochastic %K (9-period)
-            'kdjd_9',           # Stochastic %D (9-period)
-            'wr_14',            # Williams %R (14-period)
-            'atr_14',           # ATR (14-period for position sizing)
-            'obv'               # On-Balance Volume (volume confirmation)
-        ]
-        
-        # Get indicator data for each indicator across the time window
-        import pandas as pd
-        from datetime import datetime, timedelta
-        
-        # Calculate date range
-        curr_dt = pd.to_datetime(curr_date)
-        start_dt = curr_dt - pd.Timedelta(days=look_back_days)
-        
-        results = []
-        results.append(f"# Technical Indicators Table for {symbol}")
-        results.append(f"**Period:** {start_dt.strftime('%Y-%m-%d')} to {curr_date} ({look_back_days} days lookback)")
-        results.append(f"**Showing:** Last 25 trading days for swing trading analysis")
-        results.append("")
-        
-        # Create table header
-        header_row = "| Date | " + " | ".join([ind.replace('_', ' ').title() for ind in key_indicators]) + " |"
-        separator_row = "|------|" + "|".join(["------" for _ in key_indicators]) + "|"
-        
-        results.append(header_row)
-        results.append(separator_row)
-        
-        # Generate dates for the lookback period - only trading days
-        dates = []
-        trading_days_found = 0
-        days_back = 0
-        
-        # Get the last 45 trading days (roughly 9 weeks of trading data)
-        while trading_days_found < 45 and days_back <= look_back_days:
-            date = curr_dt - pd.Timedelta(days=days_back)
-            # Skip weekends (Saturday=5, Sunday=6)
-            if date.weekday() < 5:  # Monday=0, Friday=4
-                dates.append(date.strftime("%Y-%m-%d"))
-                trading_days_found += 1
-            days_back += 1
-        
-        # Reverse to get chronological order, then take the most recent portion
-        dates = dates[::-1]
-        recent_dates = dates[-25:] if len(dates) > 25 else dates  # Show last 25 trading days
-        
-        # OPTIMIZED: Use batch processing instead of 350+ individual calls
-        print(f"[INDICATORS] Getting batch indicator data for {symbol} over {len(recent_dates)} dates...")
-        
-        # Get raw stock data first to calculate all indicators at once
-        try:
-            from tradingagents.marketdata import get_research_market_data_provider
-            import pandas as pd
-            
-            # Get extended data for proper indicator calculation (need more history)
-            start_date_extended = curr_dt - pd.Timedelta(days=200)  # More history for proper indicators
-            
-            # Get stock data
-            provider = get_research_market_data_provider()
-            stock_data = provider.get_bars(
-                symbol=symbol,
-                start_date=start_date_extended.strftime('%Y-%m-%d'),
-                end_date=curr_date,
-                timeframe="1Day"
-            )
-            
-            if stock_data.empty:
-                results.append("| ERROR | No stock data available for indicator calculations |")
-                return "\n".join(results)
-            
-            # Clean data and ensure proper indexing
-            stock_data = stock_data.dropna()
-            stock_data = stock_data.reset_index(drop=True)
-            
-            # Ensure we have enough data for indicators
-            if len(stock_data) < 50:
-                results.append(f"| WARNING | Only {len(stock_data)} days of data available, indicators may be incomplete |")
-            
-            print(f"[INDICATORS] Processing {len(stock_data)} days of data for {symbol}")
-            
-            # Calculate all indicators using stockstats
-            import stockstats
-            stock_stats = stockstats.StockDataFrame.retype(stock_data.copy())
-            
-            # Calculate all indicators efficiently
-            indicator_data = {}
-            for indicator in key_indicators:
-                try:
-                    if indicator == 'close_8_ema':
-                        indicator_data[indicator] = stock_stats['close_8_ema']
-                    elif indicator == 'close_21_ema':
-                        indicator_data[indicator] = stock_stats['close_21_ema']  
-                    elif indicator == 'close_50_sma':
-                        indicator_data[indicator] = stock_stats['close_50_sma']
-                    elif indicator == 'rsi_14':
-                        indicator_data[indicator] = stock_stats['rsi_14']
-                    elif indicator == 'macd':
-                        indicator_data[indicator] = stock_stats['macd']
-                    elif indicator == 'macds':
-                        indicator_data[indicator] = stock_stats['macds']
-                    elif indicator == 'macdh':
-                        indicator_data[indicator] = stock_stats['macdh']
-                    elif indicator == 'boll_ub':
-                        indicator_data[indicator] = stock_stats['boll_ub']
-                    elif indicator == 'boll_lb':
-                        indicator_data[indicator] = stock_stats['boll_lb']
-                    elif indicator == 'kdjk_9':
-                        indicator_data[indicator] = stock_stats['kdjk_9']
-                    elif indicator == 'kdjd_9':
-                        indicator_data[indicator] = stock_stats['kdjd_9']
-                    elif indicator == 'wr_14':
-                        indicator_data[indicator] = stock_stats['wr_14']
-                    elif indicator == 'atr_14':
-                        indicator_data[indicator] = stock_stats['atr_14']
-                    elif indicator == 'obv':
-                        # OBV calculation - handle the parsing issue
-                        try:
-                            indicator_data[indicator] = stock_stats['obv']
-                        except Exception as obv_error:
-                            print(f"[INDICATORS] OBV calculation failed, using manual method: {obv_error}")
-                            # Manual OBV calculation
-                            obv_values = []
-                            obv = 0
-                            for i in range(len(stock_data)):
-                                if i == 0:
-                                    obv_values.append(stock_data['volume'].iloc[i])
-                                else:
-                                    if stock_data['close'].iloc[i] > stock_data['close'].iloc[i-1]:
-                                        obv += stock_data['volume'].iloc[i]
-                                    elif stock_data['close'].iloc[i] < stock_data['close'].iloc[i-1]:
-                                        obv -= stock_data['volume'].iloc[i]
-                                    obv_values.append(obv)
-                            indicator_data[indicator] = pd.Series(obv_values, index=stock_data.index)
-                    else:
-                        indicator_data[indicator] = None
-                except Exception as e:
-                    print(f"[INDICATORS] Warning: Failed to calculate {indicator}: {e}")
-                    indicator_data[indicator] = None
-            
-            # Convert date strings to datetime for matching
-            recent_dates_dt = [pd.to_datetime(d) for d in recent_dates]
-            
-            # Build table rows efficiently
-            for date_str in recent_dates:
-                row_values = [date_str]
-                date_dt = pd.to_datetime(date_str)
-                
-                for indicator in key_indicators:
-                    try:
-                        # Find matching date in indicator data
-                        indicator_series = indicator_data.get(indicator)
-                        if indicator_series is not None and len(indicator_series) > 0:
-                            try:
-                                # Convert recent_dates to match stock_data index
-                                # Find the closest date index in our data
-                                target_date = pd.to_datetime(date_str)
-                                
-                                # If stock_data has a date column, use it for matching
-                                if 'date' in stock_data.columns:
-                                    date_matches = stock_data[stock_data['date'] == target_date.strftime('%Y-%m-%d')]
-                                    if not date_matches.empty:
-                                        idx = date_matches.index[0]
-                                        if idx < len(indicator_series):
-                                            value = indicator_series.iloc[idx]
-                                        else:
-                                            value = indicator_series.iloc[-1]  # Use last available
-                                    else:
-                                        # Use the most recent available data
-                                        value = indicator_series.iloc[-1] if len(indicator_series) > 0 else None
-                                else:
-                                    # Use index-based matching (most recent data)
-                                    days_from_end = (pd.to_datetime(recent_dates[-1]) - target_date).days
-                                    idx = max(0, len(indicator_series) - 1 - days_from_end)
-                                    idx = min(idx, len(indicator_series) - 1)
-                                    value = indicator_series.iloc[idx]
-                                
-                                if pd.isna(value) or value is None:
-                                    row_values.append("N/A")
-                                else:
-                                    # Format value appropriately
-                                    if indicator in ['rsi_14', 'kdjk_9', 'kdjd_9', 'wr_14']:
-                                        row_values.append(f"{float(value):.1f}")
-                                    elif 'macd' in indicator:
-                                        row_values.append(f"{float(value):.3f}")
-                                    else:
-                                        row_values.append(f"{float(value):.2f}")
-                            except Exception as match_error:
-                                print(f"[INDICATORS] Date matching error for {indicator}: {match_error}")
-                                row_values.append("N/A")
-                        else:
-                            row_values.append("N/A")
-                    except Exception as e:
-                        row_values.append("N/A")
-                
-                # Format the table row
-                table_row = "| " + " | ".join(row_values) + " |"
-                results.append(table_row)
-                
-        except Exception as e:
-            print(f"[INDICATORS] ERROR: Batch indicator calculation failed: {e}")
-            # Fallback to individual calls (original slow method) with timeout
-            import time
-            timeout_per_call = 2.0  # 2 second timeout per call
-            
-            for date in recent_dates:
-                row_values = [date]
-                
-                for indicator in key_indicators:
-                    start_time = time.time()
-                    try:
-                        # Get indicator value with timeout protection
-                        value = interface.get_stock_stats_indicators_window(
-                            symbol, indicator, date, 1, True
-                        )
-                        
-                        # Check if call took too long
-                        elapsed = time.time() - start_time
-                        if elapsed > timeout_per_call:
-                            print(f"[INDICATORS] Warning: {indicator} took {elapsed:.1f}s (slow)")
-                        
-                        # Extract numeric value
-                        if ":" in value:
-                            numeric_part = value.split(":")[-1].strip().split("(")[0].strip()
-                            try:
-                                float_val = float(numeric_part)
-                                if indicator in ['rsi_14', 'kdjk_9', 'kdjd_9', 'wr_14']:
-                                    row_values.append(f"{float_val:.1f}")
-                                elif 'macd' in indicator:
-                                    row_values.append(f"{float_val:.3f}")
-                                else:
-                                    row_values.append(f"{float_val:.2f}")
-                            except:
-                                row_values.append("N/A")
-                        else:
-                            row_values.append("N/A")
-                    except Exception as ind_e:
-                        print(f"[INDICATORS] Error getting {indicator} for {date}: {ind_e}")
-                        row_values.append("N/A")
-                
-                # Format the table row
-                table_row = "| " + " | ".join(row_values) + " |"
-                results.append(table_row)
-        
-        results.append("")
-        results.append("## Key Swing Trading Signals Analysis:")
-        results.append("- **Trend Structure:** 8-EMA > 21-EMA > 50-SMA = Strong uptrend | Price above all EMAs = Bullish")
-        results.append("- **Momentum:** RSI 30-50 = Accumulation zone | RSI 50-70 = Trending | RSI >70 = Overbought")
-        results.append("- **MACD Signals:** MACD > Signal = Bullish momentum | Histogram growing = Acceleration")
-        results.append("- **Bollinger Bands:** Price at Upper Band = Breakout potential | Price at Lower Band = Support test")
-        results.append("- **Stochastic:** %K crossing above %D in oversold (<20) = Buy signal | In overbought (>80) = Sell signal")
-        results.append("- **Williams %R:** Values -20 to -80 = Normal range | Below -80 = Oversold (buy) | Above -20 = Overbought (sell)")
-        results.append("- **ATR:** Use for position sizing (1-2x ATR for stop loss) | Higher ATR = More volatile")
-        results.append("")
-        results.append("**Swing Strategy:** Look for multi-timeframe trend + momentum + volume confirmation for 2-10 day positions")
-        
-        return "\n".join(results)
 
     @staticmethod
     @tool

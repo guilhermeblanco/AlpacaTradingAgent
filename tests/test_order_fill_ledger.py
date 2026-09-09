@@ -608,3 +608,203 @@ def test_pipeline_persists_remote_acceptance_as_submitted(
     with session_factory() as session:
         assert session.get(LifecycleRow, intent.decision_id).status == "submitted"
         assert session.scalar(select(func.count()).select_from(BrokerOrderRow)) == 1
+
+
+def test_reconciliation_worker_records_a_heartbeat(session_factory) -> None:
+    """A supervisor watching the heartbeat has to see a degraded cycle."""
+    _seed_submission(session_factory, gateway="tradier")
+
+    class BrokenGateway:
+        def get_order_snapshot(self, **kwargs):
+            raise RuntimeError("broker unreachable")
+
+    worker = ReconciliationWorker(
+        lambda: PostgresUnitOfWork(session_factory),
+        lambda broker: BrokenGateway(),
+        worker_id="heartbeat-test",
+    )
+
+    result = worker.run_once()
+
+    assert result.failed == 1
+    assert result.errors
+    with PostgresUnitOfWork(session_factory) as uow:
+        health = uow.operations.health()
+        uow.rollback()
+    beats = [
+        beat for beat in health.heartbeats if beat.service == "reconciliation-worker"
+    ]
+    assert beats and beats[0].status == "degraded"
+    assert beats[0].instance_id == "heartbeat-test"
+
+
+def test_a_failed_reconciliation_releases_its_lease_for_a_later_retry(
+    session_factory,
+) -> None:
+    _seed_submission(session_factory, gateway="tradier")
+
+    class BrokenGateway:
+        def get_order_snapshot(self, **kwargs):
+            raise RuntimeError("broker unreachable")
+
+    worker = ReconciliationWorker(
+        lambda: PostgresUnitOfWork(session_factory),
+        lambda broker: BrokenGateway(),
+        worker_id="retry-test",
+        poll_seconds=1,
+    )
+
+    worker.run_once()
+
+    with PostgresUnitOfWork(session_factory) as uow:
+        # The lease is released with a future retry_at, so it is not claimable
+        # right now but has not been abandoned either.
+        assert uow.reconciliation_queue.claim(worker_id="other") == []
+        uow.rollback()
+
+    later = worker.run_once(now=datetime.now(timezone.utc) + timedelta(hours=1))
+
+    assert later.claimed == 1
+
+
+def test_the_worker_can_be_stopped_mid_loop(session_factory) -> None:
+    import threading
+
+    stop_event = threading.Event()
+    cycles = []
+
+    worker = ReconciliationWorker(
+        lambda: PostgresUnitOfWork(session_factory),
+        lambda broker: None,
+        worker_id="loop-test",
+    )
+    original = worker.run_once
+
+    def counting(**kwargs):
+        cycles.append(1)
+        stop_event.set()
+        return original(**kwargs)
+
+    worker.run_once = counting
+    worker.run_forever(interval_seconds=0.01, stop_event=stop_event)
+
+    assert cycles == [1]
+
+
+def test_alpaca_paper_and_live_reconcile_through_the_same_adapter() -> None:
+    """The queue records the gateway name; the adapter is one per broker."""
+    assert ReconciliationWorker._broker_name("alpaca-paper") == "alpaca"
+    assert ReconciliationWorker._broker_name("alpaca") == "alpaca"
+    assert ReconciliationWorker._broker_name("tradier") == "tradier"
+
+
+def test_the_reconciliation_worker_requires_postgres(monkeypatch) -> None:
+    import pytest
+
+    from tradingagents.execution import reconciliation_worker
+
+    closed = []
+
+    class Runtime:
+        unit_of_work_factory = None
+
+        def close(self):
+            closed.append(True)
+
+    monkeypatch.setattr(
+        "tradingagents.persistence.build_persistence_runtime", lambda config: Runtime()
+    )
+
+    with pytest.raises(ValueError) as raised:
+        reconciliation_worker.build_worker_from_env()
+
+    assert "PERSISTENCE_BACKEND=postgres" in str(raised.value)
+    assert closed == [True]
+
+
+def test_the_reconciliation_worker_is_built_from_the_environment(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from tradingagents.execution import reconciliation_worker
+
+    class Runtime:
+        unit_of_work_factory = staticmethod(lambda: None)
+
+        def close(self):
+            pass
+
+    created = []
+    broker = SimpleNamespace(
+        execution_gateway="the-gateway", snapshot_provider="the-provider"
+    )
+
+    monkeypatch.setattr(
+        "tradingagents.persistence.build_persistence_runtime", lambda config: Runtime()
+    )
+    monkeypatch.setattr(
+        "tradingagents.broker.registry.default_broker_registry",
+        lambda: SimpleNamespace(
+            create=lambda name: created.append(name) or broker
+        ),
+    )
+    monkeypatch.setattr(
+        "tradingagents.evaluation.default_historical_price_registry",
+        lambda: SimpleNamespace(create=lambda name: f"prices:{name}"),
+    )
+    monkeypatch.setenv("EVALUATION_PRICE_PROVIDER", "tradier")
+    monkeypatch.setenv("RECONCILIATION_WORKER_BATCH_SIZE", "7")
+    monkeypatch.setenv("RECONCILIATION_LEASE_SECONDS", "90")
+
+    worker, close = reconciliation_worker.build_worker_from_env()
+
+    assert worker.batch_size == 7
+    assert worker.lease_seconds == 90
+    assert worker.evaluation_prices == "prices:tradier"
+    assert callable(close)
+
+    # Both factories resolve the recorded gateway name to one broker adapter.
+    assert worker.gateway_factory("alpaca-paper") == "the-gateway"
+    assert worker.snapshot_provider_factory("alpaca-paper") == "the-provider"
+    assert created == ["alpaca", "alpaca"]
+
+
+def test_the_reconciliation_cli_runs_one_cycle_and_releases_the_engine(
+    monkeypatch,
+) -> None:
+    from unittest import mock
+
+    from tradingagents.execution import reconciliation_worker
+
+    worker = mock.Mock()
+    closed = []
+
+    monkeypatch.setattr(
+        reconciliation_worker,
+        "build_worker_from_env",
+        lambda: (worker, lambda: closed.append(True)),
+    )
+    monkeypatch.setattr("sys.argv", ["reconciliation-worker", "--once"])
+
+    reconciliation_worker.main()
+
+    worker.run_once.assert_called_once()
+    worker.run_forever.assert_not_called()
+    assert closed == [True]
+
+
+def test_the_reconciliation_cli_loops_on_the_configured_interval(monkeypatch) -> None:
+    from unittest import mock
+
+    from tradingagents.execution import reconciliation_worker
+
+    worker = mock.Mock()
+    monkeypatch.setattr(
+        reconciliation_worker, "build_worker_from_env", lambda: (worker, lambda: None)
+    )
+    monkeypatch.setattr(
+        "sys.argv", ["reconciliation-worker", "--interval-seconds", "9"]
+    )
+
+    reconciliation_worker.main()
+
+    assert worker.run_forever.call_args.kwargs["interval_seconds"] == 9.0

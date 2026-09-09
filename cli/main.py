@@ -465,17 +465,9 @@ def get_user_selections():
         )
     )
     selected_llm_provider = select_llm_provider()
-    backend_url = get_backend_url() if selected_llm_provider in {
-        "local_openai",
-        "ollama",
-        "openrouter",
-        "azure",
-        "xai",
-        "minimax",
-        "deepseek",
-        "qwen",
-        "glm",
-    } else ""
+    backend_url = (
+        get_backend_url() if provider_needs_backend_url(selected_llm_provider) else ""
+    )
     selected_shallow_thinker = select_shallow_thinking_agent(selected_llm_provider)
     selected_deep_thinker = select_deep_thinking_agent(selected_llm_provider)
     google_thinking_level = ask_gemini_thinking_config() if selected_llm_provider == "google" else ""
@@ -712,25 +704,66 @@ def update_research_team_status(status):
         message_buffer.update_agent_status(agent, status)
 
 
-def run_analysis():
-    # First get all user selections
-    selections = get_user_selections()
+def provider_needs_backend_url(provider):
+    """Whether a provider accepts a custom endpoint.
 
-    # Create config with selected research depth
-    config = DEFAULT_CONFIG.copy()
-    config["max_debate_rounds"] = selections["research_depth"]
-    config["max_risk_discuss_rounds"] = selections["research_depth"]
+    Read from the model registry rather than a local list, so a provider
+    added there is offered the prompt without a second edit here.
+    """
+    from tradingagents.openai_model_registry import get_provider_ui_metadata
+
+    return bool(get_provider_ui_metadata(provider).get("backend_visible", False))
+
+
+def build_run_config(selections, base_config=None):
+    """Turn interactive selections into a graph configuration.
+
+    Kept apart from the prompts and the live display so the mapping can be
+    checked without driving a terminal session.
+    """
+    config = dict(base_config if base_config is not None else DEFAULT_CONFIG)
+    depth = selections["research_depth"]
+    config["max_debate_rounds"] = depth
+    config["max_risk_discuss_rounds"] = depth
     config["quick_think_llm"] = selections["shallow_thinker"]
     config["deep_think_llm"] = selections["deep_thinker"]
     config["llm_provider"] = selections["llm_provider"]
     config["backend_url"] = selections["backend_url"] or None
     config["checkpoint_enabled"] = selections["checkpoint_enabled"]
     config["output_language"] = selections["output_language"]
+    # Provider-specific knobs stay absent unless chosen, so the provider
+    # default applies rather than an empty string.
     if selections.get("google_thinking_level"):
         config["google_thinking_level"] = selections["google_thinking_level"]
     if selections.get("anthropic_effort"):
         config["anthropic_effort"] = selections["anthropic_effort"]
     config["trading_mode"] = "investment"
+    return config
+
+
+def first_analyst_label(analysts):
+    """Display name of the analyst that starts the run."""
+    if not analysts:
+        return None
+    return f"{analysts[0].value.capitalize()} Analyst"
+
+
+def reset_message_buffer(buffer):
+    """Clear a previous run's statuses and reports before the next one."""
+    for agent in buffer.agent_status:
+        buffer.update_agent_status(agent, "pending")
+    for section in buffer.report_sections:
+        buffer.report_sections[section] = None
+    buffer.current_report = None
+    buffer.final_report = None
+    buffer.last_updated_section = None
+
+
+def run_analysis():
+    # First get all user selections
+    selections = get_user_selections()
+
+    config = build_run_config(selections)
 
     # Initialize the graph
     graph = TradingAgentsGraph(
@@ -757,19 +790,11 @@ def run_analysis():
         )
         update_display(layout)
 
-        # Reset agent statuses
-        for agent in message_buffer.agent_status:
-            message_buffer.update_agent_status(agent, "pending")
+        reset_message_buffer(message_buffer)
 
-        # Reset report sections
-        for section in message_buffer.report_sections:
-            message_buffer.report_sections[section] = None
-        message_buffer.current_report = None
-        message_buffer.final_report = None
-
-        # Update agent status to in_progress for the first analyst
-        first_analyst = f"{selections['analysts'][0].value.capitalize()} Analyst"
-        message_buffer.update_agent_status(first_analyst, "in_progress")
+        first_analyst = first_analyst_label(selections["analysts"])
+        if first_analyst:
+            message_buffer.update_agent_status(first_analyst, "in_progress")
         update_display(layout)
 
         # Create spinner text
@@ -832,59 +857,61 @@ def run_analysis():
                                 else:
                                     message_buffer.add_tool_call(tool_call.name, tool_call.args)
 
-                        # Update reports and agent status based on chunk content
-                        # Analyst Team Reports
-                        if "market_report" in chunk and chunk["market_report"]:
-                            message_buffer.update_report_section(
-                                "market_report", chunk["market_report"]
-                            )
-                            message_buffer.update_agent_status("Market Analyst", "completed")
-                            # Set next analyst to in_progress
-                            if "social" in selections["analysts"]:
-                                message_buffer.update_agent_status(
-                                    "Social Analyst", "in_progress"
-                                )
-
-                        if "sentiment_report" in chunk and chunk["sentiment_report"]:
-                            message_buffer.update_report_section(
-                                "sentiment_report", chunk["sentiment_report"]
-                            )
-                            message_buffer.update_agent_status("Social Analyst", "completed")
-                            # Set next analyst to in_progress
-                            if "news" in selections["analysts"]:
-                                message_buffer.update_agent_status(
-                                    "News Analyst", "in_progress"
-                                )
-
-                        if "news_report" in chunk and chunk["news_report"]:
-                            message_buffer.update_report_section(
-                                "news_report", chunk["news_report"]
-                            )
-                            message_buffer.update_agent_status("News Analyst", "completed")
-                            # Set next analyst to in_progress
-                            if "fundamentals" in selections["analysts"]:
-                                message_buffer.update_agent_status(
-                                    "Fundamentals Analyst", "in_progress"
-                                )
-
-                        if "fundamentals_report" in chunk and chunk["fundamentals_report"]:
-                            message_buffer.update_report_section(
-                                "fundamentals_report", chunk["fundamentals_report"]
-                            )
+                    # Update reports and agent status based on chunk content.
+                    # Outside the message guard: a chunk can carry a finished
+                    # report without carrying a new message.
+                    # Analyst Team Reports
+                    if "market_report" in chunk and chunk["market_report"]:
+                        message_buffer.update_report_section(
+                            "market_report", chunk["market_report"]
+                        )
+                        message_buffer.update_agent_status("Market Analyst", "completed")
+                        # Set next analyst to in_progress
+                        if "social" in selections["analysts"]:
                             message_buffer.update_agent_status(
-                                "Fundamentals Analyst", "completed"
+                                "Social Analyst", "in_progress"
                             )
-                            if "macro" in selections["analysts"]:
-                                message_buffer.update_agent_status(
-                                    "Macro Analyst", "in_progress"
-                                )
 
-                        if "macro_report" in chunk and chunk["macro_report"]:
-                            message_buffer.update_report_section(
-                                "macro_report", chunk["macro_report"]
+                    if "sentiment_report" in chunk and chunk["sentiment_report"]:
+                        message_buffer.update_report_section(
+                            "sentiment_report", chunk["sentiment_report"]
+                        )
+                        message_buffer.update_agent_status("Social Analyst", "completed")
+                        # Set next analyst to in_progress
+                        if "news" in selections["analysts"]:
+                            message_buffer.update_agent_status(
+                                "News Analyst", "in_progress"
                             )
-                            message_buffer.update_agent_status("Macro Analyst", "completed")
-                            update_research_team_status("in_progress")
+
+                    if "news_report" in chunk and chunk["news_report"]:
+                        message_buffer.update_report_section(
+                            "news_report", chunk["news_report"]
+                        )
+                        message_buffer.update_agent_status("News Analyst", "completed")
+                        # Set next analyst to in_progress
+                        if "fundamentals" in selections["analysts"]:
+                            message_buffer.update_agent_status(
+                                "Fundamentals Analyst", "in_progress"
+                            )
+
+                    if "fundamentals_report" in chunk and chunk["fundamentals_report"]:
+                        message_buffer.update_report_section(
+                            "fundamentals_report", chunk["fundamentals_report"]
+                        )
+                        message_buffer.update_agent_status(
+                            "Fundamentals Analyst", "completed"
+                        )
+                        if "macro" in selections["analysts"]:
+                            message_buffer.update_agent_status(
+                                "Macro Analyst", "in_progress"
+                            )
+
+                    if "macro_report" in chunk and chunk["macro_report"]:
+                        message_buffer.update_report_section(
+                            "macro_report", chunk["macro_report"]
+                        )
+                        message_buffer.update_agent_status("Macro Analyst", "completed")
+                        update_research_team_status("in_progress")
 
                     # Research Team - Handle Investment Debate State
                     if (
@@ -1039,8 +1066,8 @@ def run_analysis():
                                 "Portfolio Manager", "completed"
                             )
 
-                        # Update the display
-                        update_display(layout)
+                    # Update the display
+                    update_display(layout)
 
                     trace.append(chunk)
             finally:
@@ -1048,6 +1075,12 @@ def run_analysis():
                     checkpointer_ctx.__exit__(None, None, None)
 
             # Get final state and decision
+            if not trace:
+                raise RuntimeError(
+                    "The analysis graph produced no output for "
+                    f"{selections['ticker']} on {selections['analysis_date']}; "
+                    "the run cannot be scored."
+                )
             final_state = trace[-1]
             decision = trade_intent_action(final_state.get("final_trade_intent")) or graph.process_signal(
                 final_state["final_trade_decision"]

@@ -237,3 +237,181 @@ class ConfigTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReturnInputTests(unittest.TestCase):
+    def test_a_close_series_is_accepted_directly(self):
+        series = pd.Series([100.0, 101.0, 102.0])
+
+        self.assertEqual(len(daily_returns(series)), 2)
+
+    def test_a_frame_without_a_timestamp_column_uses_its_index(self):
+        frame = pd.DataFrame({"Close": [100.0, 101.0, 102.0]})
+
+        self.assertEqual(len(daily_returns(frame)), 2)
+
+    def test_column_case_does_not_matter(self):
+        frame = pd.DataFrame({"CLOSE": [100.0, 101.0]})
+
+        self.assertEqual(len(daily_returns(frame)), 1)
+
+    def test_a_frame_without_closes_is_refused(self):
+        with self.assertRaises(ValueError):
+            daily_returns(pd.DataFrame({"open": [100.0, 101.0]}))
+
+    def test_a_single_return_has_no_measurable_volatility(self):
+        self.assertEqual(realized_daily_vol(pd.Series([0.01])), 0.0)
+        self.assertEqual(realized_daily_vol(None), 0.0)
+
+    def test_a_candidate_with_almost_no_history_is_skipped(self):
+        verdict = assess_new_position(
+            "NVDA",
+            1_000.0,
+            100_000.0,
+            {},
+            {"NVDA": _frame([100.0, 101.0])},
+            config=_config(),
+        )
+
+        self.assertEqual(verdict.adjusted_notional, 1_000.0)
+        self.assertIn("Price history unavailable", " ".join(verdict.reasons))
+
+    def test_unparseable_price_history_is_skipped_rather_than_fatal(self):
+        verdict = assess_new_position(
+            "NVDA",
+            1_000.0,
+            100_000.0,
+            {},
+            {"NVDA": pd.DataFrame({"open": [1.0, 2.0, 3.0, 4.0]})},
+            config=_config(),
+        )
+
+        self.assertEqual(verdict.adjusted_notional, 1_000.0)
+
+    def test_a_position_in_the_candidate_itself_is_not_correlated_with_itself(self):
+        history = {"NVDA": _frame(_trending())}
+
+        verdict = assess_new_position(
+            "NVDA", 1_000.0, 100_000.0, {"NVDA": 5_000.0}, history, config=_config()
+        )
+
+        self.assertEqual(verdict.correlations, {})
+
+    def test_a_position_without_price_history_is_skipped_for_correlation(self):
+        verdict = assess_new_position(
+            "NVDA",
+            1_000.0,
+            100_000.0,
+            {"MYSTERY": 5_000.0},
+            {"NVDA": _frame(_trending())},
+            config=_config(),
+        )
+
+        self.assertEqual(verdict.correlations, {})
+
+    def test_without_equity_the_exposure_cap_is_skipped_and_said_so(self):
+        verdict = assess_new_position(
+            "NVDA", 1_000.0, None, {}, {"NVDA": _frame(_trending())}, config=_config()
+        )
+
+        self.assertEqual(verdict.adjusted_notional, 1_000.0)
+        self.assertIn("equity unavailable", " ".join(verdict.reasons))
+
+    def test_a_zero_request_is_not_allowed(self):
+        verdict = assess_new_position(
+            "NVDA", 0.0, 100_000.0, {}, {"NVDA": _frame(_trending())}, config=_config()
+        )
+
+        self.assertFalse(verdict.allowed)
+
+    def test_a_negative_request_is_treated_as_nothing(self):
+        verdict = assess_new_position(
+            "NVDA", -500.0, 100_000.0, {}, {"NVDA": _frame(_trending())}, config=_config()
+        )
+
+        self.assertEqual(verdict.requested_notional, 0.0)
+
+
+class AlpacaStateGatheringTests(unittest.TestCase):
+    """The portfolio layer needs the whole book, not just the candidate."""
+
+    def _gather(self, *, equity="100000.0", positions=(), bars=None, symbol="NVDA"):
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from tradingagents.portfolio import gather_portfolio_state_via_alpaca
+
+        client = mock.MagicMock()
+        client.get_account.return_value = SimpleNamespace(equity=equity)
+        client.get_all_positions.return_value = [
+            SimpleNamespace(symbol=sym, market_value=value) for sym, value in positions
+        ]
+
+        requested = []
+
+        def get_stock_data(sym, start, end):
+            requested.append(sym)
+            if bars is not None and sym not in bars:
+                raise RuntimeError("no data")
+            return (bars or {}).get(sym, _frame(_trending()))
+
+        with mock.patch(
+            "tradingagents.dataflows.alpaca_utils.get_alpaca_trading_client",
+            lambda: client,
+        ):
+            with mock.patch(
+                "tradingagents.dataflows.alpaca_utils.AlpacaUtils.get_stock_data",
+                get_stock_data,
+            ):
+                return gather_portfolio_state_via_alpaca(symbol), requested
+
+    def test_equity_and_open_positions_come_back(self):
+        (equity, positions, _history), _requested = self._gather(
+            positions=[("aapl", "5000.0")]
+        )
+
+        self.assertEqual(equity, 100_000.0)
+        self.assertEqual(positions, {"AAPL": 5_000.0})
+
+    def test_a_short_position_is_counted_at_its_absolute_size(self):
+        (_equity, positions, _history), _requested = self._gather(
+            positions=[("AAPL", "-5000.0")]
+        )
+
+        self.assertEqual(positions["AAPL"], 5_000.0)
+
+    def test_an_unreadable_equity_reads_as_unknown(self):
+        (equity, _positions, _history), _requested = self._gather(equity="n/a")
+
+        self.assertIsNone(equity)
+
+    def test_an_unreadable_position_is_skipped(self):
+        (_equity, positions, _history), _requested = self._gather(
+            positions=[("AAPL", "n/a"), ("MSFT", "1000.0")]
+        )
+
+        self.assertEqual(positions, {"MSFT": 1_000.0})
+
+    def test_history_is_fetched_for_the_candidate_and_every_holding(self):
+        (_equity, _positions, history), requested = self._gather(
+            positions=[("AAPL", "5000.0")]
+        )
+
+        self.assertEqual(sorted(requested), ["AAPL", "NVDA"])
+        self.assertIn("NVDA", history)
+        self.assertIn("AAPL", history)
+
+    def test_a_symbol_with_no_bars_is_left_out_rather_than_failing(self):
+        (_equity, _positions, history), _requested = self._gather(
+            positions=[("AAPL", "5000.0")], bars={"NVDA": _frame(_trending())}
+        )
+
+        self.assertIn("NVDA", history)
+        self.assertNotIn("AAPL", history)
+
+    def test_a_pair_is_reachable_under_both_spellings(self):
+        """The candidate arrives as BTC/USD; Alpaca bars key on BTCUSD."""
+        (_equity, _positions, history), _requested = self._gather(symbol="BTC/USD")
+
+        self.assertIn("BTCUSD", history)
+        self.assertIn("BTC/USD", history)
