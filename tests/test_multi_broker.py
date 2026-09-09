@@ -1,7 +1,15 @@
 import unittest
 
 from tradingagents.agents.schemas import ExecutableAction, RiskDecision, build_trade_intent_from_risk_decision
-from tradingagents.broker.registry import BrokerCapabilities, BrokerRegistry, BrokerRuntime
+from tradingagents.broker.registry import (
+    ALPACA_CAPABILITIES,
+    BROKER_CAPABILITY_MATRIX,
+    ROBINHOOD_CAPABILITIES,
+    TRADIER_CAPABILITIES,
+    BrokerCapabilities,
+    BrokerRegistry,
+    BrokerRuntime,
+)
 from tradingagents.broker.robinhood import RobinhoodExecutionGateway, RobinhoodSnapshotProvider
 from tradingagents.broker.tradier import TradierClient, TradierExecutionGateway, TradierSnapshotProvider
 from tradingagents.execution.dry_run_gateway import DryRunExecutionGateway
@@ -96,6 +104,26 @@ def execution_plan(quantity=10):
 
 
 class MultiBrokerTests(unittest.TestCase):
+    def test_capability_matrix_matches_implemented_adapters(self):
+        matrix = BROKER_CAPABILITY_MATRIX
+
+        self.assertTrue(matrix["alpaca"].crypto)
+        self.assertTrue(matrix["alpaca"].fractional_equities)
+        self.assertTrue(matrix["alpaca"].shorting)
+        self.assertTrue(matrix["alpaca"].native_brackets)
+
+        self.assertFalse(matrix["tradier"].crypto)
+        self.assertFalse(matrix["tradier"].fractional_equities)
+        self.assertTrue(matrix["tradier"].shorting)
+        self.assertFalse(matrix["tradier"].options)
+        self.assertFalse(matrix["tradier"].native_brackets)
+
+        self.assertFalse(matrix["robinhood"].crypto)
+        self.assertTrue(matrix["robinhood"].fractional_equities)
+        self.assertFalse(matrix["robinhood"].shorting)
+        self.assertFalse(matrix["robinhood"].native_brackets)
+        self.assertEqual(matrix["alpaca"].to_dict()["time_in_force"], ["day", "gtc"])
+
     def test_registry_creates_named_runtime(self):
         registry = BrokerRegistry()
         marker = object()

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Callable, Optional
 
 from tradingagents.agents.schemas import TradeIntent
+from tradingagents.broker.registry import BrokerCapabilities
 from tradingagents.broker.snapshot import SnapshotProvider
 from tradingagents.lifecycle import LifecycleService, LifecycleStatus
 from tradingagents.lifecycle.service import DuplicateExecution
@@ -30,6 +31,7 @@ class ExecutionPipeline:
         risk_sizer: Optional[Callable[..., Any]] = None,
         lifecycle: Optional[LifecycleService] = None,
         unit_of_work_factory: Optional[Callable[[], Any]] = None,
+        broker_capabilities: Optional[BrokerCapabilities] = None,
         lifecycle_enabled: bool = True,
         lifecycle_ttl_seconds: int = 900,
     ):
@@ -40,6 +42,7 @@ class ExecutionPipeline:
         self.safety_guard = safety_guard
         self.risk_sizer = risk_sizer
         self.lifecycle = lifecycle
+        self.broker_capabilities = broker_capabilities
         self.persistence = ExecutionPersistence(
             self.journal,
             lifecycle=lifecycle,
@@ -104,6 +107,8 @@ class ExecutionPipeline:
                 "lifecycle_status": exc.record.status.value,
             }
         errors = validate_intent(parsed, execution_symbol)
+        if self.broker_capabilities is not None:
+            errors.extend(self.broker_capabilities.validate_intent(parsed))
         if errors:
             self._record(
                 "validation_blocked",
@@ -182,6 +187,10 @@ class ExecutionPipeline:
             payload={"plan": plan.model_dump(mode="json")},
         )
         plan_errors = validate_plan_semantics(parsed, plan)
+        if self.broker_capabilities is not None:
+            plan_errors.extend(
+                self.broker_capabilities.validate_plan(parsed, plan)
+            )
         if plan_errors:
             self._record(
                 "validation_blocked",
@@ -430,10 +439,12 @@ def execute_autonomous_trade(
     risk_sizer=None,
     lifecycle=None,
     unit_of_work_factory=None,
+    broker_capabilities=None,
     run_id: Optional[str] = None,
 ) -> dict[str, Any]:
     config = None
-    runtime = None
+    broker_runtime = None
+    persistence_runtime = None
     if (
         snapshot_provider is None
         or gateway is None
@@ -452,11 +463,13 @@ def execute_autonomous_trade(
         from tradingagents.broker.registry import default_broker_registry
 
         broker_name = str(config.get("execution_broker", "alpaca")).lower()
-        runtime = default_broker_registry().create(broker_name, config)
+        broker_runtime = default_broker_registry().create(broker_name, config)
         if snapshot_provider is None:
-            snapshot_provider = runtime.snapshot_provider
+            snapshot_provider = broker_runtime.snapshot_provider
         if gateway is None:
-            gateway = runtime.execution_gateway
+            gateway = broker_runtime.execution_gateway
+        if broker_capabilities is None:
+            broker_capabilities = broker_runtime.capabilities
         if str(config.get("execution_gateway", "alpaca")).lower() == "dry-run":
             from .dry_run_gateway import DryRunExecutionGateway
 
@@ -464,8 +477,8 @@ def execute_autonomous_trade(
     if unit_of_work_factory is None:
         from tradingagents.persistence import build_persistence_runtime
 
-        runtime = build_persistence_runtime(config or {})
-        unit_of_work_factory = runtime.unit_of_work_factory
+        persistence_runtime = build_persistence_runtime(config or {})
+        unit_of_work_factory = persistence_runtime.unit_of_work_factory
     if journal is None:
         journal = ExecutionJournal((config or {}).get("results_dir", "eval_results"))
     if (
@@ -504,11 +517,12 @@ def execute_autonomous_trade(
             risk_sizer=risk_sizer,
             lifecycle=lifecycle,
             unit_of_work_factory=unit_of_work_factory,
+            broker_capabilities=broker_capabilities,
             lifecycle_enabled=(config or {}).get("lifecycle_enabled", True),
             lifecycle_ttl_seconds=(config or {}).get(
                 "lifecycle_intent_ttl_seconds", 900
             ),
         ).execute(symbol, trade_intent, requested_notional_usd, run_id=run_id)
     finally:
-        if runtime is not None:
-            runtime.close()
+        if persistence_runtime is not None:
+            persistence_runtime.close()

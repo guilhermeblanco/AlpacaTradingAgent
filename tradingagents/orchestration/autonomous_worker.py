@@ -72,6 +72,7 @@ def build_scheduler_from_env():
         gateway,
         safety_guard=SafetyGuard(config),
         unit_of_work_factory=persistence.unit_of_work_factory,
+        broker_capabilities=broker.capabilities,
         lifecycle_enabled=True,
         lifecycle_ttl_seconds=config["lifecycle_intent_ttl_seconds"],
     )

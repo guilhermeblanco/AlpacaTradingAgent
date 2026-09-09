@@ -9,6 +9,7 @@ from tradingagents.agents.schemas import (
     build_trade_intent_from_risk_decision,
 )
 from tradingagents.broker.models import AccountSnapshot, PortfolioSnapshot, QuoteSnapshot
+from tradingagents.broker.registry import BrokerCapabilities
 from tradingagents.execution.dry_run_gateway import DryRunExecutionGateway
 from tradingagents.execution.journal import ExecutionJournal
 from tradingagents.execution.pipeline import ExecutionPipeline
@@ -113,6 +114,58 @@ class ExecutionPipelineTests(unittest.TestCase):
             ).execute("BTC/USD", trade_intent, 1_000)
             self.assertFalse(result["success"])
             self.assertIn("Crypto short", result["error"])
+
+    def test_broker_capabilities_reject_unsupported_asset_before_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = ExecutionPipeline(
+                FakeProvider(fail=True),
+                DryRunExecutionGateway(),
+                journal=ExecutionJournal(tmp),
+                broker_capabilities=BrokerCapabilities(crypto=False),
+            ).execute("BTC/USD", buy_intent("BTC/USD"), 1_000)
+
+            self.assertFalse(result["success"])
+            self.assertIn("does not support crypto", result["error"])
+
+    def test_broker_capabilities_reject_fractional_plan(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = ExecutionPipeline(
+                FakeProvider(),
+                DryRunExecutionGateway(),
+                journal=ExecutionJournal(tmp),
+                broker_capabilities=BrokerCapabilities(
+                    fractional_equities=False
+                ),
+            ).execute("AAPL", buy_intent(), 1_050)
+
+            self.assertFalse(result["success"])
+            self.assertIn("whole-share", result["error"])
+            self.assertEqual(result["validations"][0]["stage"], "plan")
+
+    def test_broker_capabilities_reject_unimplemented_protective_orders(self):
+        intent = build_trade_intent_from_risk_decision(
+            symbol="AAPL",
+            trading_mode="investment",
+            current_position="NEUTRAL",
+            decision=RiskDecision(
+                action=ExecutableAction.BUY,
+                confidence="high",
+                risk_rationale="test",
+                required_controls="Stop at $95",
+                stop_loss="$95",
+                target_portfolio_pct=5.0,
+            ),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            result = ExecutionPipeline(
+                FakeProvider(fail=True),
+                DryRunExecutionGateway(),
+                journal=ExecutionJournal(tmp),
+                broker_capabilities=BrokerCapabilities(native_brackets=False),
+            ).execute("AAPL", intent, 1_000)
+
+            self.assertFalse(result["success"])
+            self.assertIn("native protective orders", result["error"])
 
 
 if __name__ == "__main__":

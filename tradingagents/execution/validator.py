@@ -24,7 +24,7 @@ def validate_intent(intent: TradeIntent, execution_symbol: str) -> list[str]:
         if not intent.execution_constraints.allow_shorts:
             errors.append("Short exposure is disabled for this intent.")
         if intent.execution_constraints.asset_class == "crypto":
-            errors.append("Crypto short exposure is unsupported by Alpaca spot trading.")
+            errors.append("Crypto short exposure is unsupported by spot execution.")
     if intent.target_portfolio_pct is not None and intent.target_position == TargetPosition.NEUTRAL and intent.target_portfolio_pct != 0:
         errors.append("A neutral target position must have a zero target allocation.")
     if intent.intent_type.value == "REDUCE" and intent.target_portfolio_pct is None:

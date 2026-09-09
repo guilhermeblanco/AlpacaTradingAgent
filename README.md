@@ -33,6 +33,9 @@ See [docs/submission-recovery.md](docs/submission-recovery.md).
 Analyst OHLCV and quotes can be selected independently from order execution.
 See [docs/market-data.md](docs/market-data.md).
 
+Execution features are checked against an explicit per-broker contract. See
+[docs/broker-capabilities.md](docs/broker-capabilities.md).
+
 ### 📈 **Dual Asset Support: Stocks & Crypto**
 - **Multi-Asset Analysis**: Analyze both traditional stocks and cryptocurrencies in a single session
 - **Crypto Format**: Use proper crypto format (e.g., `BTC/USD`, `ETH/USD`) for cryptocurrency analysis
