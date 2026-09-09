@@ -500,5 +500,172 @@ class EveryAnalystTests(unittest.TestCase):
             self.assertIn(key, result, key)
 
 
+class EveryAnalystToolLoopTests(unittest.TestCase):
+    """Each analyst runs its own copy of the same bounded tool loop, so each
+    copy has to enforce the same bounds: unknown tools are survivable, a
+    failing tool is reported rather than raised, identical calls run once,
+    and the loop always terminates."""
+
+    LOOPS = (
+        (create_market_analyst, "market_report", "get_technical_brief"),
+        (create_news_analyst, "news_report", "get_google_news"),
+        (create_social_media_analyst, "sentiment_report", "get_stock_news_openai"),
+        (create_fundamentals_analyst, "fundamentals_report", "get_fundamentals_openai"),
+        (create_macro_analyst, "macro_report", "get_macro_analysis"),
+    )
+
+    @staticmethod
+    def _asks_for(tool_name, args=None, call_id="1"):
+        return AIMessage(
+            content="",
+            additional_kwargs={
+                "tool_calls": [
+                    {"id": call_id, "name": tool_name, "args": args or {}}
+                ]
+            },
+        )
+
+    def _run(self, factory, toolkit, *responses, ticker="NVDA"):
+        llm = FakeLLM(*responses)
+        return factory(llm, toolkit)(_state(ticker=ticker)), llm
+
+    def test_a_requested_tool_is_executed_and_its_output_fed_back(self):
+        for factory, key, tool_name in self.LOOPS:
+            toolkit = _toolkit()
+
+            result, llm = self._run(
+                factory,
+                toolkit,
+                self._asks_for(tool_name),
+                AIMessage(content="a read. FINAL TRANSACTION PROPOSAL: HOLD"),
+            )
+
+            self.assertEqual(len(getattr(toolkit, tool_name).calls), 1, tool_name)
+            self.assertEqual(llm.invocations, 2, tool_name)
+            self.assertIn("a read", result[key], key)
+
+    def test_an_unknown_tool_does_not_stop_the_run(self):
+        for factory, key, _tool_name in self.LOOPS:
+            result, _llm = self._run(
+                factory,
+                _toolkit(),
+                self._asks_for("no_such_tool"),
+                AIMessage(content="a read. FINAL TRANSACTION PROPOSAL: HOLD"),
+            )
+
+            self.assertTrue(result[key], key)
+
+    def test_a_failing_tool_is_reported_rather_than_raised(self):
+        for factory, key, tool_name in self.LOOPS:
+            toolkit = _toolkit()
+
+            def explode(_args, *rest, **kwargs):
+                raise RuntimeError("upstream 503")
+
+            setattr(
+                toolkit,
+                tool_name,
+                SimpleNamespace(name=tool_name, invoke=explode, description=tool_name),
+            )
+
+            result, _llm = self._run(
+                factory,
+                toolkit,
+                self._asks_for(tool_name),
+                AIMessage(content="a read. FINAL TRANSACTION PROPOSAL: HOLD"),
+            )
+
+            self.assertTrue(result[key], key)
+
+    def test_a_repeated_identical_call_is_only_executed_once(self):
+        for factory, _key, tool_name in self.LOOPS:
+            toolkit = _toolkit()
+
+            self._run(
+                factory,
+                toolkit,
+                self._asks_for(tool_name),
+                self._asks_for(tool_name),
+                AIMessage(content="a read. FINAL TRANSACTION PROPOSAL: HOLD"),
+            )
+
+            self.assertEqual(len(getattr(toolkit, tool_name).calls), 1, tool_name)
+
+    def test_differing_arguments_are_executed_separately(self):
+        for factory, _key, tool_name in self.LOOPS:
+            toolkit = _toolkit()
+
+            self._run(
+                factory,
+                toolkit,
+                self._asks_for(tool_name, {"window": 7}),
+                self._asks_for(tool_name, {"window": 30}),
+                AIMessage(content="a read. FINAL TRANSACTION PROPOSAL: HOLD"),
+            )
+
+            self.assertEqual(len(getattr(toolkit, tool_name).calls), 2, tool_name)
+
+    def test_string_arguments_are_parsed_into_a_mapping(self):
+        for factory, _key, tool_name in self.LOOPS:
+            toolkit = _toolkit()
+
+            self._run(
+                factory,
+                toolkit,
+                AIMessage(
+                    content="",
+                    additional_kwargs={
+                        "tool_calls": [
+                            {
+                                "id": "1",
+                                "function": {
+                                    "name": tool_name,
+                                    "arguments": '{"window": 14}',
+                                },
+                            }
+                        ]
+                    },
+                ),
+                AIMessage(content="a read. FINAL TRANSACTION PROPOSAL: HOLD"),
+            )
+
+            self.assertEqual(
+                getattr(toolkit, tool_name).calls, [{"window": 14}], tool_name
+            )
+
+    def test_malformed_arguments_do_not_stop_the_run(self):
+        for factory, key, tool_name in self.LOOPS:
+            toolkit = _toolkit()
+
+            result, _llm = self._run(
+                factory,
+                toolkit,
+                AIMessage(
+                    content="",
+                    additional_kwargs={
+                        "tool_calls": [
+                            {
+                                "id": "1",
+                                "function": {"name": tool_name, "arguments": "{oops"},
+                            }
+                        ]
+                    },
+                ),
+                AIMessage(content="a read. FINAL TRANSACTION PROPOSAL: HOLD"),
+            )
+
+            self.assertEqual(getattr(toolkit, tool_name).calls, [{}], tool_name)
+            self.assertTrue(result[key], key)
+
+    def test_an_endless_tool_loop_is_halted_and_says_so(self):
+        for factory, key, tool_name in self.LOOPS:
+            llm = FakeLLM()
+            llm._responses = [self._asks_for(tool_name, {"n": i}) for i in range(20)]
+
+            result = factory(llm, _toolkit())(_state())
+
+            self.assertIn("Tool-loop halted", result[key], key)
+
+
 if __name__ == "__main__":
     unittest.main()
