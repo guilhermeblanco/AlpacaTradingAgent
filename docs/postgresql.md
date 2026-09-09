@@ -113,3 +113,20 @@ The repository tests use SQLite for fast adapter contract coverage. Set
 ```bash
 TEST_DATABASE_URL="$DATABASE_URL" python -m pytest tests/test_postgres_persistence.py -v
 ```
+
+A throwaway database is enough, and the suite truncates every persistence
+table before each test so it can be reused across runs:
+
+```bash
+docker run -d --name ta-test-pg -p 55433:5432 \
+  -e POSTGRES_DB=tradingagents_test \
+  -e POSTGRES_USER=tradingagents \
+  -e POSTGRES_PASSWORD=tradingagents \
+  postgres:17-alpine
+
+TEST_DATABASE_URL="postgresql+psycopg://tradingagents:tradingagents@localhost:55433/tradingagents_test" \
+  python -m pytest tests/
+```
+
+Without `TEST_DATABASE_URL` the PostgreSQL-only tests skip and the rest of
+the suite still runs offline.
