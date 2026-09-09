@@ -250,3 +250,158 @@ class TradeExecutionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StartAnalysisTests(unittest.TestCase):
+    """The entry point the Start button calls, before any model runs."""
+
+    def setUp(self):
+        self.state = AppState()
+        patch = mock.patch("webui.components.analysis.app_state", self.state)
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.state.init_symbol_state("NVDA")
+        self.state.current_symbol = "NVDA"
+
+        self.runs = []
+        run_patch = mock.patch.object(
+            an, "run_analysis", side_effect=lambda *a, **k: self.runs.append((a, k))
+        )
+        run_patch.start()
+        self.addCleanup(run_patch.stop)
+
+        chart = mock.patch.object(an, "create_chart", lambda *a, **k: "chart")
+        chart.start()
+        self.addCleanup(chart.stop)
+
+    def _start(self, **overrides):
+        params = {
+            "ticker": "NVDA",
+            "analysts_market": True,
+            "analysts_social": False,
+            "analysts_news": False,
+            "analysts_fundamentals": False,
+            "analysts_macro": False,
+            "research_depth": "Medium",
+            "allow_shorts": False,
+            "quick_llm": "gpt-5.4-nano",
+            "deep_llm": "gpt-5.4-mini",
+        }
+        params.update(overrides)
+        return an.start_analysis(**params)
+
+    def _allow_budget(self):
+        guard = mock.MagicMock()
+        guard.check_llm_budget.return_value = SimpleNamespace(allowed=True, reasons=[])
+        return mock.patch("tradingagents.safety.get_safety_guard", lambda: guard)
+
+    def test_an_exhausted_token_budget_refuses_before_spending_more(self):
+        """The gate exists to stop a runaway from burning the day's budget."""
+        guard = mock.MagicMock()
+        guard.check_llm_budget.return_value = SimpleNamespace(
+            allowed=False, reasons=["daily LLM token budget exhausted"]
+        )
+
+        with mock.patch("tradingagents.safety.get_safety_guard", lambda: guard):
+            message = self._start()
+
+        self.assertIn("budget exhausted", message)
+        self.assertEqual(self.runs, [])
+
+    def test_an_unavailable_guard_does_not_block_the_run(self):
+        with mock.patch(
+            "tradingagents.safety.get_safety_guard", side_effect=RuntimeError("no db")
+        ):
+            self._start()
+
+        self.assertEqual(len(self.runs), 1)
+
+    def test_no_analysts_is_refused(self):
+        with self._allow_budget():
+            message = self._start(analysts_market=False)
+
+        self.assertIn("at least one analyst", message)
+        self.assertEqual(self.runs, [])
+
+    def test_the_selected_analysts_are_passed_through_in_order(self):
+        with self._allow_budget():
+            self._start(
+                analysts_market=True,
+                analysts_social=True,
+                analysts_news=False,
+                analysts_fundamentals=True,
+                analysts_macro=True,
+            )
+
+        args, _kwargs = self.runs[0]
+        self.assertEqual(args[1], ["market", "social", "fundamentals", "macro"])
+
+    def test_each_research_depth_maps_to_its_round_count(self):
+        for depth, rounds in (("Shallow", 1), ("Medium", 3), ("Deep", 5)):
+            self.runs.clear()
+            with self._allow_budget():
+                self._start(research_depth=depth)
+
+            args, _kwargs = self.runs[0]
+            self.assertEqual(args[2], {"rounds": rounds, "level": depth}, depth)
+
+    def test_the_initial_chart_is_drawn_before_the_run(self):
+        with self._allow_budget():
+            self._start()
+
+        self.assertEqual(self.state.get_state("NVDA")["chart_data"], "chart")
+
+    def test_a_failing_initial_chart_does_not_stop_the_run(self):
+        def explode(*_a, **_k):
+            raise RuntimeError("provider down")
+
+        with self._allow_budget(), mock.patch.object(an, "create_chart", explode):
+            self._start()
+
+        self.assertEqual(len(self.runs), 1)
+
+    def test_the_status_message_names_the_trading_mode(self):
+        with self._allow_budget():
+            investment = self._start(allow_shorts=False)
+            trading = self._start(allow_shorts=True)
+
+        self.assertIn("Investment Mode", investment)
+        self.assertIn("Trading Mode", trading)
+
+    def test_the_status_message_mentions_order_execution_when_enabled(self):
+        self.state.trade_enabled = True
+        self.state.trade_amount = 2500
+
+        with self._allow_budget():
+            message = self._start()
+
+        self.assertIn("2500", message)
+
+    def test_the_status_message_omits_execution_when_disabled(self):
+        self.state.trade_enabled = False
+
+        with self._allow_budget():
+            message = self._start()
+
+        self.assertNotIn("order execution", message)
+
+
+class RunAnalysisGuardTests(unittest.TestCase):
+    def setUp(self):
+        self.state = AppState()
+        patch = mock.patch("webui.components.analysis.app_state", self.state)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_an_unknown_symbol_is_refused_before_building_a_graph(self):
+        built = []
+
+        with mock.patch.object(
+            an, "TradingAgentsGraph", lambda *a, **k: built.append(1)
+        ), mock.patch.object(an, "get_run_audit_logger", mock.MagicMock()):
+            an.run_analysis(
+                "UNKNOWN", ["market"], {"rounds": 1, "level": "Shallow"}, False,
+                "gpt-5.4-nano", "gpt-5.4-mini",
+            )
+
+        self.assertEqual(built, [])

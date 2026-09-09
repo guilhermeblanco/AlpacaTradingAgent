@@ -237,6 +237,9 @@ def run_analysis(
     run_started = False
     final_state = None
     current_date = None
+    # Bound before the try so the finally below can always read it, including
+    # when the symbol has no state and the guard returns immediately.
+    current_state = None
 
     try:
         # Always use current date for real-time analysis
@@ -436,7 +439,8 @@ def run_analysis(
     finally:
         # Mark analysis as no longer running
         print(f"Real-time analysis for {ticker} completed")
-        current_state["analysis_running"] = False
+        if current_state is not None:
+            current_state["analysis_running"] = False
 
     return "Real-time analysis complete"
 
