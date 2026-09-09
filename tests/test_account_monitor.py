@@ -90,5 +90,66 @@ class AccountMonitorTests(unittest.TestCase):
         self.assertEqual(operations.paused[0][0], "execution:tradier")
 
 
+    def test_quarantine_scope_matches_the_configured_execution_scope(self):
+        """The pipeline blocks on execution_quarantine_scope, so the monitor
+        must pause that exact scope rather than the bare broker name."""
+        baseline = AccountBaseline(
+            broker="alpaca",
+            snapshot=snapshot(),
+            source="verified_fill",
+            mismatch_count=1,
+            updated_at=datetime.now(timezone.utc),
+        )
+        operations = Operations()
+        monitor = AccountReconciliationMonitor(
+            lambda: Uow(Baselines(baseline), operations),
+            lambda broker: SimpleNamespace(get_portfolio_snapshot=lambda: snapshot(8)),
+            ["alpaca"],
+            mismatch_threshold=2,
+            quarantine_scope=lambda _broker: "execution:alpaca:paper-primary",
+        )
+
+        self.assertEqual(monitor.run_once().quarantined, 1)
+        self.assertEqual(operations.paused[0][0], "execution:alpaca:paper-primary")
+
+    def test_build_monitor_from_env_uses_the_shared_quarantine_scope(self):
+        import os
+        from unittest import mock
+
+        from tradingagents.execution import account_monitor
+
+        captured = {}
+
+        class Runtime:
+            name = "alpaca"
+            snapshot_provider = SimpleNamespace(
+                get_portfolio_snapshot=lambda: snapshot()
+            )
+
+        def fake_monitor(*args, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace()
+
+        env = {
+            "PERSISTENCE_BACKEND": "postgres",
+            "EXECUTION_QUARANTINE_SCOPE": "execution:alpaca:paper-primary",
+        }
+        with mock.patch.dict(os.environ, env, clear=False), mock.patch.object(
+            account_monitor, "AccountReconciliationMonitor", fake_monitor
+        ), mock.patch(
+            "tradingagents.broker.get_execution_broker_runtime",
+            lambda config: Runtime(),
+        ), mock.patch(
+            "tradingagents.persistence.build_persistence_runtime",
+            lambda config: SimpleNamespace(
+                unit_of_work_factory=lambda: None, close=lambda: None
+            ),
+        ):
+            account_monitor.build_monitor_from_env()
+
+        self.assertEqual(
+            captured["quarantine_scope"]("alpaca"), "execution:alpaca:paper-primary"
+        )
+
 if __name__ == "__main__":
     unittest.main()

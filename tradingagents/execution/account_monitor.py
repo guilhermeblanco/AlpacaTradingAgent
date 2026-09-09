@@ -72,6 +72,10 @@ def compare_account_snapshots(
     )
 
 
+def _default_quarantine_scope(broker: str) -> str:
+    return f"execution:{broker}"
+
+
 @dataclass
 class AccountMonitorResult:
     checked: int = 0
@@ -93,6 +97,7 @@ class AccountReconciliationMonitor:
         quantity_tolerance: float = 1e-6,
         cash_tolerance: float = 1.0,
         worker_id: str = "account-monitor",
+        quarantine_scope: Optional[Callable[[str], str]] = None,
     ) -> None:
         self.unit_of_work_factory = unit_of_work_factory
         self.snapshot_provider_factory = snapshot_provider_factory
@@ -101,6 +106,9 @@ class AccountReconciliationMonitor:
         self.quantity_tolerance = quantity_tolerance
         self.cash_tolerance = cash_tolerance
         self.worker_id = worker_id
+        # Must match the scope the execution pipeline checks, otherwise the
+        # quarantine pauses a service nothing enforces.
+        self.quarantine_scope = quarantine_scope or _default_quarantine_scope
 
     def run_once(self) -> AccountMonitorResult:
         result = AccountMonitorResult()
@@ -133,7 +141,7 @@ class AccountReconciliationMonitor:
                     result.mismatched += 1
                     if mismatch_count >= self.mismatch_threshold:
                         uow.operations.set_paused(
-                            f"execution:{broker}",
+                            self.quarantine_scope(broker),
                             paused=True,
                             reason="account-wide drift: " + "; ".join(report.problems),
                             updated_by=self.worker_id,
@@ -157,12 +165,16 @@ def build_monitor_from_env():
         persistence.close()
         raise ValueError("account monitor requires PERSISTENCE_BACKEND=postgres")
     runtime = get_execution_broker_runtime(config)
+    # Every process sharing an account must quarantine the same scope the
+    # execution pipeline checks before it submits an order.
+    scope = os.getenv("EXECUTION_QUARANTINE_SCOPE", "").strip()
     monitor = AccountReconciliationMonitor(
         persistence.unit_of_work_factory,
         lambda _broker: runtime.snapshot_provider,
         [runtime.name],
         mismatch_threshold=int(os.getenv("ACCOUNT_DRIFT_MISMATCH_THRESHOLD", "2")),
         cash_tolerance=float(os.getenv("ACCOUNT_DRIFT_CASH_TOLERANCE", "1")),
+        quarantine_scope=(lambda _broker, scope=scope: scope) if scope else None,
     )
     return monitor, persistence.close
 

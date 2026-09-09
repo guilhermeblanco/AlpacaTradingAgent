@@ -25,7 +25,11 @@ ACCOUNT_RECONCILIATION_QUANTITY_TOLERANCE=0.000001
 ```
 
 When the scope is omitted, direct execution defaults to `execution:<broker>`.
-The autonomous worker appends `AUTONOMOUS_ACCOUNT_KEY` when available.
+The autonomous worker appends `AUTONOMOUS_ACCOUNT_KEY` when available, and the
+periodic account monitor pauses the same `EXECUTION_QUARANTINE_SCOPE`. Set the
+variable for the monitor too: without it the monitor pauses `execution:<broker>`
+while the trading processes check the account-specific scope, so a drift
+quarantine would never stop an order.
 
 Inspect and clear a quarantine only after comparing the broker account with the
 decision and order journals:
