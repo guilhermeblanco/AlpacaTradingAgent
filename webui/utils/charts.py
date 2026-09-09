@@ -38,15 +38,20 @@ def create_chart(ticker: str, period: str = "1y", end_date: Union[str, datetime]
     start_dt = end_dt - delta
 
     # fetch data
-    df = AlpacaUtils.get_stock_data(
-        symbol=ticker,
-        start_date=start_dt,
-        end_date=end_dt,
-        timeframe=tf_str
-    )
+    try:
+        df = AlpacaUtils.get_stock_data(
+            symbol=ticker,
+            start_date=start_dt,
+            end_date=end_dt,
+            timeframe=tf_str
+        )
+    except Exception as exc:
+        # The docstring promises demo data when the API fails, and a demo
+        # chart carrying the reason beats an unexplained blank panel.
+        return create_demo_chart(ticker, period, end_date, error_msg=str(exc))
 
     # if we got no data, make a demo chart
-    if df.empty:
+    if df is None or df.empty:
         return create_demo_chart(ticker, period, end_date, error_msg="No data returned from Alpaca API.")
 
     # build chart
