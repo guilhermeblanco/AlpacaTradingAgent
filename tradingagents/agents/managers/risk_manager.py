@@ -16,7 +16,7 @@ from ..utils.report_context import (
     build_debate_digest,
 )
 from ..utils.structured import bind_structured, invoke_structured_object_or_freetext
-from tradingagents.broker.alpaca_snapshot import AlpacaSnapshotProvider
+from tradingagents.broker import get_execution_broker_runtime
 from tradingagents.broker.prompt_context import build_broker_prompt_context
 from tradingagents.prompts import render_prompt
 
@@ -32,7 +32,9 @@ except ImportError:
 def create_risk_manager(llm, memory, config=None, snapshot_provider=None):
     structured_llm = bind_structured(llm, RiskDecision, "Risk Manager")
     decision_log = TradingMemoryLog(config)
-    broker_snapshots = snapshot_provider or AlpacaSnapshotProvider()
+    broker_snapshots = snapshot_provider or get_execution_broker_runtime(
+        config or {}
+    ).snapshot_provider
 
     def risk_manager_node(state) -> dict:
 
