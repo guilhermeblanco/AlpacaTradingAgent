@@ -439,7 +439,7 @@ class TradingAgentsGraph:
         )
         args = self._graph_args_for_run(company_name, str(trade_date))
         graph, checkpointer_ctx = self._graph_for_run(company_name, str(trade_date))
-        run_logger.start_run(
+        run_id = run_logger.start_run(
             symbol=company_name,
             trade_date=str(trade_date),
             config=self.config,
@@ -510,6 +510,30 @@ class TradingAgentsGraph:
                 )
             except Exception:
                 pass
+
+            # The analysis half of the tape: what was gathered, how the
+            # evidence scored, and how the debates resolved, recorded against
+            # the same decision id execution uses.
+            try:
+                from tradingagents.workbench import (
+                    build_analysis_record,
+                    record_analysis_stages,
+                )
+
+                analysis_record = build_analysis_record(
+                    final_state,
+                    run_id=final_state.get("run_id") or run_id,
+                    final_signal=final_signal,
+                    config=self.config,
+                )
+                run_logger.log_state_snapshot(
+                    stage="analysis_stages",
+                    snapshot=analysis_record,
+                    symbol=company_name,
+                )
+                record_analysis_stages(analysis_record)
+            except Exception as exc:
+                print(f"[WORKBENCH] Could not record analysis stages: {exc}")
 
             run_logger.finish_run(
                 symbol=company_name,

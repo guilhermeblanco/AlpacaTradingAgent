@@ -14,6 +14,11 @@ from .outbox import (
     OutboxMessage,
     OutboxPort,
 )
+from .shared import (
+    get_persistence_runtime,
+    reset_persistence_runtime,
+    unit_of_work_factory,
+)
 from .unit_of_work import OutboxUnitOfWork, PassthroughUnitOfWork, UnitOfWork
 
 
@@ -38,4 +43,7 @@ __all__ = [
     "UnitOfWork",
     "payload_hash",
     "build_persistence_runtime",
+    "get_persistence_runtime",
+    "reset_persistence_runtime",
+    "unit_of_work_factory",
 ]

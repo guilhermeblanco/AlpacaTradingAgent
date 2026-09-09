@@ -9,6 +9,7 @@ from tradingagents.lifecycle import LifecycleService, LifecycleStatus
 from tradingagents.lifecycle.service import DuplicateExecution
 from tradingagents.persistence.protocols import EventJournalPort
 
+from .gates import GateLedger
 from .gateway import ExecutionGateway, SubmissionUncertain
 from .journal import ExecutionJournal, snapshot_hash
 from .models import ExecutionResult, PlanAction
@@ -88,10 +89,53 @@ class ExecutionPipeline:
         *,
         run_id: Optional[str] = None,
     ) -> dict[str, Any]:
+        result = self._execute(
+            execution_symbol, intent, requested_notional_usd, run_id=run_id
+        )
+        self._record_gate_ledger(result, run_id)
+        return result
+
+    def _record_gate_ledger(
+        self, result: dict[str, Any], run_id: Optional[str]
+    ) -> None:
+        """Persist the gate sequence as one event the workbench can read back.
+
+        Best effort: the trade has already happened (or definitively has not)
+        by the time this runs, so a journal failure must not change its
+        outcome.
+        """
+        ledger_payload = result.get("gate_ledger")
+        if not isinstance(ledger_payload, dict):
+            return
+        try:
+            self.persistence.record(
+                "gate_ledger_recorded",
+                decision_id=str(result.get("decision_id") or ""),
+                symbol=str(result.get("symbol") or ""),
+                run_id=run_id,
+                payload={"gate_ledger": ledger_payload},
+            )
+        except Exception:
+            pass
+
+    def _execute(
+        self,
+        execution_symbol: str,
+        intent: TradeIntent | dict[str, Any],
+        requested_notional_usd: float,
+        *,
+        run_id: Optional[str] = None,
+    ) -> dict[str, Any]:
         try:
             parsed = intent if isinstance(intent, TradeIntent) else TradeIntent.model_validate(intent)
         except Exception as exc:
             return {"success": False, "error": f"Invalid trade intent: {exc}"}
+
+        ledger = GateLedger(
+            decision_id=parsed.decision_id,
+            symbol=parsed.symbol,
+            requested_notional=float(requested_notional_usd or 0.0),
+        )
 
         try:
             lifecycle_record, journal_path = self.persistence.begin(
@@ -116,6 +160,11 @@ class ExecutionPipeline:
         )
         if paused_reason:
             reason = f"Execution is quarantined: {paused_reason}"
+            ledger.blocked(
+                "execution_quarantine",
+                reasons=[paused_reason],
+                metrics={"scope": self.execution_control_service},
+            )
             self._record(
                 "execution_quarantined",
                 parsed,
@@ -139,12 +188,18 @@ class ExecutionPipeline:
                         "reasons": [paused_reason],
                     }
                 ],
+                "gate_ledger": ledger.model_dump(mode="json"),
                 "journal_path": journal_path,
             }
+        ledger.passed(
+            "execution_quarantine",
+            metrics={"scope": self.execution_control_service},
+        )
         errors = validate_intent(parsed, execution_symbol)
         if self.broker_capabilities is not None:
             errors.extend(self.broker_capabilities.validate_intent(parsed))
         if errors:
+            ledger.blocked("intent", reasons=errors)
             self._record(
                 "validation_blocked",
                 parsed,
@@ -159,13 +214,18 @@ class ExecutionPipeline:
                 "symbol": parsed.symbol,
                 "error": " ".join(errors),
                 "validations": [{"stage": "intent", "allowed": False, "reasons": errors}],
+                "gate_ledger": ledger.model_dump(mode="json"),
                 "journal_path": journal_path,
             }
+        ledger.passed("intent")
 
         try:
             portfolio = self.snapshot_provider.get_portfolio_snapshot()
             quote = self.snapshot_provider.get_quote_snapshot(parsed.symbol)
         except Exception as exc:
+            ledger.blocked(
+                "snapshot", reasons=[f"Broker snapshot unavailable: {exc}"]
+            )
             self._record(
                 "snapshot_failed",
                 parsed,
@@ -179,6 +239,7 @@ class ExecutionPipeline:
                 "decision_id": parsed.decision_id,
                 "symbol": parsed.symbol,
                 "error": f"Broker snapshot unavailable; execution failed closed: {exc}",
+                "gate_ledger": ledger.model_dump(mode="json"),
                 "journal_path": journal_path,
             }
 
@@ -190,6 +251,7 @@ class ExecutionPipeline:
         )
         snapshot_errors = validate_snapshot(parsed, portfolio)
         if snapshot_errors:
+            ledger.blocked("snapshot", reasons=snapshot_errors)
             self._record(
                 "validation_blocked",
                 parsed,
@@ -204,8 +266,17 @@ class ExecutionPipeline:
                 "symbol": parsed.symbol,
                 "error": " ".join(snapshot_errors),
                 "validations": [{"stage": "snapshot", "allowed": False, "reasons": snapshot_errors}],
+                "gate_ledger": ledger.model_dump(mode="json"),
                 "journal_path": journal_path,
             }
+        ledger.passed(
+            "snapshot",
+            metrics={
+                "captured_at": portfolio.captured_at,
+                "equity": portfolio.account.equity,
+                "reference_price": quote.reference_price,
+            },
+        )
         self._record(
             "intent_validated", parsed, run_id, status=LifecycleStatus.VALIDATED
         )
@@ -231,6 +302,7 @@ class ExecutionPipeline:
                 self.broker_capabilities.validate_plan(parsed, plan)
             )
         if plan_errors:
+            ledger.blocked("plan", reasons=plan_errors)
             self._record(
                 "validation_blocked",
                 parsed,
@@ -246,16 +318,46 @@ class ExecutionPipeline:
                 "error": " ".join(plan_errors),
                 "plan": plan.model_dump(mode="json"),
                 "validations": [{"stage": "plan", "allowed": False, "reasons": plan_errors}],
+                "gate_ledger": ledger.model_dump(mode="json"),
                 "journal_path": journal_path,
             }
+        planned_notional = sum(
+            leg.notional_usd or 0.0
+            for leg in plan.legs
+            if leg.action != PlanAction.HOLD
+        )
+        ledger.passed(
+            "plan",
+            notional_before=ledger.requested_notional,
+            notional_after=planned_notional,
+            metrics={
+                "legs": len(plan.legs),
+                "is_noop": plan.is_noop,
+                "reference_price": plan.reference_price,
+                "current_allocation_pct": plan.current_allocation_pct,
+            },
+        )
 
         protection_mode, protection_prices = select_protection_mode(
             parsed, plan, self.broker_capabilities
         )
         plan.metadata["protection_mode"] = protection_mode.value
         plan.metadata["protective_prices"] = protection_prices
+        ledger.passed(
+            "protection",
+            metrics={"mode": protection_mode.value, **(protection_prices or {})},
+        )
 
-        if self.risk_sizer is not None:
+        if self.risk_sizer is None:
+            ledger.skipped("risk_sizing", reasons=["Deterministic risk sizing is off."])
+        else:
+            sizing_before = sum(
+                leg.notional_usd or 0.0
+                for leg in plan.legs
+                if leg.action != PlanAction.HOLD
+            )
+            caps_applied: list[str] = []
+            sizing_metrics: dict[str, Any] = {}
             for leg in plan.legs:
                 if leg.action == PlanAction.HOLD or leg.risk_reducing:
                     continue
@@ -270,6 +372,7 @@ class ExecutionPipeline:
                     )
                 except Exception as exc:
                     reason = f"Risk sizing unavailable; execution failed closed: {exc}"
+                    ledger.blocked("risk_sizing", reasons=[reason])
                     self._record(
                         "risk_blocked",
                         parsed,
@@ -284,10 +387,17 @@ class ExecutionPipeline:
                         "symbol": parsed.symbol,
                         "error": reason,
                         "plan": plan.model_dump(mode="json"),
+                        "gate_ledger": ledger.model_dump(mode="json"),
                         "journal_path": journal_path,
                     }
                 if not sizing.approved:
                     reason = f"Trade blocked by deterministic risk engine: {sizing.reason}"
+                    ledger.blocked(
+                        "risk_sizing",
+                        reasons=[sizing.reason or "no headroom"],
+                        notional_before=sizing_before,
+                        metrics=sizing.to_dict(),
+                    )
                     self._record(
                         "risk_blocked",
                         parsed,
@@ -302,11 +412,31 @@ class ExecutionPipeline:
                         "symbol": parsed.symbol,
                         "error": reason,
                         "plan": plan.model_dump(mode="json"),
+                        "gate_ledger": ledger.model_dump(mode="json"),
                         "journal_path": journal_path,
                     }
+                caps_applied.extend(sizing.caps_applied or [])
+                sizing_metrics = sizing.to_dict()
                 leg.notional_usd = min(leg.notional_usd, sizing.notional)
                 leg.quantity = leg.notional_usd / quote.reference_price if quote.reference_price else None
                 plan.metadata.setdefault("risk_sizing", []).append(sizing.to_dict())
+            sizing_after = sum(
+                leg.notional_usd or 0.0
+                for leg in plan.legs
+                if leg.action != PlanAction.HOLD
+            )
+            record_gate = (
+                ledger.clipped
+                if sizing_after < sizing_before - 1e-9
+                else ledger.passed
+            )
+            record_gate(
+                "risk_sizing",
+                reasons=sorted(set(caps_applied)),
+                notional_before=sizing_before,
+                notional_after=sizing_after,
+                metrics=sizing_metrics,
+            )
             self._record(
                 "risk_adjusted",
                 parsed,
@@ -325,13 +455,16 @@ class ExecutionPipeline:
             except Exception:
                 guard = None
 
-        if guard is not None and guard.enabled:
+        if guard is None or not guard.enabled:
+            ledger.skipped("safety", reasons=["Safety layer is off."])
+        else:
             position = portfolio.position_for(parsed.symbol)
             account = {
                 "equity": portfolio.account.equity,
                 "last_equity": portfolio.account.last_equity,
             }
             position_value = abs(position.market_value) if position else 0.0
+            last_checks: dict[str, Any] = {}
             for leg in plan.legs:
                 if leg.action == PlanAction.HOLD:
                     continue
@@ -342,8 +475,15 @@ class ExecutionPipeline:
                     position_value=position_value,
                     risk_reducing=leg.risk_reducing,
                 )
+                last_checks = verdict.checks
                 validations.append({"stage": "safety", "allowed": verdict.allowed, "reasons": verdict.reasons, "checks": verdict.checks})
                 if not verdict.allowed:
+                    ledger.blocked(
+                        "safety",
+                        reasons=verdict.reasons,
+                        notional_before=leg.notional_usd,
+                        metrics=dict(verdict.checks or {}),
+                    )
                     self._record(
                         "safety_blocked",
                         parsed,
@@ -364,6 +504,7 @@ class ExecutionPipeline:
                         validations=validations,
                         error="Safety layer blocked order flow: " + " ".join(verdict.reasons),
                         safety_blocked=True,
+                        gate_ledger=ledger,
                         journal_path=journal_path,
                     ).model_dump(mode="json")
                 if leg.action == PlanAction.CLOSE:
@@ -372,6 +513,10 @@ class ExecutionPipeline:
                     position_value = max(0.0, position_value - leg.notional_usd)
                 else:
                     position_value += leg.notional_usd
+            ledger.passed(
+                "safety",
+                metrics=dict(last_checks or {}),
+            )
 
         self._record(
             "broker_submitted",
@@ -430,6 +575,29 @@ class ExecutionPipeline:
                 error=f"Broker submission failed without a definitive response: {exc}",
                 submission_uncertain=True,
             )
+        submitted_notional = sum(
+            leg.notional_usd or 0.0
+            for leg in plan.legs
+            if leg.action != PlanAction.HOLD
+        )
+        if result.success:
+            ledger.passed(
+                "submission",
+                notional_before=submitted_notional,
+                notional_after=submitted_notional,
+                metrics={"gateway": result.gateway},
+            )
+        else:
+            ledger.blocked(
+                "submission",
+                reasons=[result.error] if result.error else [],
+                notional_before=submitted_notional,
+                metrics={
+                    "gateway": result.gateway,
+                    "submission_uncertain": result.submission_uncertain,
+                },
+            )
+        result.gate_ledger = ledger
         result.validations = validations
         result.journal_path = journal_path
         has_remote_order = any(
