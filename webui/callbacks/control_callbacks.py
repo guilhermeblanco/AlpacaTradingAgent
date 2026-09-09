@@ -936,6 +936,30 @@ def register_control_callbacks(app):
         for symbol in symbols:
             app_state.init_symbol_state(symbol)
 
+        def _analyze(symbol):
+            """Run one symbol, absorbing its failure.
+
+            One symbol blowing up must not abandon the rest of the batch, and
+            in a scheduled mode it must not take the schedule down with it —
+            the thread's `finally` would clear analysis_running and the run
+            would simply stop, unattended, with no indication why.
+            """
+            try:
+                start_analysis(
+                    symbol,
+                    analysts_market, analysts_social, analysts_news,
+                    analysts_fundamentals, analysts_macro,
+                    research_depth, allow_shorts, quick_llm, deep_llm,
+                    quick_llm_params, deep_llm_params,
+                    llm_provider=llm_provider,
+                    backend_url=backend_url,
+                    output_language=output_language,
+                    checkpoint_enabled=checkpoint_enabled,
+                    provider_settings=provider_settings,
+                )
+            except Exception as exc:
+                print(f"[ANALYSIS] Analysis failed for {symbol}: {exc}")
+
         def analysis_thread():
             try:
                 _run_selected_mode()
@@ -1021,17 +1045,7 @@ def register_control_callbacks(app):
                         symbol = app_state.get_next_symbol()
                         if symbol:
                             print(f"[MARKET_HOUR] Analyzing {symbol} at {next_hour}:00 with current market data...")
-                            start_analysis(
-                                symbol,
-                                analysts_market, analysts_social, analysts_news, analysts_fundamentals, analysts_macro,
-                                research_depth, allow_shorts, quick_llm, deep_llm,
-                                quick_llm_params, deep_llm_params,
-                                llm_provider=llm_provider,
-                                backend_url=backend_url,
-                                output_language=output_language,
-                                checkpoint_enabled=checkpoint_enabled,
-                                provider_settings=provider_settings,
-                            )
+                            _analyze(symbol)
 
                             if app_state.stop_market_hour:
                                 break
@@ -1075,17 +1089,7 @@ def register_control_callbacks(app):
                         symbol = app_state.get_next_symbol()
                         if symbol:
                             print(f"[LOOP] Analyzing {symbol} with current market data...")
-                            start_analysis(
-                                symbol,
-                                analysts_market, analysts_social, analysts_news, analysts_fundamentals, analysts_macro,
-                                research_depth, allow_shorts, quick_llm, deep_llm,
-                                quick_llm_params, deep_llm_params,
-                                llm_provider=llm_provider,
-                                backend_url=backend_url,
-                                output_language=output_language,
-                                checkpoint_enabled=checkpoint_enabled,
-                                provider_settings=provider_settings,
-                            )
+                            _analyze(symbol)
 
                     if app_state.stop_loop:
                         break
@@ -1214,18 +1218,7 @@ def register_control_callbacks(app):
                             symbol = app_state.get_next_symbol()
                             if symbol and symbol != "SCREENER":
                                 print(f"[SCREENER] Analyzing {symbol} via multi-agent pipeline...")
-                                start_analysis(
-                                    symbol,
-                                    analysts_market, analysts_social, analysts_news,
-                                    analysts_fundamentals, analysts_macro,
-                                    research_depth, allow_shorts, quick_llm, deep_llm,
-                                    quick_llm_params, deep_llm_params,
-                                    llm_provider=llm_provider,
-                                    backend_url=backend_url,
-                                    output_language=output_language,
-                                    checkpoint_enabled=checkpoint_enabled,
-                                    provider_settings=provider_settings,
-                                )
+                                _analyze(symbol)
                                 app_state.record_analysis_time(symbol)
 
                     # Sleep between scans (check stop every 30s)
@@ -1244,22 +1237,7 @@ def register_control_callbacks(app):
                     symbol = app_state.get_next_symbol()
                     if symbol:
                         print(f"[SINGLE] Analyzing {symbol} with current market data...")
-                        try:
-                            start_analysis(
-                                symbol,
-                                analysts_market, analysts_social, analysts_news, analysts_fundamentals, analysts_macro,
-                                research_depth, allow_shorts, quick_llm, deep_llm,
-                                quick_llm_params, deep_llm_params,
-                                llm_provider=llm_provider,
-                                backend_url=backend_url,
-                                output_language=output_language,
-                                checkpoint_enabled=checkpoint_enabled,
-                                provider_settings=provider_settings,
-                            )
-                        except Exception as exc:
-                            # One symbol failing must not abandon the rest of
-                            # the batch.
-                            print(f"[SINGLE] Analysis failed for {symbol}: {exc}")
+                        _analyze(symbol)
 
         if not app_state.analysis_running:
             app_state.analysis_running = True
