@@ -207,3 +207,80 @@ class OfflineIndicatorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ManualIndicatorTests(unittest.TestCase):
+    """OBV, ATR, and the moving averages are computed here rather than by
+    stockstats, because stockstats' own versions choke on the frames the
+    providers return."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.cache = self._tmp.name
+
+    def _run(self, indicator, *, frame=None, curr_date="2025-09-01"):
+        provider = mock.MagicMock()
+        provider.name = "alpaca"
+        provider.get_bars.return_value = frame if frame is not None else _bars()
+        with mock.patch(
+            "tradingagents.dataflows.stockstats_utils.get_config",
+            lambda: {"data_cache_dir": self.cache},
+        ), mock.patch(
+            "tradingagents.marketdata.get_research_market_data_provider",
+            lambda _config: provider,
+        ):
+            return StockstatsUtils.get_stock_stats(
+                "NVDA", indicator, curr_date, self.cache, online=True
+            )
+
+    def test_an_exponential_average_is_computed(self):
+        value = self._run("close_8_ema")
+
+        self.assertIsInstance(value, float)
+
+    def test_a_simple_average_is_computed(self):
+        value = self._run("close_50_sma")
+
+        self.assertIsInstance(value, float)
+
+    def test_the_true_range_average_is_computed(self):
+        value = self._run("atr_14")
+
+        self.assertIsInstance(value, float)
+        self.assertGreater(value, 0)
+
+    def test_on_balance_volume_is_computed(self):
+        value = self._run("obv")
+
+        self.assertIsInstance(value, float)
+
+    def test_a_malformed_average_name_is_reported_rather_than_raised(self):
+        for indicator in ("close_x_ema", "close_y_sma"):
+            answer = self._run(indicator)
+
+            self.assertIsInstance(answer, str)
+            self.assertTrue(answer.startswith("N/A:"), answer)
+
+    def test_a_date_before_any_data_is_reported(self):
+        answer = self._run("rsi_14", curr_date="2020-01-01")
+
+        self.assertIsInstance(answer, str)
+        self.assertIn("No trading data available", answer)
+
+    def test_a_non_trading_day_falls_back_to_the_prior_session(self):
+        """The analyst asks about today; the market may have been shut."""
+        frame = _bars(rows=200)
+        frame = frame[frame["timestamp"] != pd.Timestamp("2025-06-01")]
+
+        answer = self._run("rsi_14", frame=frame, curr_date="2025-06-01")
+
+        self.assertIsInstance(answer, str)
+        self.assertIn("as of", answer)
+
+    def test_an_average_longer_than_the_history_reports_not_calculable(self):
+        """A 200-day average over 120 sessions is NaN, not zero."""
+        answer = self._run("close_200_sma", frame=_bars(rows=120), curr_date="2025-02-01")
+
+        self.assertIsInstance(answer, str)
+        self.assertIn("not calculable", answer)
