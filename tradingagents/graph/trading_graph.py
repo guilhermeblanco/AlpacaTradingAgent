@@ -12,6 +12,7 @@ from langgraph.prebuilt import ToolNode
 from tradingagents.llm_clients import create_llm_client
 from tradingagents.agents import *
 from tradingagents.default_config import DEFAULT_CONFIG
+from tradingagents.configuration import validate_application_config
 from tradingagents.agents.utils.memory import FinancialSituationMemory, TradingMemoryLog
 from tradingagents.agents.schemas import trade_intent_action
 from tradingagents.agents.utils.agent_states import (
@@ -56,7 +57,7 @@ class TradingAgentsGraph:
             config: Configuration dictionary. If None, uses default config
         """
         self.debug = debug
-        self.config = config or DEFAULT_CONFIG
+        self.config = validate_application_config(config or DEFAULT_CONFIG)
         self.callbacks = callbacks or []
 
         # Update the interface's config

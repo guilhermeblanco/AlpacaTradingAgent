@@ -5,14 +5,15 @@ From zero to a first multi-agent analysis in about five minutes.
 ## 1. Install
 
 ```bash
-git clone https://github.com/huygiatrng/AlpacaTradingAgent.git
+git clone https://github.com/guilhermeblanco/AlpacaTradingAgent.git
 cd AlpacaTradingAgent
-python -m venv .venv
+python3 -m venv .venv
 # Windows:
 .venv\Scripts\activate
 # macOS/Linux:
 source .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install --upgrade pip
+python -m pip install -e ".[app]"
 ```
 
 ## 2. Configure keys
@@ -56,7 +57,8 @@ interactively.
 ## 4. Verify your setup
 
 ```bash
-python -m pytest tests/
+python -m pip install -e ".[app,dev]"
+python -m pytest
 ```
 
 The suite is deterministic (no network, no live keys) — it should pass on
