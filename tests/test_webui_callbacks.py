@@ -544,3 +544,159 @@ class ModalCallbackTests(StateFixture):
         callback = dash_callback(self.app, "export-tool-outputs-btn.children")
 
         self.assertIn("Exported!", str(callback(1)))
+
+
+class ReportTabRenderingTests(StateFixture):
+    """Each tab renders from whatever the run has produced so far."""
+
+    MODULES = ("webui.callbacks.report_callbacks",)
+
+    def setUp(self):
+        super().setUp()
+        from webui.callbacks.report_callbacks import register_report_callbacks
+
+        self.app = _app(register_report_callbacks)
+
+    def test_the_pager_says_so_when_nothing_has_run(self):
+        callback = dash_callback(self.app, "report-pagination-container.children")
+
+        self.assertIn("No symbols available", str(callback({}, 0)))
+
+    def test_a_single_symbol_pages_without_a_count(self):
+        self._prepare("NVDA")
+        callback = dash_callback(self.app, "report-pagination-container.children")
+
+        rendered = str(callback({}, 1))
+
+        self.assertIn("NVDA", rendered)
+        self.assertNotIn("Showing", rendered)
+
+    def test_several_symbols_report_how_many(self):
+        for symbol in ("NVDA", "AAPL", "MSFT"):
+            self._prepare(symbol)
+        callback = dash_callback(self.app, "report-pagination-container.children")
+
+        rendered = str(callback({}, 1))
+
+        self.assertIn("Showing 3 symbols", rendered)
+
+    def test_the_displayed_symbol_is_the_active_button(self):
+        self._prepare("NVDA")
+        self._prepare("AAPL")
+        self.state.current_symbol = "AAPL"
+        callback = dash_callback(self.app, "report-pagination-container.children")
+
+        rendered = str(callback({}, 1))
+
+        self.assertIn("AAPL", rendered)
+
+    def test_the_researcher_tab_waits_for_a_run(self):
+        callback = dash_callback(self.app, "researcher-debate-tab-content.children")
+
+        self.assertIn("No researcher debate", str(callback(None, 0)))
+
+    def test_a_stale_page_is_reported_on_the_researcher_tab(self):
+        self._prepare()
+        callback = dash_callback(self.app, "researcher-debate-tab-content.children")
+
+        self.assertIn("out of range", str(callback(99, 1)))
+
+    def test_the_researcher_tab_renders_the_message_arrays(self):
+        state = self._prepare()
+        state["investment_debate_state"] = {
+            "history": "some history",
+            "bull_messages": ["bull opening", "bull rebuttal"],
+            "bear_messages": ["bear opening"],
+        }
+        callback = dash_callback(self.app, "researcher-debate-tab-content.children")
+
+        rendered = str(callback(1, 1))
+
+        self.assertIn("bull rebuttal", rendered)
+        self.assertIn("bear opening", rendered)
+
+    def test_the_researcher_tab_falls_back_to_the_transcript(self):
+        """Older runs recorded only the joined history."""
+        state = self._prepare()
+        state["investment_debate_state"] = {
+            "history": "some history",
+            "bull_history": "the bull case",
+            "bear_history": "the bear case",
+        }
+        callback = dash_callback(self.app, "researcher-debate-tab-content.children")
+
+        rendered = str(callback(1, 1))
+
+        self.assertIn("the bull case", rendered)
+        self.assertIn("the bear case", rendered)
+
+    def test_an_empty_debate_says_it_has_not_begun(self):
+        state = self._prepare()
+        state["investment_debate_state"] = {"history": ""}
+        callback = dash_callback(self.app, "researcher-debate-tab-content.children")
+
+        self.assertIn("will begin", str(callback(1, 1)))
+
+    def test_the_risk_tab_waits_for_a_run(self):
+        callback = dash_callback(self.app, "risk-debate-tab-content.children")
+
+        self.assertIsNotNone(callback(None, 0))
+
+    def test_the_risk_tab_renders_each_perspective(self):
+        state = self._prepare()
+        state["risk_debate_state"] = {
+            "history": "transcript",
+            "current_risky_response": "press on",
+            "current_safe_response": "trim",
+            "current_neutral_response": "hold",
+        }
+        callback = dash_callback(self.app, "risk-debate-tab-content.children")
+
+        rendered = str(callback(1, 1))
+
+        self.assertIsNotNone(rendered)
+
+    def test_every_analyst_tab_renders_its_report(self):
+        """A report only surfaces once its analyst is marked completed;
+        otherwise the tab keeps showing the waiting placeholder."""
+        state = self._prepare()
+        for key, agent in (
+            ("market_report", "Market Analyst"),
+            ("sentiment_report", "Social Analyst"),
+            ("news_report", "News Analyst"),
+            ("fundamentals_report", "Fundamentals Analyst"),
+            ("macro_report", "Macro Analyst"),
+        ):
+            state["current_reports"][key] = f"content for {key}"
+            self.state.update_agent_status(agent, "completed", symbol="NVDA")
+        callback = dash_callback(self.app, "market-analysis-tab-content.children")
+
+        rendered = str(callback(1, 1))
+
+        self.assertIn("content for market_report", rendered)
+        self.assertIn("content for macro_report", rendered)
+
+    def test_a_report_without_a_completed_analyst_stays_pending(self):
+        state = self._prepare()
+        state["current_reports"]["market_report"] = "partial streaming content"
+        callback = dash_callback(self.app, "market-analysis-tab-content.children")
+
+        rendered = str(callback(1, 1))
+
+        self.assertIn("Waiting to start", rendered)
+
+    def test_the_tabs_render_before_any_report_exists(self):
+        self._prepare()
+        callback = dash_callback(self.app, "market-analysis-tab-content.children")
+
+        self.assertIsNotNone(callback(1, 1))
+
+    def test_the_decision_summary_reports_a_finished_run(self):
+        state = self._prepare()
+        state["current_reports"]["final_trade_decision"] = (
+            "FINAL TRANSACTION PROPOSAL: BUY"
+        )
+        state["analysis_complete"] = True
+        callback = dash_callback(self.app, "decision-summary.children")
+
+        self.assertIsNotNone(callback(1, 1))
