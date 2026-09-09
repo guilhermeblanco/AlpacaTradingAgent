@@ -10,7 +10,12 @@ from tradingagents.agents.schemas import (
     RiskDecision,
     build_trade_intent_from_risk_decision,
 )
-from tradingagents.broker.models import AccountSnapshot, PortfolioSnapshot, QuoteSnapshot
+from tradingagents.broker.models import (
+    AccountSnapshot,
+    PortfolioSnapshot,
+    PositionSnapshot,
+    QuoteSnapshot,
+)
 from tradingagents.execution.journal import ExecutionJournal
 from tradingagents.execution.gateway import SubmissionUncertain
 from tradingagents.execution.pipeline import ExecutionPipeline
@@ -160,7 +165,11 @@ def _plan() -> ExecutionPlan:
                 reason="test",
             )
         ],
-        metadata={"leg_idempotency_keys": ["client-order-1"]},
+        metadata={
+            "leg_idempotency_keys": ["client-order-1"],
+            "pre_trade_quantity": 0,
+            "execution_quarantine_scope": "execution:tradier:test",
+        },
     )
 
 
@@ -354,6 +363,60 @@ def test_reconciliation_worker_completes_filled_order(session_factory) -> None:
         )
         assert recorded.allocation_states[plan.decision_id] is AllocationReservationState.RELEASED
         uow.rollback()
+
+
+def test_reconciliation_worker_quarantines_repeated_account_drift(
+    session_factory,
+) -> None:
+    _seed_submission(session_factory, gateway="tradier")
+
+    class FilledGateway:
+        def get_order_snapshot(self, **kwargs):
+            return BrokerOrderSnapshot(
+                order_id="broker-order-1",
+                symbol="AAPL",
+                side="buy",
+                status=BrokerOrderStatus.FILLED,
+                requested_quantity=10,
+                filled_quantity=10,
+                filled_avg_price=101,
+            )
+
+    class DriftedProvider:
+        def get_portfolio_snapshot(self):
+            return PortfolioSnapshot(
+                broker="tradier",
+                account=AccountSnapshot(equity=100_000),
+                positions=[
+                    PositionSnapshot(
+                        symbol="AAPL", quantity=8, market_value=808
+                    )
+                ],
+            )
+
+    now = datetime.now(timezone.utc)
+    worker = ReconciliationWorker(
+        lambda: PostgresUnitOfWork(session_factory),
+        lambda broker: FilledGateway(),
+        snapshot_provider_factory=lambda broker: DriftedProvider(),
+        worker_id="drift-test",
+        poll_seconds=5,
+    )
+
+    first = worker.run_once(now=now)
+    second = worker.run_once(now=now + timedelta(seconds=5))
+
+    assert first.rescheduled == 1
+    assert first.quarantined == 0
+    assert second.completed == 1
+    assert second.quarantined == 1
+    with PostgresUnitOfWork(session_factory) as uow:
+        control = uow.operations.control("execution:tradier:test")
+        remaining = uow.reconciliation_queue.claim(worker_id="other")
+        uow.rollback()
+    assert control.paused
+    assert "Broker position 8" in control.reason
+    assert remaining == []
 
 
 def test_persistent_reconciler_updates_order_lifecycle_and_event(session_factory) -> None:

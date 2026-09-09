@@ -36,6 +36,10 @@ See [docs/market-data.md](docs/market-data.md).
 Execution features are checked against an explicit per-broker contract. See
 [docs/broker-capabilities.md](docs/broker-capabilities.md).
 
+Terminal fills are checked against broker positions, with durable execution
+quarantine on repeated drift. See
+[docs/account-reconciliation.md](docs/account-reconciliation.md).
+
 ### 📈 **Dual Asset Support: Stocks & Crypto**
 - **Multi-Asset Analysis**: Analyze both traditional stocks and cryptocurrencies in a single session
 - **Crypto Format**: Use proper crypto format (e.g., `BTC/USD`, `ETH/USD`) for cryptocurrency analysis

@@ -836,6 +836,7 @@ class PostgresReconciliationQueue:
                     broker=row.broker,
                     attempts=row.attempts,
                     execution_result=(lifecycle.result or {}) if lifecycle else {},
+                    last_error=row.last_error,
                 )
             )
         self.session.flush()
