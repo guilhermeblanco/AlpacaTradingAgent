@@ -275,3 +275,331 @@ class InvokeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UsageAccountingTests(unittest.TestCase):
+    """Token usage feeds the daily budget, so the two shapes the Responses
+    API returns it in both have to be read."""
+
+    def _usage(self, response):
+        model = _model()
+        client = mock.MagicMock()
+        client.responses.create.return_value = response
+        object.__setattr__(model, "_client", client)
+
+        recorded = []
+        with mock.patch(
+            "tradingagents.run_logger.get_run_audit_logger",
+            lambda: SimpleNamespace(
+                log_event=lambda **kwargs: recorded.append(kwargs)
+            ),
+        ):
+            model.invoke("question")
+        return recorded
+
+    def test_usage_reported_as_an_object_is_read(self):
+        recorded = self._usage(
+            SimpleNamespace(
+                output_text="answer",
+                output=[],
+                usage=SimpleNamespace(
+                    input_tokens=10, output_tokens=5, total_tokens=15
+                ),
+            )
+        )
+
+        self.assertEqual(recorded[0]["payload"]["usage"]["total_tokens"], 15)
+
+    def test_usage_reported_as_a_mapping_is_read(self):
+        recorded = self._usage(
+            SimpleNamespace(
+                output_text="answer",
+                output=[],
+                usage={"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+            )
+        )
+
+        self.assertEqual(recorded[0]["payload"]["usage"]["input_tokens"], 10)
+
+    def test_a_missing_total_is_derived_from_the_two_halves(self):
+        recorded = self._usage(
+            SimpleNamespace(
+                output_text="answer",
+                output=[],
+                usage={"input_tokens": 10, "output_tokens": 5},
+            )
+        )
+
+        self.assertEqual(recorded[0]["payload"]["usage"]["total_tokens"], 15)
+
+    def test_a_response_without_usage_reports_zeroes(self):
+        recorded = self._usage(
+            SimpleNamespace(output_text="answer", output=[], usage=None)
+        )
+
+        self.assertEqual(recorded[0]["payload"]["usage"]["total_tokens"], 0)
+
+    def test_a_failed_call_is_recorded_as_an_error(self):
+        model = _model()
+        client = mock.MagicMock()
+        client.responses.create.side_effect = RuntimeError("rate limited")
+        object.__setattr__(model, "_client", client)
+
+        recorded = []
+        with mock.patch(
+            "tradingagents.run_logger.get_run_audit_logger",
+            lambda: SimpleNamespace(
+                log_event=lambda **kwargs: recorded.append(kwargs)
+            ),
+        ):
+            model.invoke("question")
+
+        self.assertEqual(recorded[0]["payload"]["status"], "error")
+        self.assertIn("rate limited", recorded[0]["payload"]["error_message"])
+
+    def test_an_unavailable_audit_log_does_not_lose_the_answer(self):
+        """Accounting must never be the thing that fails a turn."""
+        model = _model()
+        client = mock.MagicMock()
+        client.responses.create.return_value = SimpleNamespace(
+            output_text="answer", output=[], usage=None
+        )
+        object.__setattr__(model, "_client", client)
+
+        with mock.patch(
+            "tradingagents.run_logger.get_run_audit_logger",
+            mock.Mock(side_effect=RuntimeError("logger unavailable")),
+        ):
+            self.assertEqual(model.invoke("question").content, "answer")
+
+
+class MessageOutputExtractionTests(unittest.TestCase):
+    """The Responses API returns text under several shapes; reasoning items
+    are interleaved and must not become part of the report."""
+
+    def _extract(self, output, text=""):
+        return _model()._extract_content_from_response(
+            SimpleNamespace(output_text=text, output=output)
+        )[0]
+
+    def test_a_message_item_contributes_its_text(self):
+        content = self._extract(
+            [
+                SimpleNamespace(
+                    type="message",
+                    content=[SimpleNamespace(type="output_text", text="the answer")],
+                )
+            ]
+        )
+
+        self.assertEqual(content, "the answer")
+
+    def test_message_content_given_as_dicts_is_read(self):
+        content = self._extract(
+            [SimpleNamespace(type="message", content=[{"text": "the answer"}])]
+        )
+
+        self.assertEqual(content, "the answer")
+
+    def test_message_content_given_as_plain_strings_is_read(self):
+        content = self._extract(
+            [SimpleNamespace(type="message", content=["the answer"])]
+        )
+
+        self.assertEqual(content, "the answer")
+
+    def test_a_bare_text_item_contributes_its_text(self):
+        content = self._extract([SimpleNamespace(type="output_text", text="the answer")])
+
+        self.assertEqual(content, "the answer")
+
+    def test_reasoning_items_are_left_out_of_the_report(self):
+        content = self._extract(
+            [
+                SimpleNamespace(type="reasoning", text="internal thinking"),
+                SimpleNamespace(type="output_text", text="the answer"),
+            ]
+        )
+
+        self.assertEqual(content, "the answer")
+
+    def test_a_repeated_fragment_is_not_duplicated(self):
+        content = self._extract(
+            [
+                SimpleNamespace(type="output_text", text="the answer"),
+                SimpleNamespace(type="output_text", text="the answer"),
+            ]
+        )
+
+        self.assertEqual(content, "the answer")
+
+
+class ToolSchemaTests(unittest.TestCase):
+    """Tools are re-described for the Responses API, which expects the name
+    at the top level rather than nested under "function"."""
+
+    def _submitted(self, tools):
+        model = _model().bind_tools(tools)
+        client = mock.MagicMock()
+        client.responses.create.return_value = SimpleNamespace(
+            output_text="answer", output=[], usage=None
+        )
+        object.__setattr__(model, "_client", client)
+
+        model.invoke("question")
+        return client.responses.create.call_args.kwargs.get("tools", [])
+
+    def test_a_tool_is_described_with_its_name_at_the_top_level(self):
+        class Schema:
+            @staticmethod
+            def schema():
+                return {"type": "object", "properties": {"symbol": {"type": "string"}}}
+
+        tool = SimpleNamespace(
+            name="get_stock_news", description="news", args_schema=Schema
+        )
+
+        submitted = self._submitted([tool])
+
+        self.assertEqual(submitted[0]["name"], "get_stock_news")
+        self.assertEqual(submitted[0]["type"], "function")
+        self.assertIn("symbol", submitted[0]["parameters"]["properties"])
+
+    def test_a_tool_without_a_schema_gets_an_empty_one(self):
+        tool = SimpleNamespace(name="get_stock_news", description="news", args_schema=None)
+
+        submitted = self._submitted([tool])
+
+        self.assertEqual(submitted[0]["parameters"], {"type": "object", "properties": {}})
+
+    def test_an_unusable_schema_falls_back_to_an_empty_one(self):
+        class Broken:
+            @staticmethod
+            def schema():
+                raise RuntimeError("cannot introspect")
+
+        tool = SimpleNamespace(name="get_stock_news", description="news", args_schema=Broken)
+
+        submitted = self._submitted([tool])
+
+        self.assertEqual(submitted[0]["parameters"], {"type": "object", "properties": {}})
+
+    def test_a_plain_function_tool_is_described_from_the_function(self):
+        def get_stock_news():
+            """Fetch the news."""
+
+        tool = SimpleNamespace(func=get_stock_news)
+
+        submitted = self._submitted([tool])
+
+        self.assertEqual(submitted[0]["name"], "get_stock_news")
+        self.assertIn("Fetch the news", submitted[0]["description"])
+
+    def test_a_nameless_tool_is_not_offered(self):
+        """The model cannot call something it has no name for."""
+        submitted = self._submitted([SimpleNamespace(description="news")])
+
+        self.assertEqual(submitted, [])
+
+    def test_no_tools_means_no_tools_field(self):
+        model = _model()
+        client = mock.MagicMock()
+        client.responses.create.return_value = SimpleNamespace(
+            output_text="answer", output=[], usage=None
+        )
+        object.__setattr__(model, "_client", client)
+
+        model.invoke("question")
+
+        self.assertNotIn("tools", client.responses.create.call_args.kwargs)
+
+
+class GenericMessageTests(unittest.TestCase):
+    def test_an_object_with_a_role_and_content_is_converted(self):
+        converted = _model()._convert_messages_to_input(
+            [SimpleNamespace(role="system", content="instructions")]
+        )
+
+        self.assertEqual(converted[0]["role"], "developer")
+        self.assertEqual(converted[0]["content"][0]["type"], "input_text")
+
+    def test_an_assistant_role_object_becomes_output_text(self):
+        converted = _model()._convert_messages_to_input(
+            [SimpleNamespace(role="assistant", content="the answer")]
+        )
+
+        self.assertEqual(converted[0]["content"][0]["type"], "output_text")
+
+    def test_an_unconvertible_input_still_produces_a_turn(self):
+        model = _model()
+        client = mock.MagicMock()
+        client.responses.create.return_value = SimpleNamespace(
+            output_text="answer", output=[], usage=None
+        )
+        object.__setattr__(model, "_client", client)
+
+        self.assertEqual(model.invoke(object()).content, "answer")
+
+
+class ChatCompletionFallbackTests(unittest.TestCase):
+    """Non-reasoning models go through ChatOpenAI, which does not accept the
+    Responses-only parameters the UI collects."""
+
+    def _built(self, **kwargs):
+        captured = {}
+
+        with mock.patch(
+            "langchain_openai.ChatOpenAI", lambda **kw: captured.update(kw) or "chat"
+        ):
+            get_chat_model("gpt-4o-mini", api_key="sk-test", **kwargs)
+
+        return captured
+
+    def test_the_output_budget_is_translated_to_the_chat_parameter(self):
+        captured = self._built(max_output_tokens=900)
+
+        self.assertEqual(captured["max_tokens"], 900)
+        self.assertNotIn("max_output_tokens", captured)
+
+    def test_an_explicit_chat_budget_is_left_alone(self):
+        captured = self._built(max_output_tokens=900, max_tokens=100)
+
+        self.assertEqual(captured["max_tokens"], 100)
+
+    def test_the_responses_only_parameters_are_dropped(self):
+        captured = self._built(
+            reasoning_effort="high",
+            verbosity="low",
+            text_verbosity="low",
+            reasoning_summary="auto",
+            summary="auto",
+            store=True,
+            parallel_tool_calls=False,
+        )
+
+        for unsupported in (
+            "reasoning_effort",
+            "verbosity",
+            "text_verbosity",
+            "reasoning_summary",
+            "summary",
+            "store",
+            "parallel_tool_calls",
+        ):
+            self.assertNotIn(unsupported, captured, unsupported)
+
+    def test_the_credentials_and_endpoint_are_passed_through(self):
+        captured = self._built(base_url="https://proxy.example/v1")
+
+        self.assertEqual(captured["openai_api_key"], "sk-test")
+        self.assertEqual(captured["openai_api_base"], "https://proxy.example/v1")
+
+    def test_no_key_is_sent_when_none_is_configured(self):
+        captured = {}
+
+        with mock.patch(
+            "langchain_openai.ChatOpenAI", lambda **kw: captured.update(kw) or "chat"
+        ):
+            get_chat_model("gpt-4o-mini", api_key=None)
+
+        self.assertNotIn("openai_api_key", captured)
