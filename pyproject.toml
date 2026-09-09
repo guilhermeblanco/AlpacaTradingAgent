@@ -124,6 +124,10 @@ tradingagents = "cli.main:app"
 tradingagents-web = "run_webui_dash:main"
 tradingagents-account-monitor = "tradingagents.execution.account_monitor:main"
 tradingagents-broker-preflight = "tradingagents.broker.preflight:main"
+tradingagents-autonomous-worker = "tradingagents.orchestration.autonomous_worker:main"
+tradingagents-control-plane = "tradingagents.operations.control_plane:main"
+tradingagents-evaluation-worker = "tradingagents.evaluation.worker:main"
+tradingagents-reconciliation-worker = "tradingagents.execution.reconciliation_worker:main"
 
 [tool.setuptools]
 include-package-data = true
