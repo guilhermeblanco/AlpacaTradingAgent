@@ -255,6 +255,8 @@ class ExecutionPipeline:
                         symbol=parsed.symbol,
                         confidence=parsed.confidence,
                         requested_notional=leg.notional_usd,
+                        portfolio=portfolio,
+                        quote=quote,
                         side=leg.side or "buy",
                     )
                 except Exception as exc:
@@ -540,15 +542,14 @@ def execute_autonomous_trade(
             default_ttl_seconds=(config or {}).get("lifecycle_intent_ttl_seconds", 900),
         )
     if risk_sizer is None and (config or {}).get("risk_sizing_enabled"):
-        from tradingagents.dataflows.alpaca_utils import AlpacaUtils
+        from tradingagents.marketdata import get_research_market_data_provider
+        from tradingagents.risk import RiskParameters, RiskSizingService
 
         risk_params = dict((config or {}).get("risk_sizing_params") or {})
-
-        def risk_sizer(**kwargs):
-            return AlpacaUtils.compute_risk_sized_amount(
-                risk_params=risk_params,
-                **kwargs,
-            )
+        risk_sizer = RiskSizingService(
+            get_research_market_data_provider(config or {}),
+            RiskParameters.from_dict(risk_params),
+        )
     try:
         return ExecutionPipeline(
             snapshot_provider,
