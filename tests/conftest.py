@@ -111,3 +111,46 @@ def dash_callback(app, output_key: str):
     if len(candidates) > 1:
         raise KeyError(f"{output_key!r} matches {len(candidates)} callbacks")
     return candidates[0].__wrapped__
+
+
+_LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost", ""}
+
+
+@pytest.fixture(autouse=True)
+def _no_outbound_network(monkeypatch):
+    """Fail any test that reaches a remote host.
+
+    The suite is meant to run offline with every external boundary mocked.
+    A missed patch otherwise turns into a real API call — slow, chargeable,
+    and green or red depending on someone's credentials. Loopback stays open
+    for the PostgreSQL tests.
+    """
+    import socket
+
+    real_connect = socket.socket.connect
+    real_create_connection = socket.create_connection
+
+    def _is_local(address) -> bool:
+        if not isinstance(address, tuple) or not address:
+            return True
+        host = address[0]
+        return host in _LOCAL_HOSTS or str(host).startswith("127.")
+
+    def guarded_connect(self, address, *args, **kwargs):
+        if not _is_local(address):
+            raise AssertionError(
+                f"test attempted a network connection to {address!r}; "
+                "mock the boundary instead"
+            )
+        return real_connect(self, address, *args, **kwargs)
+
+    def guarded_create_connection(address, *args, **kwargs):
+        if not _is_local(address):
+            raise AssertionError(
+                f"test attempted a network connection to {address!r}; "
+                "mock the boundary instead"
+            )
+        return real_create_connection(address, *args, **kwargs)
+
+    monkeypatch.setattr(socket.socket, "connect", guarded_connect)
+    monkeypatch.setattr(socket, "create_connection", guarded_create_connection)
