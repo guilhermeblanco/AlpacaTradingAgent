@@ -13,6 +13,9 @@ class ExecutionGateway(Protocol):
     def submit_plan(self, plan: ExecutionPlan, intent: TradeIntent) -> ExecutionResult:
         ...
 
+    def close_position(self, symbol: str) -> dict[str, Any]:
+        ...
+
 
 class SubmissionUncertain(RuntimeError):
     """The request may have reached the broker but no response was received."""

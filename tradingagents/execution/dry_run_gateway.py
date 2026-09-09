@@ -8,6 +8,9 @@ from .models import ExecutionPlan, ExecutionResult
 class DryRunExecutionGateway:
     name = "dry-run"
 
+    def close_position(self, symbol: str) -> dict:
+        return {"success": True, "simulated": True, "symbol": symbol}
+
     def submit_plan(self, plan: ExecutionPlan, intent: TradeIntent) -> ExecutionResult:
         return ExecutionResult(
             success=True,

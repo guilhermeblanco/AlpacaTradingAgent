@@ -188,6 +188,32 @@ class RobinhoodExecutionGateway:
         self.review_only = review_only
         self.live_orders_enabled = live_orders_enabled
 
+    def close_position(self, symbol: str) -> dict:
+        if self.review_only or not self.live_orders_enabled:
+            return {
+                "success": False,
+                "error": "Robinhood software stops require explicitly enabled live orders",
+            }
+        account = self.provider._account()
+        position = self.provider.get_portfolio_snapshot().position_for(symbol)
+        if position is None:
+            return {"success": True, "status": "already_closed", "symbol": symbol}
+        arguments = {
+            "account_number": account["account_number"],
+            "symbol": symbol.upper(),
+            "side": "sell",
+            "type": "market",
+            "dollar_amount": f"{abs(position.market_value):.2f}",
+            "market_hours": "regular_hours",
+        }
+        self.client.call_tool("review_equity_order", arguments)
+        result = self.client.call_tool("place_equity_order", arguments)
+        return {
+            "success": bool(isinstance(result, dict) and result.get("order_id")),
+            "order_id": result.get("order_id") if isinstance(result, dict) else None,
+            "raw": result,
+        }
+
     def get_order_snapshot(
         self, *, order_id=None, client_order_id=None
     ) -> BrokerOrderSnapshot:
