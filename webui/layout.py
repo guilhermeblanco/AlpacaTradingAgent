@@ -22,6 +22,7 @@ from webui.components.decision_explorer import create_decision_explorer
 from webui.components.workbench import create_workbench_panel
 from webui.components.pipeline_board import create_pipeline_board
 from webui.components.vitals import create_vitals_strip
+from webui.callbacks.pulse_callbacks import create_pulse_components
 from webui.components.evaluation_panel import create_evaluation_panel
 from webui.config.constants import COLORS, REFRESH_INTERVALS
 
@@ -29,20 +30,19 @@ from webui.config.constants import COLORS, REFRESH_INTERVALS
 def create_intervals():
     """Create interval components for auto-refresh"""
     return [
-        # Fast refresh for critical updates during analysis
+        # Nudged by the server-sent pulse the moment state advances; the
+        # interval itself is the fallback for a proxy that eats the stream.
         dcc.Interval(
             id='refresh-interval',
             interval=REFRESH_INTERVALS["fast"],
             n_intervals=0,
-            disabled=True  # Start disabled, only enable when analysis is running
         ),
-        
-        # Medium refresh for reports and non-critical updates
+
+        # Reports and other non-critical panels.
         dcc.Interval(
             id='medium-refresh-interval',
             interval=REFRESH_INTERVALS["medium"],
             n_intervals=0,
-            disabled=True
         ),
         
         # Slow refresh for account data
@@ -172,6 +172,7 @@ def create_main_layout():
             """),
             
             # Main content
+            *create_pulse_components(),
             header,
             create_vitals_strip(),
             create_pipeline_board(),

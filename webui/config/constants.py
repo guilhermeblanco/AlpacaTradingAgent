@@ -19,11 +19,13 @@ COLORS = {
     "hover": "#2563EB",           # Hover color
 }
 
-# Refresh intervals (in milliseconds)
+# Fallback poll intervals, in milliseconds. The server-sent pulse is the
+# primary signal (see webui/utils/pulse.py); these only cover the case where
+# a proxy eats the stream, so they are deliberately slow.
 REFRESH_INTERVALS = {
-    "fast": 2000,      # 2 seconds for critical updates during analysis
-    "medium": 10000,   # 5 seconds for reports (reduced frequency for less interference)  
-    "slow": 60000,    # 1 minutes for account data (was 30 seconds)
+    "fast": 15000,     # nudged by the pulse; this is the no-stream fallback
+    "medium": 30000,
+    "slow": 60000,     # account data
 }
 
 # App configuration
