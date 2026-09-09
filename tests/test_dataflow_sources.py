@@ -9,6 +9,7 @@ relevant to the symbol being analyzed.
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 from tradingagents.dataflows import defillama_utils, earnings_utils, macro_utils
@@ -576,3 +577,289 @@ class MacroSummaryTests(unittest.TestCase):
 
         self.assertIsInstance(summary, str)
         self.assertTrue(summary.strip())
+
+
+class RedditCompanyNameTests(unittest.TestCase):
+    """The company name is what makes a Reddit search find anything: nobody
+    posts "NVDA earnings", they post "Nvidia earnings"."""
+
+    def _name(self, *, alpaca="NVDA", yfinance=None, yf_error=None):
+        info = yfinance if yfinance is not None else {}
+
+        class Ticker:
+            def __init__(self, symbol):
+                self.symbol = symbol
+
+            @property
+            def info(self):
+                if yf_error:
+                    raise yf_error
+                return info
+
+        with mock.patch(
+            "tradingagents.dataflows.alpaca_utils.AlpacaUtils.get_company_name",
+            lambda symbol: alpaca,
+        ):
+            with mock.patch.dict(
+                "sys.modules", {"yfinance": SimpleNamespace(Ticker=Ticker)}
+            ):
+                return reddit_utils.get_company_name("nvda")
+
+    def test_the_broker_name_is_preferred(self):
+        self.assertEqual(self._name(alpaca="NVIDIA Corporation"), "NVIDIA Corporation")
+
+    def test_yfinance_stands_in_when_the_broker_only_echoes_the_ticker(self):
+        self.assertEqual(
+            self._name(yfinance={"shortName": "NVIDIA Corp"}), "NVIDIA Corp"
+        )
+
+    def test_the_alternate_yfinance_name_fields_are_tried(self):
+        for field in ("longName", "displayName"):
+            self.assertEqual(self._name(yfinance={field: "NVIDIA"}), "NVIDIA")
+
+    def test_a_yfinance_failure_leaves_the_ticker(self):
+        self.assertEqual(self._name(yf_error=RuntimeError("offline")), "NVDA")
+
+    def test_a_yfinance_name_that_only_echoes_the_ticker_is_ignored(self):
+        self.assertEqual(self._name(yfinance={"shortName": "nvda"}), "NVDA")
+
+    def test_a_blank_ticker_comes_straight_back(self):
+        self.assertEqual(reddit_utils.get_company_name("  "), "  ")
+
+
+class RedditOnlineFetchTests(unittest.TestCase):
+    """The live fallback runs when the downloaded dataset is absent. It has
+    to survive Reddit throttling one subreddit, dedupe across subreddits, and
+    never return a post from outside the requested window."""
+
+    SUBREDDITS = ["investing", "stocks"]
+
+    def setUp(self):
+        patcher = mock.patch.object(reddit_utils.time, "sleep")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        reddit_utils._SEARCH_TERMS_CACHE.clear()
+        self.addCleanup(reddit_utils._SEARCH_TERMS_CACHE.clear)
+
+    @staticmethod
+    def _post(title="A post", *, created="2026-09-08", ups=10, selftext="",
+              url="https://reddit.example/a", permalink=None):
+        from datetime import datetime, timezone
+
+        stamp = datetime.strptime(created, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        data = {
+            "title": title,
+            "selftext": selftext,
+            "ups": ups,
+            "created_utc": stamp.timestamp(),
+        }
+        if url:
+            data["url"] = url
+        if permalink:
+            data["permalink"] = permalink
+        return {"data": data}
+
+    def _fetch(self, responses, *, category="global_news", query=None,
+               start="2026-09-01", end="2026-09-09", max_limit=10):
+        served = list(responses)
+        requested = []
+
+        def get(url, headers=None, params=None, timeout=None):
+            requested.append((url, params))
+            item = served.pop(0) if served else {"data": {"children": []}}
+            if isinstance(item, Exception):
+                raise item
+            status, payload = item if isinstance(item, tuple) else (200, item)
+            return SimpleNamespace(
+                status_code=status, json=lambda: payload
+            )
+
+        with mock.patch.dict(
+            reddit_utils.REDDIT_CATEGORY_SUBREDDITS,
+            {category: self.SUBREDDITS},
+            clear=False,
+        ):
+            with mock.patch.object(reddit_utils.requests, "get", get):
+                posts = reddit_utils.fetch_top_from_category_online(
+                    category=category,
+                    start_date=start,
+                    end_date=end,
+                    max_limit=max_limit,
+                    query=query,
+                )
+        return posts, requested
+
+    def test_a_post_inside_the_window_comes_back_normalized(self):
+        posts, _requested = self._fetch(
+            [{"data": {"children": [self._post("Rates hold", selftext="body")]}}]
+        )
+
+        self.assertEqual(posts[0]["title"], "Rates hold")
+        self.assertEqual(posts[0]["content"], "body")
+        self.assertEqual(posts[0]["upvotes"], 10)
+        self.assertEqual(posts[0]["posted_date"], "2026-09-08")
+        self.assertEqual(posts[0]["subreddit"], "investing")
+
+    def test_every_configured_subreddit_is_searched(self):
+        _posts, requested = self._fetch([])
+
+        self.assertEqual(
+            [url for url, _params in requested],
+            [
+                "https://www.reddit.com/r/investing/search.json",
+                "https://www.reddit.com/r/stocks/search.json",
+            ],
+        )
+
+    def test_a_post_outside_the_window_is_dropped(self):
+        posts, _requested = self._fetch(
+            [{"data": {"children": [self._post(created="2020-01-01")]}}]
+        )
+
+        self.assertEqual(posts, [])
+
+    def test_an_undated_post_is_dropped(self):
+        posts, _requested = self._fetch(
+            [{"data": {"children": [{"data": {"title": "no date"}}]}}]
+        )
+
+        self.assertEqual(posts, [])
+
+    def test_the_same_post_in_two_subreddits_is_returned_once(self):
+        page = {"data": {"children": [self._post("Crossposted")]}}
+
+        posts, _requested = self._fetch([page, page])
+
+        self.assertEqual(len(posts), 1)
+
+    def test_a_post_without_a_url_falls_back_to_its_permalink(self):
+        posts, _requested = self._fetch(
+            [
+                {
+                    "data": {
+                        "children": [self._post(url=None, permalink="/r/investing/x")]
+                    }
+                }
+            ]
+        )
+
+        self.assertEqual(posts[0]["url"], "https://www.reddit.com/r/investing/x")
+
+    def test_posts_come_back_most_upvoted_first(self):
+        posts, _requested = self._fetch(
+            [
+                {
+                    "data": {
+                        "children": [
+                            self._post("quiet", ups=1),
+                            self._post("loud", ups=99, url="https://x/b"),
+                        ]
+                    }
+                }
+            ]
+        )
+
+        self.assertEqual([post["title"] for post in posts], ["loud", "quiet"])
+
+    def test_the_result_count_is_capped(self):
+        children = [
+            self._post(f"post {i}", ups=i, url=f"https://x/{i}") for i in range(10)
+        ]
+
+        posts, _requested = self._fetch(
+            [{"data": {"children": children}}], max_limit=3
+        )
+
+        self.assertEqual(len(posts), 3)
+
+    def test_a_throttled_subreddit_does_not_lose_the_others(self):
+        posts, _requested = self._fetch(
+            [
+                (429, {}),
+                {"data": {"children": [self._post("From the second")]}},
+            ]
+        )
+
+        self.assertEqual([post["title"] for post in posts], ["From the second"])
+
+    def test_an_unreachable_subreddit_does_not_lose_the_others(self):
+        posts, _requested = self._fetch(
+            [
+                RuntimeError("connection reset"),
+                {"data": {"children": [self._post("From the second")]}},
+            ]
+        )
+
+        self.assertEqual(len(posts), 1)
+
+    def test_a_malformed_payload_is_skipped(self):
+        posts, _requested = self._fetch([{"data": {"children": ["junk", None]}}])
+
+        self.assertEqual(posts, [])
+
+    def test_nothing_requested_fetches_nothing(self):
+        posts, requested = self._fetch([], max_limit=0)
+
+        self.assertEqual(posts, [])
+        self.assertEqual(requested, [])
+
+    def test_an_inverted_window_is_corrected(self):
+        posts, _requested = self._fetch(
+            [{"data": {"children": [self._post(created="2026-09-08")]}}],
+            start="2026-09-09",
+            end="2026-09-01",
+        )
+
+        self.assertEqual(len(posts), 1)
+
+    def test_a_category_with_no_subreddits_fetches_nothing(self):
+        with mock.patch.dict(
+            reddit_utils.REDDIT_CATEGORY_SUBREDDITS, {"global_news": []}, clear=False
+        ):
+            self.assertEqual(
+                reddit_utils.fetch_top_from_category_online(
+                    category="global_news",
+                    start_date="2026-09-01",
+                    end_date="2026-09-09",
+                    max_limit=5,
+                ),
+                [],
+            )
+
+    def test_the_global_query_looks_for_macro_terms(self):
+        _posts, requested = self._fetch([])
+
+        self.assertIn("inflation", requested[0][1]["q"])
+
+    def test_a_company_query_uses_the_longest_aliases_first(self):
+        with mock.patch.object(
+            reddit_utils, "get_company_name", lambda _t: "NVIDIA Corporation"
+        ):
+            _posts, requested = self._fetch(
+                [], category="company_news", query="NVDA"
+            )
+
+        query = requested[0][1]["q"]
+        self.assertIn("NVIDIA", query)
+        self.assertLess(query.index("NVIDIA Corporation"), query.index("NVDA"))
+
+    def test_an_off_topic_post_is_dropped_from_a_company_search(self):
+        with mock.patch.object(
+            reddit_utils, "get_company_name", lambda _t: "NVIDIA Corporation"
+        ):
+            posts, _requested = self._fetch(
+                [
+                    {
+                        "data": {
+                            "children": [
+                                self._post("Bitcoin is up"),
+                                self._post("NVIDIA beats", url="https://x/b"),
+                            ]
+                        }
+                    }
+                ],
+                category="company_news",
+                query="NVDA",
+            )
+
+        self.assertEqual([post["title"] for post in posts], ["NVIDIA beats"])
