@@ -1651,6 +1651,13 @@ class PostgresOperationalRepository:
         now = now or _utcnow()
         row = self.session.get(ServiceHeartbeatRow, (service_key, instance_key))
         if row is None:
+            # A new identity for this service means a process that has
+            # just started. That is exactly when abandoned rows appear —
+            # historically a uuid per process, so every restart left one
+            # behind and the vitals strip, which counts rows, reported
+            # them as dead workers. Retire them here rather than on every
+            # beat: this is the only moment they can be created.
+            self.retire_heartbeats(service_key, keep=instance_key, now=now)
             row = ServiceHeartbeatRow(
                 service=service_key,
                 instance_id=instance_key,
@@ -1666,12 +1673,81 @@ class PostgresOperationalRepository:
         self.session.flush()
         return self._heartbeat(row, now=now, stale_after_seconds=float("inf"))
 
+    def request_restart(
+        self, service: str, *, actor: str = "webui", now: Optional[datetime] = None
+    ) -> datetime:
+        """Ask a service to restart at its next safe moment."""
+        key = service.lower().strip()
+        now = now or _utcnow()
+        row = self.session.get(ServiceControlRow, key)
+        if row is None:
+            row = ServiceControlRow(service=key, paused=False, updated_at=now)
+            self.session.add(row)
+        row.restart_requested_at = now
+        row.updated_at = now
+        row.updated_by = actor
+        self.session.flush()
+        return now
+
+    def restart_requested_at(self, service: str) -> Optional[datetime]:
+        row = self.session.get(ServiceControlRow, service.lower().strip())
+        return row.restart_requested_at if row is not None else None
+
+    def retire_heartbeats(
+        self,
+        service: str,
+        *,
+        keep: str = "",
+        now: Optional[datetime] = None,
+        older_than_seconds: Optional[float] = None,
+    ) -> int:
+        """Delete rows for a service that will never be heard from again.
+
+        "Never" is the operative word. A row is retired only when it has
+        been silent for far longer than that service is allowed to be —
+        by default twice its staleness window — so a worker merely
+        between cycles is never mistaken for a dead one.
+        """
+        from tradingagents.operations.services import stale_after
+
+        now = now or _utcnow()
+        cutoff = now - timedelta(
+            seconds=older_than_seconds
+            if older_than_seconds is not None
+            else stale_after(service) * 2
+        )
+        rows = self.session.scalars(
+            select(ServiceHeartbeatRow).where(
+                ServiceHeartbeatRow.service == service,
+                ServiceHeartbeatRow.last_seen_at < cutoff,
+                ServiceHeartbeatRow.instance_id != keep,
+            )
+        ).all()
+        for row in rows:
+            self.session.delete(row)
+        if rows:
+            self.session.flush()
+        return len(rows)
+
     def health(
         self,
         *,
         now: Optional[datetime] = None,
-        stale_after_seconds: float = 600,
+        stale_after_seconds: Optional[float] = None,
     ) -> OperationalHealth:
+        """The operational picture.
+
+        `stale_after_seconds` forces one tolerance on every service.
+        Left alone, each is judged against its own cadence — which is the
+        only way this can be right, because the reconciliation worker
+        beats every five seconds and the evaluation worker every three
+        hundred. A single number was wrong for one of them by
+        construction, and the number chosen (120) made the evaluation
+        worker permanently stale in the UI while its own container
+        healthcheck, at 900, called it fine.
+        """
+        from tradingagents.operations.services import stale_after
+
         now = now or _utcnow()
         controls = [
             self._control(row)
@@ -1681,7 +1757,13 @@ class PostgresOperationalRepository:
         ]
         heartbeats = [
             self._heartbeat(
-                row, now=now, stale_after_seconds=max(0.0, stale_after_seconds)
+                row,
+                now=now,
+                stale_after_seconds=(
+                    max(0.0, stale_after_seconds)
+                    if stale_after_seconds is not None
+                    else stale_after(row.service)
+                ),
             )
             for row in self.session.scalars(
                 select(ServiceHeartbeatRow).order_by(

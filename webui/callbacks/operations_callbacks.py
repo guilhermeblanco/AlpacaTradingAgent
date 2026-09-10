@@ -32,7 +32,14 @@ def _workers_table(heartbeats):
         return html.Div("No worker heartbeat recorded", className="text-muted small")
     return dbc.Table(
         [
-            html.Thead(html.Tr([html.Th("Service"), html.Th("Status"), html.Th("Last seen")])),
+            html.Thead(
+                html.Tr(
+                    [
+                        html.Th("Service"), html.Th("Status"),
+                        html.Th("Last seen"), html.Th(""),
+                    ]
+                )
+            ),
             html.Tbody(
                 [
                     html.Tr(
@@ -45,6 +52,22 @@ def _workers_table(heartbeats):
                                 )
                             ),
                             html.Td(item.last_seen_at.strftime("%H:%M:%S UTC")),
+                            html.Td(
+                                dbc.Button(
+                                    "Restart",
+                                    id={
+                                        "type": "restart-service",
+                                        "service": item.service,
+                                    },
+                                    color="link",
+                                    size="sm",
+                                    className="p-0",
+                                    title=(
+                                        "Ask this worker to exit; the container "
+                                        "runtime starts it again"
+                                    ),
+                                )
+                            ),
                         ]
                     )
                     for item in heartbeats
@@ -166,7 +189,8 @@ def build_operations_view():
     try:
         with runtime.unit_of_work_factory() as uow:
             action_status = _apply_action(uow)
-            health = uow.operations.health(stale_after_seconds=120)
+            # Per-service tolerances; see tradingagents/operations/services.py.
+            health = uow.operations.health()
             uow.commit()
         try:
             from tradingagents.broker import get_execution_broker_runtime
@@ -238,3 +262,54 @@ def register_operations_callbacks(app):
     )
     def refresh_operations(_interval, _refresh, _pause, _resume, _scope_clicks):
         return build_operations_view()
+
+
+def register_restart_callbacks(app):
+    """Ask a worker to restart.
+
+    "Ask" is exact. The web process is in a different container with no
+    way to signal a sibling, and the fix for that would be mounting the
+    podman socket into the one process reachable from a browser with no
+    authentication — a far worse trade than waiting a cycle. So the
+    request is a row, the worker exits between units of work when it
+    sees one, and `restart: unless-stopped` brings it back.
+    """
+    from dash import ALL, Input, Output, ctx, no_update
+
+    @app.callback(
+        Output("operations-restart-status", "children"),
+        Input({"type": "restart-service", "service": ALL}, "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def restart(clicks):
+        triggered = getattr(ctx, "triggered_id", None)
+        if not isinstance(triggered, dict) or not any(clicks or []):
+            # The table re-renders on an interval, which recreates every
+            # button with n_clicks back at zero.
+            return no_update
+
+        service = triggered.get("service")
+        runtime = get_persistence_runtime()
+        if runtime.unit_of_work_factory is None:
+            return dbc.Alert(
+                "Restarting a worker needs PostgreSQL — the request is a row.",
+                color="warning", className="py-2 mb-0",
+            )
+        try:
+            with runtime.unit_of_work_factory() as uow:
+                uow.operations.request_restart(service, actor="webui")
+                uow.commit()
+        except Exception as exc:
+            return dbc.Alert(
+                f"Unable to request a restart: {exc}",
+                color="danger", className="py-2 mb-0",
+            )
+        return dbc.Alert(
+            [
+                html.Strong(f"{service} will restart. "),
+                "It exits after its current unit of work; the container "
+                "runtime starts it again.",
+            ],
+            color="info", className="py-2 mb-0",
+        )
+

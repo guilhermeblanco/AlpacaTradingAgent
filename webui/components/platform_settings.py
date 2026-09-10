@@ -33,6 +33,18 @@ BEHAVIOUR = (
     "require_point_in_time_web_search",
 )
 
+#: What it may spend and how hard it may push. Grouped apart from
+#: behaviour because these are the numbers you reach for when the bill
+#: or the rate limit is the problem, and they were previously reachable
+#: only by editing source.
+LIMITS = (
+    "daily_llm_token_budget",
+    "autonomous_max_concurrency",
+    "autonomous_provider_concurrency",
+    "autonomous_max_candidates",
+    "evaluation_worker_interval_seconds",
+)
+
 PROVIDERS = ("llm_provider", "execution_broker", "research_market_data_provider")
 
 
@@ -196,6 +208,11 @@ def settings_body(config, sources=None):
                 "lets the system do more. Turning one back down does not.",
             ),
             group("Providers", PROVIDERS),
+            group(
+                "Limits",
+                LIMITS,
+                "What it may spend, and how hard it may push a provider.",
+            ),
             group("Behaviour", BEHAVIOUR),
         ]
     )

@@ -493,8 +493,20 @@ class VitalsTests(BoardCallbackTests):
         )
 
         rendered = self._vitals()
-        self.assertIn("1/2 live", rendered)
-        self.assertIn("reconciliation stale", rendered)
+        # Not "1/2 live": the denominator was rows in a table that never
+        # forgot a restart, so it read as an expected worker count and
+        # was not one. Report what is known and name what went quiet.
+        self.assertIn("1 reporting", rendered)
+        self.assertIn("reconciliation silent", rendered)
+
+    def test_everything_reporting_says_so(self):
+        self._runtime(
+            health=_health(
+                heartbeats=[SimpleNamespace(service="evaluation", stale=False)]
+            )
+        )
+
+        self.assertIn("All services reporting on schedule", self._vitals())
 
     def test_a_reconciliation_backlog_is_shown_with_its_lag(self):
         self._runtime(

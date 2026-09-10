@@ -335,6 +335,13 @@ class ServiceControlRow(Base):
     reason: Mapped[Optional[str]] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_by: Mapped[Optional[str]] = mapped_column(String(160))
+    #: When somebody last asked this service to restart. A worker that
+    #: started before this exits; the container runtime brings it back.
+    #: A request rather than a command, because the web process has no
+    #: way to signal a sibling container and should not be given one.
+    restart_requested_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True)
+    )
 
 
 class ServiceHeartbeatRow(Base):
