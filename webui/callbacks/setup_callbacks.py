@@ -25,6 +25,7 @@ from webui.components.setup_wizard import (
     welcome_step,
 )
 from webui.config.navigation import SETUP_STAGE
+from tradingagents.setup.providers import role as get_role, selected
 
 
 def current_config():
@@ -188,7 +189,14 @@ def register_setup_callbacks(app):
         elif step_id == POSTURE_STEP:
             body = posture_step(current_config())
         elif requirement is not None:
-            body = requirement_step(requirement)
+            # A step whose id is also a role is a choice, not a statement:
+            # pick the provider, and its own fields follow.
+            role = get_role(step_id)
+            body = requirement_step(
+                requirement,
+                role=role,
+                chosen=selected(step_id, current_config()) if role else "",
+            )
         else:
             body = html.Div(
                 f"{step_id} is no longer part of this configuration.",
@@ -207,6 +215,53 @@ def register_setup_callbacks(app):
             f"Step {index + 1} of {len(plan)}",
             index == 0,
             "Done" if last else "Next",
+        )
+
+    @app.callback(
+        Output("wizard-save-status", "children", allow_duplicate=True),
+        Input({"type": "wizard-provider", "role": ALL}, "value"),
+        State({"type": "wizard-provider", "role": ALL}, "id"),
+        prevent_initial_call=True,
+    )
+    def choose_provider(values, ids):
+        """Store the provider the moment it is picked.
+
+        Stored rather than held in the browser because the fields shown
+        underneath come from the readiness model, which reads the
+        configuration — so the choice has to be somewhere the server can
+        see before it can render the right form.
+        """
+        from tradingagents.setup.providers import role as find_role
+        from tradingagents.setup.settings import get_runtime_settings
+
+        store = get_runtime_settings()
+        if store is None:
+            return dbc.Alert(
+                "Cannot record the choice: no database is configured, so "
+                "provider selection has to stay in the environment.",
+                color="warning", className="py-2 mb-0",
+            )
+
+        changed = []
+        config = current_config()
+        for identifier, value in zip(ids or [], values or []):
+            role = find_role(identifier["role"])
+            if role is None or not value or not role.setting:
+                continue
+            if str(config.get(role.setting) or "").lower() == str(value).lower():
+                continue
+            try:
+                store.set(role.setting, value, actor="setup-wizard")
+                changed.append(f"{role.label} → {role.provider(value).label}")
+            except Exception as exc:
+                return dbc.Alert(
+                    f"Unable to record the choice: {exc}",
+                    color="danger", className="py-2 mb-0",
+                )
+        if not changed:
+            return no_update
+        return dbc.Alert(
+            "; ".join(changed), color="info", className="py-2 mb-0"
         )
 
     # ── Saving ───────────────────────────────────────────────────────────

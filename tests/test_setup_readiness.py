@@ -12,12 +12,13 @@ from __future__ import annotations
 
 import unittest
 
-from tradingagents.setup.readiness import (
-    LOCAL_PROVIDERS,
-    MODEL_PROVIDERS,
-    evaluate_readiness,
-    setup_steps,
-)
+from tradingagents.setup.providers import MODEL_PROVIDERS
+from tradingagents.setup.readiness import evaluate_readiness, setup_steps
+
+#: The one provider that needs nothing at all. `local_openai` also runs
+#: locally but still wants a non-empty string for the OpenAI SDK, so it is
+#: not key-free — just trivially satisfied.
+KEY_FREE_PROVIDERS = ("ollama",)
 
 BASE = {
     "llm_provider": "openai",
@@ -63,10 +64,14 @@ class ModelProviderTests(unittest.TestCase):
 
         mentioned = {item.key for item in view.credentials}
         others = {
-            credential.key
-            for name, credential in MODEL_PROVIDERS.items()
-            if name != "anthropic"
+            field.key
+            for provider in MODEL_PROVIDERS
+            if provider.id != "anthropic"
+            for field in provider.fields
         }
+        # backend_url is shared by the local providers and is not a
+        # credential anyone has to go and get.
+        others.discard("backend_url")
 
         self.assertEqual(mentioned & others, set())
 
@@ -80,22 +85,25 @@ class ModelProviderTests(unittest.TestCase):
         view = readiness({"llm_provider": "openai"})
 
         self.assertTrue(
-            any("alternatives, not" in note for note in view.notes), view.notes
+            any("alternatives, not additions" in note for note in view.notes),
+            view.notes,
         )
 
-    def test_a_local_provider_needs_no_key_at_all(self):
-        for provider in sorted(LOCAL_PROVIDERS):
+    def test_a_local_provider_does_not_block_on_a_key(self):
+        """It talks to something you run, so there is nothing to go and
+        get — and "required, with nothing to supply" would read as an
+        unsatisfiable blocker."""
+        for provider in KEY_FREE_PROVIDERS:
             view = readiness({"llm_provider": provider})
 
             with self.subTest(provider=provider):
-                self.assertEqual(view.get("model").credentials, ())
                 self.assertFalse(view.get("model").blocking)
 
     def test_an_unknown_provider_is_reported_rather_than_ignored(self):
         view = readiness({"llm_provider": "sorcery"})
 
         self.assertTrue(
-            any("not a provider this build knows" in note for note in view.notes)
+            any("cannot construct" in note for note in view.notes), view.notes
         )
 
 

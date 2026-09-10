@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Literal, Optional
 
 from tradingagents.dataflows.config import get_api_key_source
+from tradingagents.setup.providers import ROLES, Field, role as get_role, selected, spec
 
 Level = Literal["required", "conditional", "recommended", "optional"]
 
@@ -46,25 +47,21 @@ LEVEL_ORDER: dict[str, int] = {
 }
 
 
-@dataclass(frozen=True)
-class Credential:
-    """One secret, and where to go and get it."""
+#: A credential is just a provider field. The two were separate lists of
+#: the same thing, which is how the catalogue came to offer providers the
+#: factories could not build; see tradingagents/setup/providers.py.
+Credential = Field
 
-    key: str  #: the name `get_api_key` knows it by
-    env_var: str
-    label: str
-    obtain_url: str = ""
-    placeholder: str = ""
 
-    def source(self, lookup: Optional[Callable[[str, str], str]] = None) -> str:
-        lookup = lookup or get_api_key_source
-        try:
-            return lookup(self.key, self.env_var)
-        except Exception:
-            return ""
-
-    def configured(self, lookup=None) -> bool:
-        return bool(self.source(lookup))
+def credential_source(
+    credential: Field, lookup: Optional[Callable[[str, str], str]] = None
+) -> str:
+    """Which layer supplies this credential, or "" when nothing does."""
+    lookup = lookup or get_api_key_source
+    try:
+        return lookup(credential.key, credential.env_var)
+    except Exception:
+        return ""
 
 
 @dataclass
@@ -150,82 +147,10 @@ class Readiness:
         return list(seen.values())
 
 
-# ── The catalogue ────────────────────────────────────────────────────────────
-# Model providers, keyed the way `llm_provider` names them. Exactly one of
-# these is ever required.
-
-MODEL_PROVIDERS: dict[str, Credential] = {
-    "openai": Credential(
-        "openai_api_key", "OPENAI_API_KEY", "OpenAI",
-        "https://platform.openai.com/api-keys", "sk-...",
-    ),
-    "anthropic": Credential(
-        "anthropic_api_key", "ANTHROPIC_API_KEY", "Anthropic",
-        "https://console.anthropic.com/settings/keys", "sk-ant-...",
-    ),
-    "google": Credential(
-        "google_api_key", "GOOGLE_API_KEY", "Google AI Studio",
-        "https://aistudio.google.com/app/apikey",
-    ),
-    "xai": Credential("xai_api_key", "XAI_API_KEY", "xAI", "https://console.x.ai/"),
-    "minimax": Credential("minimax_api_key", "MINIMAX_API_KEY", "MiniMax"),
-    "deepseek": Credential(
-        "deepseek_api_key", "DEEPSEEK_API_KEY", "DeepSeek",
-        "https://platform.deepseek.com/api_keys",
-    ),
-    "dashscope": Credential("dashscope_api_key", "DASHSCOPE_API_KEY", "Qwen/DashScope"),
-    "zhipu": Credential("zhipu_api_key", "ZHIPU_API_KEY", "Zhipu GLM"),
-    "openrouter": Credential(
-        "openrouter_api_key", "OPENROUTER_API_KEY", "OpenRouter",
-        "https://openrouter.ai/keys",
-    ),
-    "azure": Credential(
-        "azure_openai_api_key", "AZURE_OPENAI_API_KEY", "Azure OpenAI"
-    ),
-}
-
-#: Providers that run against a local endpoint and need no key at all.
-LOCAL_PROVIDERS = frozenset({"ollama", "local", "lmstudio", "openai_compatible"})
-
-BROKERS: dict[str, tuple[Credential, ...]] = {
-    "alpaca": (
-        Credential(
-            "alpaca_api_key", "ALPACA_API_KEY", "Alpaca key ID",
-            "https://app.alpaca.markets/paper/dashboard/overview",
-        ),
-        Credential("alpaca_secret_key", "ALPACA_SECRET_KEY", "Alpaca secret key"),
-    ),
-    "tradier": (
-        Credential(
-            "tradier_access_token", "TRADIER_ACCESS_TOKEN", "Tradier access token",
-            "https://developer.tradier.com/",
-        ),
-        Credential("tradier_account_id", "TRADIER_ACCOUNT_ID", "Tradier account id"),
-    ),
-    "robinhood": (
-        Credential(
-            "robinhood_mcp_access_token", "ROBINHOOD_MCP_ACCESS_TOKEN",
-            "Robinhood MCP access token",
-        ),
-    ),
-}
-
-FINNHUB = Credential(
-    "finnhub_api_key", "FINNHUB_API_KEY", "Finnhub",
-    "https://finnhub.io/register",
-)
-FRED = Credential(
-    "fred_api_key", "FRED_API_KEY", "FRED",
-    "https://fred.stlouisfed.org/docs/api/api_key.html",
-)
-COINDESK = Credential(
-    "coindesk_api_key", "COINDESK_API_KEY", "CryptoCompare",
-    "https://www.cryptocompare.com/cryptopian/api-keys",
-)
-ALPHA_VANTAGE = Credential(
-    "alpha_vantage_api_key", "ALPHA_VANTAGE_API_KEY", "Alpha Vantage",
-    "https://www.alphavantage.co/support/#api-key",
-)
+# ── Deriving the requirements ────────────────────────────────────────────────
+# Everything below reads the provider registry. Nothing here knows the name
+# of a vendor, which is the point: adding a provider is a registration, and
+# the wizard, this model and the integrations screen all pick it up.
 
 DEFAULT_ANALYSTS = ("market", "social", "news", "fundamentals", "macro")
 
@@ -244,6 +169,11 @@ def _asset_filter(config) -> str:
     return str(config.get("autonomous_asset_filter") or "all").strip().lower()
 
 
+def _required_fields(provider) -> tuple[Field, ...]:
+    """Only what must be supplied. An optional endpoint is not a blocker."""
+    return tuple(item for item in (provider.fields if provider else ()) if item.required)
+
+
 def evaluate_readiness(config=None, *, lookup=None) -> Readiness:
     """What this configuration needs, and how much of it is in place."""
     if config is None:
@@ -259,86 +189,76 @@ def evaluate_readiness(config=None, *, lookup=None) -> Readiness:
 
     def add(requirement: Requirement) -> None:
         requirement.sources = {
-            item.key: item.source(lookup) for item in requirement.credentials
+            item.key: credential_source(item, lookup)
+            for item in requirement.credentials
         }
         readiness.requirements.append(requirement)
 
-    # ── 1. A model ───────────────────────────────────────────────────────────
-    provider = str(config.get("llm_provider") or "openai").strip().lower()
-    if provider in LOCAL_PROVIDERS:
-        add(
-            Requirement(
-                id="model",
-                order=10,
-                title=f"Model provider — {provider}",
-                why="Runs against a local endpoint, so there is no key to set.",
-                level="optional",
-            )
+    def role_requirement(
+        role_id: str, *, level: Level, order: int, because: str = "",
+        why: str = "", title: str = "",
+    ) -> Requirement:
+        item = get_role(role_id)
+        chosen = selected(role_id, config)
+        provider = spec(role_id, config)
+        return Requirement(
+            id=role_id,
+            order=order,
+            title=title or f"{item.label} — {provider.label if provider else chosen}",
+            why=why or (provider.blurb if provider else item.blurb),
+            level=level,
+            credentials=_required_fields(provider),
+            because=because or f"{item.setting} = {chosen}",
         )
-        readiness.notes.append(
-            f"llm_provider is {provider!r}, which talks to a local endpoint. "
-            "Set backend_url if it is not on the default address."
-        )
-    else:
-        credential = MODEL_PROVIDERS.get(provider)
-        add(
-            Requirement(
-                id="model",
-                order=10,
-                title=f"Model provider — {credential.label if credential else provider}",
-                why=(
-                    "Every analyst, researcher and the risk manager reach a "
-                    "model. Nothing runs without this one."
-                ),
-                level="required",
-                credentials=(credential,) if credential else (),
-                because=f"llm_provider = {provider}",
-            )
-        )
-        if credential is None:
-            readiness.notes.append(
-                f"llm_provider is {provider!r}, which is not a provider this "
-                "build knows. Set it to one of: "
-                + ", ".join(sorted(MODEL_PROVIDERS))
-            )
-        else:
-            readiness.notes.append(
-                f"Only the {credential.label} key is needed. The other "
-                f"{len(MODEL_PROVIDERS) - 1} providers are alternatives, not "
-                "additions — set llm_provider to switch."
-            )
 
-    # ── 2. A broker ──────────────────────────────────────────────────────────
-    broker = str(config.get("execution_broker") or "alpaca").strip().lower()
+    # ── A model ──────────────────────────────────────────────────────────────
+    model = role_requirement(
+        "model", level="required", order=10,
+        why=(
+            "Every analyst, researcher and the risk manager reach a model. "
+            "Nothing runs without one."
+        ),
+    )
+    provider = spec("model", config)
+    if provider is not None and not _required_fields(provider):
+        # A local endpoint needs no key. Required with nothing to supply
+        # would read as an unsatisfiable blocker.
+        model.level = "optional"
+        model.why = provider.note or model.why
+    add(model)
+
+    chosen_model = selected("model", config)
+    alternatives = len(get_role("model").providers) - 1
+    readiness.notes.append(
+        f"{alternatives} other model providers are configured in this build. "
+        "They are alternatives, not additions — change the provider and the "
+        "key it needs changes with it."
+    )
+    if get_role("model").provider(str(config.get("llm_provider") or "").lower()) is None \
+            and config.get("llm_provider"):
+        readiness.notes.append(
+            f"llm_provider is {config['llm_provider']!r}, which this build "
+            f"cannot construct. Using {chosen_model} instead."
+        )
+
+    # ── A broker ─────────────────────────────────────────────────────────────
     add(
-        Requirement(
-            id="broker",
-            order=20,
-            title=f"Broker — {broker}",
+        role_requirement(
+            "broker", level="required", order=20,
             why=(
                 "Positions, buying power and prices come from here, and it is "
-                "where an order would eventually go. A paper account is enough "
-                "and is the default."
+                "where an order would eventually go."
             ),
-            level="required",
-            credentials=BROKERS.get(broker, ()),
-            because=f"execution_broker = {broker}",
         )
     )
 
-    # ── 3. Market data, when it is somewhere else ────────────────────────────
-    data_provider = str(
-        config.get("research_market_data_provider") or broker
-    ).strip().lower()
-    if data_provider != broker:
+    # ── Market data, when it is somewhere else ───────────────────────────────
+    broker = selected("broker", config)
+    data_provider = selected("market_data", config)
+    if config.get("research_market_data_provider") and data_provider != broker:
         add(
-            Requirement(
-                id="market_data",
-                order=25,
-                title=f"Market data — {data_provider}",
-                why="Bars and quotes for the analysts come from here.",
-                level="conditional",
-                credentials=BROKERS.get(data_provider, ()),
+            role_requirement(
+                "market_data", level="conditional", order=25,
                 because=(
                     f"research_market_data_provider = {data_provider}, which is "
                     f"not the execution broker ({broker}). Point it at {broker} "
@@ -347,7 +267,7 @@ def evaluate_readiness(config=None, *, lookup=None) -> Readiness:
             )
         )
 
-    # ── 4. Where the record is kept ──────────────────────────────────────────
+    # ── Where the record is kept ─────────────────────────────────────────────
     backend = str(config.get("persistence_backend") or "local").strip().lower()
     has_url = bool(config.get("database_url"))
     if backend == "postgres":
@@ -378,67 +298,60 @@ def evaluate_readiness(config=None, *, lookup=None) -> Readiness:
             "to 'postgres' with a database_url to fill them."
         )
 
-    # ── 5. News, macro, crypto — each earned by a choice ─────────────────────
+    # ── The data sources, each earned by a choice ────────────────────────────
     analysts = _analysts(config)
     assets = _asset_filter(config)
 
+    news_role = get_role("news")
+    finnhub = news_role.provider("finnhub")
     add(
         Requirement(
             id="equity_news",
             order=40,
-            title="Finnhub",
+            title=f"News — {finnhub.label}",
             why=(
                 "Company news, insider sentiment and insider transactions. "
                 "Without it the news analyst still runs on Google News, with a "
                 "thinner evidence base and no insider signal."
             ),
             level="recommended" if "news" in analysts else "optional",
-            credentials=(FINNHUB,),
+            credentials=_required_fields(finnhub),
         )
     )
 
     macro_on = "macro" in analysts
-    add(
-        Requirement(
-            id="macro",
-            order=45,
-            title="FRED",
-            why=(
-                "The macro analyst's entire data source."
-                if macro_on
-                else "Only read by the macro analyst, which is not enabled."
-            ),
-            level="conditional" if macro_on else "optional",
-            credentials=(FRED,),
-            because="the macro analyst is enabled" if macro_on else "",
-        )
+    macro = role_requirement(
+        "macro",
+        level="conditional" if macro_on else "optional",
+        order=45,
+        because="the macro analyst is enabled" if macro_on else "",
+        why=(
+            "The macro analyst's entire data source."
+            if macro_on
+            else "Only read by the macro analyst, which is not enabled."
+        ),
     )
+    add(macro)
 
     crypto_on = assets in ("all", "crypto")
     add(
-        Requirement(
-            id="crypto_news",
+        role_requirement(
+            "crypto_news",
+            level="recommended" if crypto_on else "optional",
             order=50,
-            title="CryptoCompare",
+            because=f"asset filter = {assets}" if crypto_on else "",
             why=(
                 "News for crypto symbols; equities do not use it."
                 if crypto_on
                 else "Only used for crypto symbols, which are out of scope."
             ),
-            level="recommended" if crypto_on else "optional",
-            credentials=(COINDESK,),
-            because=f"asset filter = {assets}" if crypto_on else "",
         )
     )
 
     add(
-        Requirement(
-            id="fallback_market_data",
-            order=60,
-            title="Alpha Vantage",
+        role_requirement(
+            "fallback_market_data", level="optional", order=60,
             why="A fallback for when the primary market-data source fails.",
-            level="optional",
-            credentials=(ALPHA_VANTAGE,),
         )
     )
 
@@ -452,6 +365,10 @@ def setup_steps(readiness: Readiness) -> list[Requirement]:
     and never the plainly optional ones — a wizard that asks for a FRED key
     while the macro analyst is off is the laundry list again with a progress
     bar on top.
+
+    Ordered by `order` rather than by level, because urgency and sequence
+    are different questions: the broker is exactly as required as the model
+    and still makes no sense to ask for first.
     """
     return sorted(
         (
