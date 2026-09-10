@@ -82,29 +82,26 @@ class ModalToggleTests(ApiConfigFixture):
     def test_anything_else_leaves_it_as_it_was(self):
         self.assertTrue(self._toggle("something-else", is_open=True))
 
-    def test_the_header_button_opens_the_integrations_screen_instead(self):
-        from webui.callbacks import integrations_callbacks
+    def test_the_header_carries_no_integrations_button(self):
+        """Integrations is a Configuration page now. A second entry
+        point in the corner was one place too many for settings to
+        live."""
+        from webui.components.header import create_header
 
-        captured = {}
+        def ids(component, found=None):
+            found = set() if found is None else found
+            identifier = getattr(component, "id", None)
+            if isinstance(identifier, str):
+                found.add(identifier)
+            children = getattr(component, "children", None)
+            if isinstance(children, (list, tuple)):
+                for child in children:
+                    ids(child, found)
+            elif children is not None:
+                ids(children, found)
+            return found
 
-        class App:
-            def callback(self, *_args, **_kwargs):
-                def decorate(function):
-                    captured[function.__name__] = function
-                    return function
-
-                return decorate
-
-        integrations_callbacks.register_integrations_callbacks(App())
-
-        # That module has its own `ctx` binding; the fixture patches this
-        # one's.
-        with mock.patch.object(
-            integrations_callbacks,
-            "ctx",
-            SimpleNamespace(triggered_id="open-api-config-btn"),
-        ):
-            self.assertTrue(captured["toggle"](1, None))
+        self.assertNotIn("open-api-config-btn", ids(create_header()))
 
 
 class PasswordVisibilityTests(ApiConfigFixture):

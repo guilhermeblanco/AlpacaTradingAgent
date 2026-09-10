@@ -64,7 +64,7 @@ STAGES: tuple[Stage, ...] = (
         id="dashboard",
         label="Dashboard",
         blurb="What is moving through the pipeline, and the analysis running now.",
-        panels=("config_panel", "pipeline_board", "chart_panel", "status_panel"),
+        panels=("pipeline_board", "chart_panel", "status_panel"),
     ),
     Stage(
         id="decide",
@@ -94,26 +94,39 @@ STAGES: tuple[Stage, ...] = (
 
 CONFIG_PAGES: tuple[ConfigPage, ...] = (
     ConfigPage(
+        id="analysis",
+        label="Analysis",
+        blurb=(
+            "What gets analysed, by which models, and how deeply. The "
+            "Dashboard shows an analysis happening; this decides what one is."
+        ),
+        sections=(("Settings", "config_panel"),),
+    ),
+    ConfigPage(
         id="platform",
         label="Platform",
         blurb="What it may do, what it may spend, and how hard it may push.",
         sections=(("Settings", "platform_settings"),),
     ),
     ConfigPage(
-        id="requirements",
-        label="Requirements",
+        id="integrations",
+        label="Integrations",
         blurb=(
-            "Every third party this configuration can use, whether it is set, "
-            "and where the value comes from."
+            "What this deployment talks to, and what it still needs. "
+            "Configured integrations first; the requirements they satisfy "
+            "after."
         ),
-        sections=(("Requirements", "setup_panel"),),
+        sections=(
+            ("Configured", "integrations_panel"),
+            ("Requirements", "setup_panel"),
+        ),
     ),
 )
 
 DEFAULT_STAGE = "dashboard"
 
 CONFIG_STAGE = "configuration"
-DEFAULT_CONFIG_PAGE = "platform"
+DEFAULT_CONFIG_PAGE = "analysis"
 
 #: Where the wizard sends you, and where dismissing it leaves you.
 SETUP_STAGE = CONFIG_STAGE
