@@ -24,6 +24,7 @@ import json
 import os
 import pandas as pd
 from .config import get_config, set_config, DATA_DIR, get_api_key
+from .search_window import bounded_reason, live_search_allowed
 from .interface_utils import (
     _coerce_bool,
     extract_responses_text,
@@ -66,23 +67,32 @@ def _cap_headline_sections(
     return clipped
 
 
-def _build_empty_openai_global_fallback(curr_date: str, ticker_context: str | None = None) -> str:
+EMPTY_SEARCH_REASON = "OpenAI web-search returned empty output."
+
+
+def _build_empty_openai_global_fallback(
+    curr_date: str,
+    ticker_context: str | None = None,
+    reason: str = EMPTY_SEARCH_REASON,
+) -> str:
     target = str(ticker_context or "global markets").strip()
     query = f"{target} macro economy central bank inflation"
     google = get_google_news(query=query, curr_date=curr_date, look_back_days=5)
     google = _cap_headline_sections(google, max_sections=8, max_chars=6000)
     if google:
         return (
-            f"Fallback used because OpenAI web-search returned empty output.\n"
+            f"{reason}\n"
             f"## Global/Macro news proxy for {target} on {curr_date}\n\n{google}"
         )
     return (
-        f"Fallback used because OpenAI web-search returned empty output.\n"
-        f"No sufficiently relevant global-news items were found via fallback sources for {target} ({curr_date})."
+        f"{reason}\n"
+        f"No sufficiently relevant global-news items were found via dated sources for {target} ({curr_date})."
     )
 
 
-def _build_empty_openai_stock_news_fallback(ticker: str, curr_date: str) -> str:
+def _build_empty_openai_stock_news_fallback(
+    ticker: str, curr_date: str, reason: str = EMPTY_SEARCH_REASON
+) -> str:
     snippets: List[Tuple[str, str]] = []
 
     google = get_google_news(query=ticker, curr_date=curr_date, look_back_days=7)
@@ -97,11 +107,11 @@ def _build_empty_openai_stock_news_fallback(ticker: str, curr_date: str) -> str:
 
     if not snippets:
         return (
-            f"Fallback used because OpenAI web-search returned empty output.\n"
-            f"No fallback stock-news items found for {ticker} as of {curr_date}."
+            f"{reason}\n"
+            f"No dated stock-news items found for {ticker} as of {curr_date}."
         )
 
-    merged = [f"Fallback used because OpenAI web-search returned empty output for {ticker}.", ""]
+    merged = [f"{reason} ({ticker})", ""]
     for label, text in snippets:
         merged.append(f"## {label}")
         merged.append(text)
@@ -109,7 +119,9 @@ def _build_empty_openai_stock_news_fallback(ticker: str, curr_date: str) -> str:
     return "\n".join(merged).strip()
 
 
-def _build_empty_openai_fundamentals_fallback(ticker: str, curr_date: str) -> str:
+def _build_empty_openai_fundamentals_fallback(
+    ticker: str, curr_date: str, reason: str = EMPTY_SEARCH_REASON
+) -> str:
     insider_sent = get_finnhub_company_insider_sentiment(ticker, curr_date, 30)
     insider_tx = get_finnhub_company_insider_transactions(ticker, curr_date, 30)
     finnhub_news = get_finnhub_news(ticker, curr_date, 5)
@@ -119,7 +131,7 @@ def _build_empty_openai_fundamentals_fallback(ticker: str, curr_date: str) -> st
     news_text = _cap_headline_sections(finnhub_news, max_sections=6, max_chars=2800)
 
     return (
-        f"Fallback used because OpenAI fundamentals web-search returned empty output for {ticker} ({curr_date}).\n\n"
+        f"{reason} ({ticker}, {curr_date})\n\n"
         f"## Insider Sentiment Snapshot\n{sent_text}\n\n"
         f"## Insider Transactions Snapshot\n{tx_text}\n\n"
         f"## Recent Company News Snapshot\n{news_text}"
@@ -1131,6 +1143,14 @@ def get_stockstats_indicator_history(
 
 
 def get_stock_news_openai(ticker, curr_date):
+    # Live web search cannot be constrained to a past window, so a
+    # historical analysis composes from the dated sources instead.
+    reason = bounded_reason(curr_date)
+    if reason:
+        return _build_empty_openai_stock_news_fallback(
+            ticker=ticker, curr_date=curr_date, reason=reason
+        )
+
     # Get API key from environment variables or config
     api_key = get_api_key("openai_api_key", "OPENAI_API_KEY")
     if not api_key:
@@ -1246,6 +1266,12 @@ def get_stock_news_openai(ticker, curr_date):
 
 
 def get_global_news_openai(curr_date, ticker_context=None):
+    reason = bounded_reason(curr_date)
+    if reason:
+        return _build_empty_openai_global_fallback(
+            curr_date=curr_date, ticker_context=ticker_context, reason=reason
+        )
+
     # Get API key from environment variables or config
     api_key = get_api_key("openai_api_key", "OPENAI_API_KEY")
     if not api_key:
@@ -1374,6 +1400,12 @@ def get_global_news_openai(curr_date, ticker_context=None):
 
 
 def get_fundamentals_openai(ticker, curr_date):
+    reason = bounded_reason(curr_date)
+    if reason:
+        return _build_empty_openai_fundamentals_fallback(
+            ticker=ticker, curr_date=curr_date, reason=reason
+        )
+
     # Get API key from environment variables or config
     api_key = get_api_key("openai_api_key", "OPENAI_API_KEY")
     if not api_key:

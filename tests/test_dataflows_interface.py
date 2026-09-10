@@ -341,7 +341,7 @@ class EmptySearchFallbackTests(unittest.TestCase):
         ):
             text = interface._build_empty_openai_global_fallback("2026-09-09")
 
-        self.assertIn("Fallback used because OpenAI", text)
+        self.assertIn("OpenAI web-search returned empty output", text)
         self.assertIn("A headline", text)
 
     def test_the_global_fallback_says_so_when_nothing_is_found(self):
@@ -372,7 +372,7 @@ class EmptySearchFallbackTests(unittest.TestCase):
                 "NVDA", "2026-09-09"
             )
 
-        self.assertIn("No fallback stock-news items", text)
+        self.assertIn("No dated stock-news items", text)
 
     def test_the_fundamentals_fallback_covers_each_snapshot(self):
         with mock.patch.object(

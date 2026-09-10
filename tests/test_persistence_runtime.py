@@ -97,8 +97,18 @@ def test_pipeline_records_lifecycle_and_events_through_unit_of_work(
         assert [event.aggregate_version for event in events] == list(
             range(1, len(events) + 1)
         )
-        assert events[0].event_type == "intent_received"
-        assert events[-1].event_type == "execution_completed"
+        event_types = [event.event_type for event in events]
+        assert event_types[0] == "intent_received"
+        assert "execution_completed" in event_types
+        # The gate sequence is journalled after the outcome it explains, so
+        # the workbench can read one event and get the whole waterfall.
+        assert event_types[-1] == "gate_ledger_recorded"
+        ledger = events[-1].payload["gate_ledger"]
+        assert ledger["blocked_by"] is None
+        assert [gate["name"] for gate in ledger["gates"]][:2] == [
+            "execution_quarantine",
+            "intent",
+        ]
 
 
 def test_transition_rolls_back_when_event_append_fails(

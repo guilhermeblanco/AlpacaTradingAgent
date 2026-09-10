@@ -4,6 +4,7 @@ webui/components/decision_panel.py - Decision summary panel for the web UI.
 
 import dash_bootstrap_components as dbc
 from dash import dcc, html
+from webui.config.tokens import PALETTE
 
 def create_decision_panel():
     """Create the decision summary panel for the web UI."""
@@ -24,7 +25,7 @@ def create_decision_panel():
                     "border": "1px solid #334155",
                     "borderRadius": "5px",
                     "padding": "15px",
-                    "backgroundColor": "#1E293B"
+                    "backgroundColor": PALETTE["surface"]
                 }
             )
         ]),

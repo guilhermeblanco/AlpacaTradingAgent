@@ -76,7 +76,7 @@ def _status_cards(status):
                         className="p-2",
                     ),
                     style={
-                        "backgroundColor": COLORS.get("card", "#1f2937"),
+                        "backgroundColor": COLORS["card"],
                         "border": f"1px solid {color}",
                     },
                 ),

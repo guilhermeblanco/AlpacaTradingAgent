@@ -63,8 +63,15 @@ class ExecutionPipelineTests(unittest.TestCase):
             self.assertEqual(result["gateway"], "dry-run")
             self.assertTrue(result["actions"][0]["simulated"])
             records = [json.loads(line) for line in Path(result["journal_path"]).read_text().splitlines()]
-            self.assertEqual(records[0]["event_type"], "intent_received")
-            self.assertEqual(records[-1]["event_type"], "execution_completed")
+            events = [record["event_type"] for record in records]
+            self.assertEqual(events[0], "intent_received")
+            self.assertIn("execution_completed", events)
+            # The gate sequence is journalled after the outcome it explains.
+            self.assertEqual(events[-1], "gate_ledger_recorded")
+            self.assertLess(
+                events.index("execution_completed"),
+                events.index("gate_ledger_recorded"),
+            )
 
     def test_broker_outage_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp:

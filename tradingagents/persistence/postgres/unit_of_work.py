@@ -19,6 +19,7 @@ from .repositories import (
     PostgresOperationalRepository,
     PostgresPortfolioReservationRepository,
     PostgresReconciliationQueue,
+    PostgresWorkbenchRepository,
 )
 
 
@@ -50,6 +51,7 @@ class PostgresUnitOfWork:
         self.operations = PostgresOperationalRepository(self.session)
         self.account_snapshots = PostgresAccountSnapshotRepository(self.session)
         self.decision_explorer = PostgresDecisionExplorerRepository(self.session)
+        self.workbench = PostgresWorkbenchRepository(self.session)
         return self
 
     def __exit__(

@@ -5,6 +5,8 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
+from .gates import GateLedger
+
 
 class PlanAction(str, Enum):
     BUY = "BUY"
@@ -52,4 +54,5 @@ class ExecutionResult(BaseModel):
     error: Optional[str] = None
     safety_blocked: bool = False
     submission_uncertain: bool = False
+    gate_ledger: Optional[GateLedger] = None
     journal_path: Optional[str] = None

@@ -954,24 +954,27 @@ def _render_evidence_scoreboard(
     return "\n".join(lines).strip()
 
 
-def _render_decision_claim_matrix(
+def build_decision_claim_matrix(
     context: Dict[str, Any],
     config: Dict[str, Any] | None = None,
-) -> str:
+) -> Dict[str, Any]:
+    """The claim matrix as data rather than as prompt text.
+
+    The managers receive this rendered to a string, which meant the scored
+    evidence the whole decision rests on was only ever visible inside a
+    prompt. This is the same content, structured, so it can be persisted
+    and charted; `_render_decision_claim_matrix` renders from it, which
+    keeps the two from drifting apart.
+    """
     cfg = _get_context_config(config)
     max_points = int(cfg["report_context_compact_points_per_report"])
     point_chars = int(cfg["report_context_compact_point_chars"])
-
-    lines: List[str] = []
-    lines.append("Decision Claim Matrix (evidence-scored):")
-    lines.append(_render_evidence_scoreboard(context, config=config))
-    lines.append("")
-    lines.append("Claims by source:")
 
     claims_by_report: Dict[str, List[Dict[str, Any]]] = {}
     for claim in context.get("evidence_claims", []):
         claims_by_report.setdefault(claim["source_report"], []).append(claim)
 
+    sources: List[Dict[str, Any]] = []
     for report_key, _ in REPORT_SPECS:
         report_meta = context.get("reports", {}).get(report_key)
         if not report_meta:
@@ -982,34 +985,123 @@ def _render_decision_claim_matrix(
             key=lambda item: item.get("confidence", 0.0),
             reverse=True,
         )[:max_points]
+
         if report_claims:
             direction_scores = {"Bullish": 0.0, "Bearish": 0.0, "Mixed": 0.0}
-            rendered_points: List[str] = []
+            rendered_claims: List[Dict[str, Any]] = []
             for claim in report_claims:
                 direction = str(claim.get("direction", "mixed")).title()
                 direction_scores[direction] += float(claim.get("confidence", 0.0))
-                rendered_points.append(_render_claim_line(claim, point_chars))
-
-            dominant = max(direction_scores, key=direction_scores.get)
-            joined_points = " | ".join(rendered_points)
-            lines.append(f"- {report_meta['label']} [{dominant}]: {joined_points}")
+                scores = claim.get("scores", {})
+                rendered_claims.append(
+                    {
+                        "claim_id": claim["claim_id"],
+                        "claim": _truncate(claim.get("claim", ""), point_chars),
+                        "direction": str(claim.get("direction", "mixed")),
+                        "confidence": float(claim.get("confidence", 0.0)),
+                        "freshness": float(scores.get("freshness", 0.0)),
+                        "numeric_support": float(scores.get("numeric_support", 0.0)),
+                        "contradiction": float(scores.get("contradiction", 0.0)),
+                    }
+                )
+            sources.append(
+                {
+                    "report_key": report_key,
+                    "label": report_meta["label"],
+                    "dominant_direction": max(
+                        direction_scores, key=direction_scores.get
+                    ),
+                    "direction_scores": direction_scores,
+                    "claims": rendered_claims,
+                    "fallback_points": [],
+                }
+            )
             continue
 
+        # No claim survived scoring: fall back to the report's own coverage
+        # points, classified by keyword, so a source is never silently absent.
         points = report_meta.get("coverage_points", [])[:max_points]
         if not points:
-            lines.append(f"- {report_meta['label']}: No usable claims.")
+            sources.append(
+                {
+                    "report_key": report_key,
+                    "label": report_meta["label"],
+                    "dominant_direction": None,
+                    "direction_scores": {},
+                    "claims": [],
+                    "fallback_points": [],
+                }
+            )
             continue
 
         signal_votes = {"Bullish": 0, "Bearish": 0, "Mixed": 0}
-        rendered_points: List[str] = []
+        fallback_points: List[str] = []
         for point in points:
-            signal = _classify_signal(point)
-            signal_votes[signal] += 1
-            rendered_points.append(_truncate(point, point_chars))
+            signal_votes[_classify_signal(point)] += 1
+            fallback_points.append(_truncate(point, point_chars))
+        sources.append(
+            {
+                "report_key": report_key,
+                "label": report_meta["label"],
+                "dominant_direction": max(signal_votes, key=signal_votes.get),
+                "direction_scores": {
+                    key: float(value) for key, value in signal_votes.items()
+                },
+                "claims": [],
+                "fallback_points": fallback_points,
+            }
+        )
 
-        dominant = max(signal_votes, key=signal_votes.get)
-        joined_points = " | ".join(rendered_points)
-        lines.append(f"- {report_meta['label']} [{dominant}]: {joined_points}")
+    scoreboard = context.get("evidence_scoreboard", {}) or {}
+    stats = context.get("stats", {}) or {}
+    return {
+        "schema_version": "1.0",
+        "scoreboard": scoreboard,
+        "sources": sources,
+        "contradictions": scoreboard.get("major_contradictions", []),
+        "totals": {
+            "claims": int(stats.get("total_claims", 0) or 0),
+            "bullish": int(stats.get("bullish_claims", 0) or 0),
+            "bearish": int(stats.get("bearish_claims", 0) or 0),
+            "mixed": int(stats.get("mixed_claims", 0) or 0),
+        },
+    }
+
+
+def _render_decision_claim_matrix(
+    context: Dict[str, Any],
+    config: Dict[str, Any] | None = None,
+) -> str:
+    matrix = build_decision_claim_matrix(context, config=config)
+    claim_chars = int(
+        _get_context_config(config)["report_context_compact_point_chars"]
+    )
+
+    lines: List[str] = []
+    lines.append("Decision Claim Matrix (evidence-scored):")
+    lines.append(_render_evidence_scoreboard(context, config=config))
+    lines.append("")
+    lines.append("Claims by source:")
+
+    for source in matrix["sources"]:
+        label = source["label"]
+        dominant = source["dominant_direction"]
+        if source["claims"]:
+            rendered = " | ".join(
+                f"[{claim['claim_id']} {claim['direction']} "
+                f"score={claim['confidence']:.2f} fresh={claim['freshness']:.2f} "
+                f"numeric={claim['numeric_support']:.2f} "
+                f"contradiction={claim['contradiction']:.2f}] "
+                f"{_truncate(claim['claim'], claim_chars)}"
+                for claim in source["claims"]
+            )
+            lines.append(f"- {label} [{dominant}]: {rendered}")
+        elif source["fallback_points"]:
+            lines.append(
+                f"- {label} [{dominant}]: " + " | ".join(source["fallback_points"])
+            )
+        else:
+            lines.append(f"- {label}: No usable claims.")
 
     return "\n".join(lines).strip()
 
@@ -1611,6 +1703,9 @@ def get_agent_context_bundle(
         "evidence_scoreboard": evidence_scoreboard,
         "evidence_claims": context.get("evidence_claims", []),
         "evidence_scoreboard_data": context.get("evidence_scoreboard", {}),
+        "decision_claim_matrix_data": build_decision_claim_matrix(
+            context, config=config
+        ),
         "memory_context": memory_context,
         "all_reports_text": _render_all_reports_text(state, config=config),
         "selected_chunk_ids": [chunk["id"] for chunk in selected_chunks],

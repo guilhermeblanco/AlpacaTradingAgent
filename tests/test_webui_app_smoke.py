@@ -179,3 +179,19 @@ def test_the_module_level_app_is_built_lazily() -> None:
 
     with pytest.raises(AttributeError):
         app_dash.no_such_thing
+
+
+def test_clientside_callbacks_are_attached_to_the_app(dash_app) -> None:
+    """Registered through `app.clientside_callback`, not the module-level
+    function: the global registry the latter writes into is drained when the
+    Dash object is constructed, which happens before callbacks are
+    registered, so anything added afterwards is silently never attached.
+    """
+    attached = {
+        spec["output"]
+        for spec in getattr(dash_app, "_callback_list", [])
+        if spec.get("clientside_function")
+    }
+
+    assert "pulse-listener.children" in attached
+    assert "board-scroll.id" in attached

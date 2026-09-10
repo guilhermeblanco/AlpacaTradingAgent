@@ -25,6 +25,13 @@ def create_app():
     # Initialize Flask server
     server = Flask(__name__)
 
+    # One long-lived stream per tab replaces per-callback polling; see
+    # webui/utils/pulse.py.
+    from webui.utils.pulse import register_pulse_route
+    from webui.utils.state import app_state
+
+    register_pulse_route(server, app_state)
+
     # Initialize Dash app with Bootstrap
     app = dash.Dash(
         __name__,
