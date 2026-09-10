@@ -10,15 +10,22 @@ an exception.
 from __future__ import annotations
 
 import unittest
+from datetime import date
 from types import SimpleNamespace
 from unittest import mock
 
 from tradingagents.dataflows import interface
 
+#: The date every case here analyses. It has to read as *today*, because the
+#: hosted search stands itself down for a past date — see
+#: tradingagents/dataflows/search_window.py. The fixture pins the clock to it
+#: rather than leaving these tests to pass only on the day they were written.
+TODAY = "2026-09-09"
+
 TOOLS = (
-    ("get_stock_news_openai", ("NVDA", "2026-09-09")),
-    ("get_global_news_openai", ("2026-09-09",)),
-    ("get_fundamentals_openai", ("NVDA", "2026-09-09")),
+    ("get_stock_news_openai", ("NVDA", TODAY)),
+    ("get_global_news_openai", (TODAY,)),
+    ("get_fundamentals_openai", ("NVDA", TODAY)),
 )
 
 
@@ -60,6 +67,17 @@ class WebSearchFixture(unittest.TestCase):
     MODEL = "gpt-5.4-nano"
 
     def setUp(self):
+        # Pin the clock. Every case below analyses TODAY and expects the
+        # hosted search to run; left to the real calendar these tests pass on
+        # the day they are written and, from the next morning, exercise the
+        # date-bounded path instead while claiming to test the live one.
+        patcher = mock.patch(
+            "tradingagents.dataflows.search_window.market_today",
+            lambda now=None: date.fromisoformat(TODAY),
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
         # The empty/failed paths build a briefing out of the other news
         # sources; those have their own tests below, and reaching them here
         # would drag a rate-limit backoff into every case.
@@ -150,7 +168,7 @@ class AnswerTests(WebSearchFixture):
             answer, _client = self._run(name, args, client=Client(""))
 
             self.assertTrue(answer.strip(), name)
-            self.assertIn("2026-09-09", answer, name)
+            self.assertIn(TODAY, answer, name)
 
     def test_a_failed_call_reports_the_cause_and_still_returns_a_briefing(self):
         for name, args in TOOLS:
@@ -159,14 +177,14 @@ class AnswerTests(WebSearchFixture):
             )
 
             self.assertIn("rate limited", answer, name)
-            self.assertIn("2026-09-09", answer, name)
+            self.assertIn(TODAY, answer, name)
 
     def test_a_trailing_chat_offer_is_stripped(self):
         """The hosted search sometimes ends with an offer to continue, which
         would be read as analysis."""
         answer, _client = self._run(
             "get_stock_news_openai",
-            ("NVDA", "2026-09-09"),
+            ("NVDA", TODAY),
             client=Client("Sentiment is mixed.\n\nWould you like me to dig deeper?"),
         )
 
@@ -190,7 +208,7 @@ class RequestShapeTests(WebSearchFixture):
     def test_a_non_reasoning_responses_model_uses_a_system_role(self):
         params = self._params(
             "get_stock_news_openai",
-            ("NVDA", "2026-09-09"),
+            ("NVDA", TODAY),
             config={"quick_think_llm": "gpt-4.1-mini"},
         )
 
@@ -205,7 +223,7 @@ class RequestShapeTests(WebSearchFixture):
     def test_the_output_budget_is_configurable(self):
         params = self._params(
             "get_stock_news_openai",
-            ("NVDA", "2026-09-09"),
+            ("NVDA", TODAY),
             config={"stock_news_max_output_tokens": 321},
         )
 
@@ -225,7 +243,7 @@ class RequestShapeTests(WebSearchFixture):
     def test_the_fast_profile_narrows_the_search_context(self):
         params = self._params(
             "get_stock_news_openai",
-            ("NVDA", "2026-09-09"),
+            ("NVDA", TODAY),
             config={"stock_news_fast_profile": True},
         )
 
@@ -234,7 +252,7 @@ class RequestShapeTests(WebSearchFixture):
     def test_turning_the_fast_profile_off_widens_it(self):
         params = self._params(
             "get_stock_news_openai",
-            ("NVDA", "2026-09-09"),
+            ("NVDA", TODAY),
             config={"stock_news_fast_profile": False, "research_depth": "Deep"},
         )
 
@@ -259,7 +277,7 @@ class RequestShapeTests(WebSearchFixture):
                 self.responses = Responses()
 
         answer, _client = self._run(
-            "get_stock_news_openai", ("NVDA", "2026-09-09"), client=Rejecting()
+            "get_stock_news_openai", ("NVDA", TODAY), client=Rejecting()
         )
 
         self.assertEqual(answer, "ok")
@@ -281,7 +299,7 @@ class RequestShapeTests(WebSearchFixture):
                 self.responses = Responses()
 
         answer, _client = self._run(
-            "get_stock_news_openai", ("NVDA", "2026-09-09"), client=Failing()
+            "get_stock_news_openai", ("NVDA", TODAY), client=Failing()
         )
 
         self.assertEqual(len(attempts), 1)
@@ -294,7 +312,7 @@ class PromptContentTests(WebSearchFixture):
         return client.responses_calls[0]["input"][1]["content"][0]["text"]
 
     def test_the_social_prompt_names_the_ticker_in_both_spellings(self):
-        text = self._user_text("get_stock_news_openai", ("BTC/USD", "2026-09-09"))
+        text = self._user_text("get_stock_news_openai", ("BTC/USD", TODAY))
 
         self.assertIn("BTC/USD", text)
         self.assertIn("BTCUSD", text)
@@ -302,12 +320,12 @@ class PromptContentTests(WebSearchFixture):
     def test_the_lookback_window_widens_with_research_depth(self):
         shallow = self._user_text(
             "get_stock_news_openai",
-            ("NVDA", "2026-09-09"),
+            ("NVDA", TODAY),
             config={"research_depth": "Shallow"},
         )
         deep = self._user_text(
             "get_stock_news_openai",
-            ("NVDA", "2026-09-09"),
+            ("NVDA", TODAY),
             config={"research_depth": "Deep"},
         )
 
@@ -315,17 +333,17 @@ class PromptContentTests(WebSearchFixture):
         self.assertIn("2026-08-26", deep)
 
     def test_the_global_prompt_targets_markets_when_no_symbol_is_given(self):
-        text = self._user_text("get_global_news_openai", ("2026-09-09",))
+        text = self._user_text("get_global_news_openai", (TODAY,))
 
         self.assertIn("markets", text.lower())
 
     def test_a_crypto_context_is_recognized_by_the_global_prompt(self):
-        text = self._user_text("get_global_news_openai", ("2026-09-09", "BTC/USD"))
+        text = self._user_text("get_global_news_openai", (TODAY, "BTC/USD"))
 
         self.assertIn("BTC/USD", text)
 
     def test_the_fundamentals_prompt_names_the_ticker(self):
-        text = self._user_text("get_fundamentals_openai", ("NVDA", "2026-09-09"))
+        text = self._user_text("get_fundamentals_openai", ("NVDA", TODAY))
 
         self.assertIn("NVDA", text)
 
@@ -411,7 +429,7 @@ class FallbackBriefingTests(unittest.TestCase):
     def test_the_stock_news_briefing_merges_both_sources(self):
         self._sources()
 
-        briefing = interface._build_empty_openai_stock_news_fallback("NVDA", "2026-09-09")
+        briefing = interface._build_empty_openai_stock_news_fallback("NVDA", TODAY)
 
         self.assertIn("Google News fallback", briefing)
         self.assertIn("Finnhub fallback", briefing)
@@ -420,14 +438,14 @@ class FallbackBriefingTests(unittest.TestCase):
     def test_the_stock_news_briefing_says_so_when_nothing_was_found(self):
         self._sources(get_google_news="", get_finnhub_news="")
 
-        briefing = interface._build_empty_openai_stock_news_fallback("NVDA", "2026-09-09")
+        briefing = interface._build_empty_openai_stock_news_fallback("NVDA", TODAY)
 
         self.assertIn("No dated stock-news items found for NVDA", briefing)
 
     def test_the_global_briefing_uses_google_news_as_a_macro_proxy(self):
         self._sources()
 
-        briefing = interface._build_empty_openai_global_fallback("2026-09-09")
+        briefing = interface._build_empty_openai_global_fallback(TODAY)
 
         self.assertIn("Global/Macro news proxy for global markets", briefing)
         self.assertIn("Google headline", briefing)
@@ -435,14 +453,14 @@ class FallbackBriefingTests(unittest.TestCase):
     def test_the_global_briefing_names_the_symbol_when_one_is_given(self):
         self._sources()
 
-        briefing = interface._build_empty_openai_global_fallback("2026-09-09", "BTC/USD")
+        briefing = interface._build_empty_openai_global_fallback(TODAY, "BTC/USD")
 
         self.assertIn("BTC/USD", briefing)
 
     def test_the_global_briefing_says_so_when_nothing_was_found(self):
         self._sources(get_google_news="")
 
-        briefing = interface._build_empty_openai_global_fallback("2026-09-09")
+        briefing = interface._build_empty_openai_global_fallback(TODAY)
 
         self.assertIn("No sufficiently relevant global-news items", briefing)
 
@@ -450,7 +468,7 @@ class FallbackBriefingTests(unittest.TestCase):
         self._sources()
 
         briefing = interface._build_empty_openai_fundamentals_fallback(
-            "NVDA", "2026-09-09"
+            "NVDA", TODAY
         )
 
         self.assertIn("Insider Sentiment Snapshot", briefing)
