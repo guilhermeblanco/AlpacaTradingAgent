@@ -362,6 +362,39 @@ def _ids_of(component, found=None):
     return found
 
 
+
+class UniqueIdTests(unittest.TestCase):
+    def test_no_two_components_answer_to_one_id(self):
+        """Everything is mounted at once — stage panes, configuration
+        pages, four modals — so a panel placed in two homes is two
+        components with one id, and Dash resolves that to whichever it
+        happened to find. It is silent, and it is the failure this whole
+        arrangement invites."""
+        from collections import Counter
+
+        from webui.layout import create_main_layout
+
+        found: list[str] = []
+
+        def walk(component):
+            identifier = getattr(component, "id", None)
+            if isinstance(identifier, str):
+                found.append(identifier)
+            elif isinstance(identifier, dict):
+                found.append(repr(sorted(identifier.items())))
+            children = getattr(component, "children", None)
+            if isinstance(children, (list, tuple)):
+                for child in children:
+                    walk(child)
+            elif children is not None:
+                walk(children)
+
+        walk(create_main_layout())
+        duplicates = {key: count for key, count in Counter(found).items() if count > 1}
+
+        self.assertEqual(duplicates, {})
+
+
 if __name__ == "__main__":
     unittest.main()
 
