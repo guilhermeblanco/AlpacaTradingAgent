@@ -17,7 +17,10 @@ For the Proxmox LXC script that builds all of it on a node, see
 | `autonomous-worker` | `tradingagents.orchestration.autonomous_worker` | Opt-in. The only service that can place an order with nobody watching. |
 | `postgres` | — | Opt-in. Only when the app should own its database. |
 
-They share **one image**, built once from `Containerfile`. That is the point
+They share **one image**, built once from `Containerfile`. Dependencies are
+installed from `pyproject.toml` before the source is copied, so rebuilding
+after a code change reuses the expensive layer rather than recompiling
+every wheel. That is the point
 rather than an economy: a decision's record is written by the web process,
 resolved by the evaluation worker, and reconciled by a third. If those drift
 apart by a deploy, the record stops joining up. One image with several entry

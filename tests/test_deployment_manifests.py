@@ -174,13 +174,28 @@ class ComposeFileTests(unittest.TestCase):
                     f"{image} would resolve through an alias file",
                 )
 
-    def test_the_web_healthcheck_and_the_image_agree_on_the_path(self):
+    def test_the_web_probe_hits_the_path_the_app_serves(self):
         from webui.utils.health import HEALTH_PATH
 
         probe = " ".join(self.base["services"]["web"]["healthcheck"]["test"])
 
         self.assertIn(HEALTH_PATH, probe)
-        self.assertIn(HEALTH_PATH, CONTAINERFILE.read_text())
+
+    def test_the_image_carries_no_healthcheck_of_its_own(self):
+        """podman builds OCI images, which have no healthcheck field, so a
+        HEALTHCHECK instruction is dropped with a warning nobody reads in
+        the middle of a long build. The compose file is where the probes
+        live and where they actually apply."""
+        instructions = [
+            line.strip()
+            for line in CONTAINERFILE.read_text().splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+
+        self.assertFalse(
+            [line for line in instructions if line.startswith("HEALTHCHECK")],
+            "a HEALTHCHECK here is silently ignored under OCI format",
+        )
 
     def test_the_workers_are_probed_through_the_control_plane(self):
         """A wedged loop is still a live process; the heartbeat is the only
@@ -251,6 +266,83 @@ class BuildContextTests(unittest.TestCase):
     def test_the_virtualenv_and_caches_stay_out(self):
         for rule in (".venv", "**/__pycache__", ".git"):
             self.assertIn(rule, self.rules)
+
+
+class BuildCacheTests(unittest.TestCase):
+    """The expensive layer has to outlive a source change.
+
+    `COPY . .` before `pip install ".[app]"` puts every dependency behind a
+    layer that any edit invalidates, so a redeploy touching one callback
+    recompiled chromadb and backtrader and took the same forty minutes as
+    the first build. The ordering is the fix, and it is easy to undo by
+    accident.
+    """
+
+    def setUp(self):
+        # Instructions only. The comment above the dependency layer quotes
+        # `COPY . .` while explaining why it must not come first, and an
+        # ordering test that matches its own explanation is worse than no
+        # test at all.
+        self.lines = [
+            line.strip()
+            for line in CONTAINERFILE.read_text().splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+
+    def _index(self, needle):
+        for position, line in enumerate(self.lines):
+            if needle in line:
+                return position
+        self.fail(f"{needle!r} is not in the Containerfile")
+
+    def test_dependencies_are_installed_before_the_source_is_copied(self):
+        self.assertLess(
+            self._index("pip install -r /tmp/requirements.txt"),
+            self._index("COPY . ."),
+        )
+
+    def test_only_the_manifest_precedes_the_dependency_install(self):
+        """Copying anything else in first would put that file's changes in
+        front of the expensive layer too."""
+        install = self._index("pip install -r /tmp/requirements.txt")
+        copies = [
+            line for line in self.lines[:install] if line.startswith("COPY ")
+        ]
+
+        self.assertEqual(copies, ["COPY pyproject.toml ./"])
+
+    def test_the_specs_are_read_from_pyproject_rather_than_duplicated(self):
+        """A requirements file beside pyproject.toml is a second list to
+        keep in step with the first."""
+        self.assertIn(
+            "optional-dependencies", " ".join(self.lines)
+        )
+
+    def test_the_extraction_matches_what_pip_would_resolve(self):
+        """The one-liner in the Containerfile, run against this repo."""
+        import subprocess
+        import tomllib
+
+        command = next(
+            line for line in self.lines if "optional-dependencies" in line
+        )
+        snippet = command.split('python -c "', 1)[1].rsplit('"', 1)[0]
+
+        extracted = subprocess.run(
+            ["python3", "-c", snippet],
+            capture_output=True,
+            text=True,
+            cwd=REPO,
+            check=True,
+        ).stdout.splitlines()
+
+        project = tomllib.loads((REPO / "pyproject.toml").read_text())["project"]
+        expected = project.get("dependencies", []) + project["optional-dependencies"]["app"]
+
+        self.assertEqual(extracted, expected)
+
+    def test_the_source_install_does_not_re_resolve_the_graph(self):
+        self.assertIn("pip install --no-deps .", " ".join(self.lines))
 
 
 class ProxmoxScriptTests(unittest.TestCase):
@@ -364,6 +456,46 @@ class ProxmoxScriptTests(unittest.TestCase):
 
         self.assertIn("PGCTID", script)
         self.assertIn("the variable is PG_CTID", script)
+
+    def test_the_topology_is_remembered_between_runs(self):
+        """Retyping four flags correctly on every redeploy is a mistake
+        waiting to happen, and the one that matters — a wrong CTID — builds
+        a second container instead of updating the first."""
+        self.assertIn("DEPLOY_CONF", self.script)
+        self.assertIn('[ -r "$DEPLOY_CONF" ] && . "$DEPLOY_CONF"', self.script)
+
+    def _saved_config(self):
+        """The heredoc body the script writes, and only that."""
+        body = self.script.split('cat >"$DEPLOY_CONF" <<CONF\n', 1)[1]
+        return body.split("\nCONF\n", 1)[0]
+
+    def test_the_saved_values_do_not_override_the_command_line(self):
+        """Saved in `${VAR:-value}` form, so the file fills in blanks
+        rather than overruling a decision made at the prompt."""
+        for line in self._saved_config().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            with self.subTest(line=line):
+                self.assertRegex(line, r'^[A-Z_]+="\\\$\{[A-Z_]+:-')
+
+    def test_no_credential_is_written_to_the_node(self):
+        """DATABASE_URL is already in the CT's .env; a second copy on the
+        node would be a database password in one more place for nothing."""
+        saved = self._saved_config()
+
+        for secret in ("DATABASE_URL", "POSTGRES_PASSWORD", "CT_PASSWORD",
+                       "INTEGRATION_VAULT_KEY"):
+            with self.subTest(secret=secret):
+                self.assertNotIn(secret, saved)
+
+    def test_it_is_saved_only_after_the_work_succeeded(self):
+        """A file claiming a topology that never came up is worse than no
+        file."""
+        self.assertLess(
+            self.script.index("building the application image"),
+            self.script.index('cat >"$DEPLOY_CONF"'),
+        )
 
     def test_a_credential_vault_key_is_generated(self):
         """Without one the setup wizard has nowhere to put a key, and every
