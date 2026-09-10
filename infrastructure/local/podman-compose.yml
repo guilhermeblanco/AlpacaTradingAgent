@@ -84,6 +84,12 @@ services:
       TRADINGAGENTS_STRICT_PORT: "1"
       TZ: "${TZ:-America/New_York}"
       PERSISTENCE_BACKEND: "${PERSISTENCE_BACKEND:-postgres}"
+      # Read from .env like the credentials it protects. Named here only so
+      # that `podman inspect tradingagents-web` shows whether the vault is
+      # available, which is the difference between the setup wizard being
+      # able to save anything and not.
+      INTEGRATION_VAULT_KEY: "${INTEGRATION_VAULT_KEY:-}"
+      INTEGRATION_VAULT_SCOPE: "${INTEGRATION_VAULT_SCOPE:-default}"
       TRADINGAGENTS_CACHE_DIR: /app/tradingagents/dataflows/data_cache
       TRADINGAGENTS_RESULTS_DIR: /app/eval_results
       TRADINGAGENTS_MEMORY_LOG_PATH: /app/.tradingagents/memory/trading_memory.md

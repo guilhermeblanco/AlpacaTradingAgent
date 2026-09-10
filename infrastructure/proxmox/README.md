@@ -178,9 +178,16 @@ to `broker`, check `ALPACA_USE_PAPER` on the same trip.
 - **The app has no login at all.** There is no authentication in front of the
   workbench, which is why it binds `0.0.0.0` *inside the LXC* and why the LXC
   is the access control. Do not forward 7860 past your LAN.
-- **Broker and model credentials** live in
-  `/opt/tradingagents/infrastructure/local/.env`, mode 0600, seeded from
-  `.env.example` on first run and never touched again.
+- **Broker and model credentials** can live in either place. The setup
+  wizard puts them in the **encrypted vault** — Fernet-encrypted rows in
+  PostgreSQL, rotatable from the UI without a redeploy. The script
+  generates `INTEGRATION_VAULT_KEY` on first run and never regenerates it,
+  because replacing it orphans everything stored under the old one. **Back
+  that key up with the database.**
+- **`/opt/tradingagents/infrastructure/local/.env`**, mode 0600, is the
+  other place: seeded from `.env.example` on first run and never touched
+  again by a re-run. Anything set here is read if the vault has no value
+  for it.
 
 ## Day two
 

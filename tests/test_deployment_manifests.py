@@ -365,6 +365,38 @@ class ProxmoxScriptTests(unittest.TestCase):
         self.assertIn("PGCTID", script)
         self.assertIn("the variable is PG_CTID", script)
 
+    def test_a_credential_vault_key_is_generated(self):
+        """Without one the setup wizard has nowhere to put a key, and every
+        credential has to be hand-edited into .env on the node — which is
+        the thing the wizard exists to avoid."""
+        self.assertIn("INTEGRATION_VAULT_KEY", self.script)
+        self.assertIn("head -c 32 /dev/urandom | base64", self.script)
+
+    def test_the_vault_key_is_never_regenerated(self):
+        """Replacing it silently orphans every credential already stored
+        under the old one."""
+        self.assertIn("credential vault key already present", self.script)
+
+    def test_the_generated_key_is_a_valid_fernet_key(self):
+        """A Fernet key is url-safe base64 of 32 random bytes. If that ever
+        stops being true, this generator produces something the vault
+        rejects at the moment somebody tries to save a credential."""
+        import base64
+        import subprocess
+
+        from cryptography.fernet import Fernet
+
+        generated = subprocess.run(
+            ["bash", "-c", "head -c 32 /dev/urandom | base64 | tr '+/' '-_'"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+
+        self.assertEqual(len(generated), 44)
+        self.assertEqual(len(base64.urlsafe_b64decode(generated)), 32)
+        Fernet(generated.encode())  # raises if malformed
+
     def test_the_database_script_never_drops_anything(self):
         script = (REPO / "infrastructure" / "proxmox" / "postgres-database.sh").read_text()
 
