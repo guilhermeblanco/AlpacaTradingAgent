@@ -5,7 +5,6 @@ webui/components/header.py - Header component for the web UI.
 import dash_bootstrap_components as dbc
 from dash import dcc, html
 
-from webui.components.api_config_modal import create_config_button
 
 
 def create_header():
@@ -21,7 +20,6 @@ def create_header():
                 ], xs=12, md=9, className="d-flex align-items-center"),
                 dbc.Col([
                     create_theme_toggle(),
-                    create_config_button(),
                 ], xs=12, md=3, className="app-header-actions d-flex align-items-center justify-content-end gap-2"),
             ], className="align-items-center g-3")
         ]),

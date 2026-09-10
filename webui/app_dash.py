@@ -42,7 +42,14 @@ def create_app():
         __name__,
         server=server,
         external_stylesheets=[
-            dbc.themes.DARKLY,
+            # Plain Bootstrap, not a Bootswatch theme.
+            #
+            # DARKLY is a *dark* stylesheet: it hardcodes light text on
+            # every Bootstrap component, so the light palette produced
+            # white text on a white page. Bootstrap 5.3 has colour modes
+            # of its own, driven by `data-bs-theme`, so the base can be
+            # neutral and follow the toggle like everything else.
+            dbc.themes.BOOTSTRAP,
             *APP_CONFIG["external_stylesheets"]
         ],
         suppress_callback_exceptions=APP_CONFIG["suppress_callback_exceptions"],

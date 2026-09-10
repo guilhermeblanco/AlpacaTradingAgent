@@ -138,36 +138,27 @@ def integrations_body(by_kind, unavailable=""):
     )
 
 
-def create_integrations_modal():
-    """The screen behind the header button."""
-    return dbc.Modal(
+def create_integrations_panel():
+    """A page under Configuration rather than a modal behind a button.
+
+    It was a modal reached from the top-right corner, which put the list
+    of what this deployment talks to somewhere other than where every
+    other setting lives. Configuration is one place; a second entry
+    point in the corner was one place too many.
+    """
+    return html.Div(
         [
-            dbc.ModalHeader(dbc.ModalTitle("Integrations")),
-            dbc.ModalBody(
-                [
-                    html.P(
-                        "What this deployment is configured to talk to. Several "
-                        "of a kind can exist — a paper broker and a live one, a "
-                        "production model key and an evaluation one — and the "
-                        "active one is what everything else uses.",
-                        className="text-muted small",
-                    ),
-                    html.Div(id="integrations-body"),
-                    html.Div(id="integrations-status", className="mt-2"),
-                    dcc.Interval(id="integrations-interval", interval=30_000),
-                ]
+            html.P(
+                "What this deployment is configured to talk to. Several of a "
+                "kind can exist — a paper broker and a live one, a production "
+                "model key and an evaluation one — and the active one is what "
+                "everything else uses.",
+                className="text-muted small",
             ),
-            dbc.ModalFooter(
-                dbc.Button(
-                    "Close", id="integrations-close", color="secondary", outline=True
-                )
-            ),
-            integration_editor_modal(),
-        ],
-        id="integrations-modal",
-        is_open=False,
-        size="lg",
-        scrollable=True,
+            html.Div(id="integrations-body"),
+            html.Div(id="integrations-status", className="mt-2"),
+            dcc.Interval(id="integrations-interval", interval=30_000),
+        ]
     )
 
 

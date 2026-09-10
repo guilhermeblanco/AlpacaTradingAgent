@@ -34,7 +34,10 @@ from webui.components.safety_panel import create_safety_panel
 from webui.components.cost_panel import create_cost_panel
 from webui.components.api_config_modal import create_api_config_modal
 from webui.components.configuration import create_configuration
-from webui.components.integrations_panel import create_integrations_modal
+from webui.components.integrations_panel import (
+    create_integrations_panel,
+    integration_editor_modal,
+)
 from webui.components.operations_panel import create_operations_panel
 from webui.components.decision_explorer import create_decision_explorer
 from webui.components.workbench import create_workbench_panel
@@ -117,6 +120,7 @@ PANEL_FACTORIES = {
     # of its own; see webui/config/navigation.py.
     "setup_panel": create_setup_panel,
     "platform_settings": create_platform_settings,
+    "integrations_panel": create_integrations_panel,
 }
 
 # The Configuration stage is built from the table above rather than from
@@ -230,7 +234,9 @@ def create_main_layout():
             *create_intervals(),
             *create_stores(),
             create_api_config_modal(),
-            create_integrations_modal(),
+            # Mounted globally rather than inside the page, so the
+            # editor is reachable from wherever an integration is listed.
+            integration_editor_modal(),
             create_setup_wizard(),
             *create_pulse_components(),
 

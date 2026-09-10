@@ -76,26 +76,14 @@ def _editor_form(role, provider_id, requirement=None):
 
 
 def register_integrations_callbacks(app):
-    # ── Opening the screen ───────────────────────────────────────────
-    @app.callback(
-        Output("integrations-modal", "is_open"),
-        Input("open-api-config-btn", "n_clicks"),
-        Input("integrations-close", "n_clicks"),
-        prevent_initial_call=True,
-    )
-    def toggle(open_clicks, close_clicks):
-        triggered = getattr(ctx, "triggered_id", None)
-        if triggered == "integrations-close":
-            return False
-        return bool(open_clicks)
-
+    # No opener: this is a page under Configuration now, not a modal
+    # behind a button in the corner. One place for settings, one way in.
     @app.callback(
         Output("integrations-body", "children"),
-        Input("integrations-modal", "is_open"),
         Input("integrations-interval", "n_intervals"),
         Input("integrations-status", "children"),
     )
-    def render(_open, _intervals, _status):
+    def render(_intervals, _status):
         by_kind, unavailable = _grouped()
         return integrations_body(by_kind, unavailable)
 

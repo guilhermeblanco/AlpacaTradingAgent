@@ -198,5 +198,57 @@ def _lightness(hex_value: str) -> float:
     return 0.299 * red + 0.587 * green + 0.114 * blue
 
 
+
+class BootstrapModeTests(unittest.TestCase):
+    """The bug that made every screen white on white.
+
+    `dbc.themes.DARKLY` is a Bootswatch *dark* stylesheet: it hardcodes
+    light text on every Bootstrap component. Switching the page
+    background to light left the text where it was. No amount of
+    tokenising our own CSS could have fixed it, because the colour was
+    not ours.
+    """
+
+    def _app(self):
+        from webui.app_dash import create_app
+
+        return create_app()
+
+    def test_the_base_stylesheet_is_not_a_dark_theme(self):
+        stylesheets = " ".join(
+            str(item) for item in self._app().config.external_stylesheets
+        )
+
+        for bootswatch_dark in ("darkly", "cyborg", "slate", "solar", "superhero"):
+            with self.subTest(theme=bootswatch_dark):
+                self.assertNotIn(bootswatch_dark, stylesheets.lower())
+
+    def test_bootstrap_is_loaded_at_a_version_with_colour_modes(self):
+        """`data-bs-theme` is Bootstrap 5.3. Below that there are no
+        colour modes to drive and the base would have to be swapped."""
+        stylesheets = " ".join(
+            str(item) for item in self._app().config.external_stylesheets
+        )
+
+        self.assertIn("bootstrap@5.3", stylesheets)
+
+    def test_the_toggle_tells_bootstrap_as_well_as_us(self):
+        """Two attributes, two systems: `data-theme` drives our tokens,
+        `data-bs-theme` drives Bootstrap's cards, inputs and tables."""
+        asset = (ROOT / "webui" / "assets" / "00_theme.js").read_text()
+
+        self.assertIn("data-theme", asset)
+        self.assertIn("data-bs-theme", asset)
+
+    def test_both_attributes_are_set_together(self):
+        """Setting one without the other is half a theme, which is the
+        state this bug was."""
+        asset = (ROOT / "webui" / "assets" / "00_theme.js").read_text()
+
+        self.assertEqual(asset.count("setAttribute('data-theme'"), 1)
+        self.assertEqual(asset.count("setAttribute('data-bs-theme'"), 1)
+        self.assertIn("function apply(", asset)
+
+
 if __name__ == "__main__":
     unittest.main()

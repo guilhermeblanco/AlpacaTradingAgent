@@ -24,16 +24,24 @@
         }
     }
 
-    var theme = remembered();
-    if (theme === 'dark' || theme === 'light') {
-        document.documentElement.setAttribute('data-theme', theme);
+    function apply(value) {
+        // Two attributes, because two systems are being told. `data-theme`
+        // drives our own tokens; `data-bs-theme` drives Bootstrap 5.3's
+        // colour modes, which is what makes its cards, inputs and tables
+        // follow along instead of staying whatever the stylesheet was
+        // built for.
+        document.documentElement.setAttribute('data-theme', value);
+        document.documentElement.setAttribute('data-bs-theme', value);
     }
+
+    var theme = remembered();
+    apply(theme === 'dark' ? 'dark' : 'light');
 
     // The toggle writes through this so the choice survives a reload and
     // is applied before paint on the next one.
     window.tradingagentsSetTheme = function (next) {
         var value = next === 'dark' ? 'dark' : 'light';
-        document.documentElement.setAttribute('data-theme', value);
+        apply(value);
         try {
             window.localStorage.setItem(STORAGE_KEY, value);
         } catch (error) {

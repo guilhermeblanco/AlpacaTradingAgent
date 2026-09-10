@@ -79,9 +79,19 @@ class PanelPlacementTests(unittest.TestCase):
                     )
                     seen[panel] = item.id
 
-    def test_the_run_form_is_on_the_first_stage(self):
-        """It is how work starts, not a setting."""
-        self.assertEqual(panel_stage("config_panel"), "dashboard")
+    def test_the_analysis_settings_are_a_configuration_page(self):
+        """The Dashboard shows an analysis happening; what an analysis
+        *is* — which symbols, which models, how deeply — is a setting,
+        and it was sitting on the Dashboard under its own heading."""
+        self.assertEqual(panel_stage("config_panel"), "configuration")
+
+    def test_the_dashboard_is_only_what_is_happening(self):
+        from webui.config.navigation import stage
+
+        self.assertEqual(
+            stage("dashboard").panels,
+            ("pipeline_board", "chart_panel", "status_panel"),
+        )
 
     def test_the_requirements_list_lives_under_configuration(self):
         self.assertEqual(panel_stage("setup_panel"), "configuration")
@@ -131,7 +141,7 @@ class MountedContentTests(unittest.TestCase):
         ids = self._ids(self._layout())
 
         for expected in (
-            "panel-config-panel",
+            "panel-pipeline-board",
             "panel-workbench",
             "panel-evaluation-panel",
             "panel-safety-panel",
@@ -139,6 +149,12 @@ class MountedContentTests(unittest.TestCase):
         ):
             with self.subTest(panel=expected):
                 self.assertIn(expected, ids)
+
+    def test_the_analysis_settings_are_mounted_too(self):
+        """They moved to a Configuration page, which is hidden with CSS
+        rather than built on demand — so every callback wired to the run
+        form still resolves."""
+        self.assertIn("ticker-input", self._ids(self._layout()))
 
     def test_the_vitals_strip_is_outside_the_tabs(self):
         """"Is this working right now?" should not require navigating."""
