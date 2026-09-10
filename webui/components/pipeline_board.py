@@ -12,7 +12,8 @@ import plotly.graph_objects as go
 from dash import dcc, html
 
 from tradingagents.workbench.tape import STAGES, StageState
-from webui.components.workbench import CHART_LAYOUT, STATE_COLORS, empty_figure
+from webui.components.workbench import STATE_COLORS
+from webui.config.figures import HEIGHT_SMALL, empty_figure, style
 from webui.config.constants import COLORS
 
 
@@ -32,8 +33,8 @@ def stage_distribution_figure(counts) -> go.Figure:
             textposition="outside",
         )
     )
-    figure.update_layout(**CHART_LAYOUT, height=200, title="Decisions by stage")
-    figure.update_yaxes(gridcolor=COLORS["border"], rangemode="tozero")
+    style(figure, title="Decisions by stage", height=HEIGHT_SMALL)
+    figure.update_yaxes(rangemode="tozero")
     return figure
 
 
@@ -53,8 +54,8 @@ def halt_breakdown_figure(counts) -> go.Figure:
             textposition="auto",
         )
     )
-    figure.update_layout(**CHART_LAYOUT, height=200, title="Stopped by")
-    figure.update_xaxes(gridcolor=COLORS["border"], rangemode="tozero", dtick=1)
+    style(figure, title="Stopped by", height=HEIGHT_SMALL)
+    figure.update_xaxes(rangemode="tozero", dtick=1)
     figure.update_yaxes(autorange="reversed")
     return figure
 
@@ -74,9 +75,8 @@ def throughput_figure(series) -> go.Figure:
             fillcolor="rgba(16, 185, 129, 0.10)",
         )
     )
-    figure.update_layout(**CHART_LAYOUT, height=200, title="Decisions per hour")
-    figure.update_yaxes(gridcolor=COLORS["border"], rangemode="tozero", dtick=1)
-    figure.update_xaxes(gridcolor=COLORS["border"])
+    style(figure, title="Decisions per hour", height=HEIGHT_SMALL)
+    figure.update_yaxes(rangemode="tozero", dtick=1)
     return figure
 
 
@@ -179,19 +179,19 @@ def create_pipeline_board():
                     dbc.Col(
                         dcc.Graph(
                             id="board-stage-distribution",
-                            config={"displayModeBar": False},
+                            config={"displayModeBar": False, "responsive": True},
                         ),
                         lg=5,
                     ),
                     dbc.Col(
                         dcc.Graph(
-                            id="board-halts", config={"displayModeBar": False}
+                            id="board-halts", config={"displayModeBar": False, "responsive": True}
                         ),
                         lg=3,
                     ),
                     dbc.Col(
                         dcc.Graph(
-                            id="board-throughput", config={"displayModeBar": False}
+                            id="board-throughput", config={"displayModeBar": False, "responsive": True}
                         ),
                         lg=4,
                     ),

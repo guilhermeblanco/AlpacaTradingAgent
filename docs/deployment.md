@@ -177,7 +177,17 @@ would not survive being public.
 
 ## Secrets
 
-`infrastructure/local/.env`, mode 0600, holds live broker and model
+Two places, and the difference matters.
+
+**The encrypted vault** is where the setup wizard puts what it collects:
+Fernet-encrypted rows in PostgreSQL, never returned to the browser,
+rotatable without a redeploy. It needs `INTEGRATION_VAULT_KEY`, which the
+Proxmox script generates on first run and never regenerates — replacing it
+would silently orphan every credential stored under the old one. **Back it
+up with the database.** It is not derived from anything and there is no
+recovery; lose it and every stored credential has to be re-entered.
+
+**`infrastructure/local/.env`**, mode 0600, holds live broker and model
 credentials. It is git-ignored, seeded once from `.env.example`, and the
 Proxmox script never overwrites an existing one — a re-run that quietly reset
 credentials to blanks is the worst possible behaviour for something advertised

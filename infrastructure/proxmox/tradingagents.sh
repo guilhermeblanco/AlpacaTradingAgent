@@ -375,6 +375,18 @@ if not replaced:
 path.write_text('\n'.join(out) + '\n')
 HELPER
 chmod 755 /usr/local/sbin/ta-set-env
+cat >/usr/local/sbin/ta-get-env <<'READER'
+#!/usr/bin/env python3
+'''Print one KEY's value from an env file, or nothing.'''
+import pathlib, sys
+
+path, key = pathlib.Path(sys.argv[1]), sys.argv[2]
+for line in path.read_text().splitlines():
+    if not line.lstrip().startswith('#') and line.split('=', 1)[0].strip() == key:
+        print(line.split('=', 1)[1].strip())
+        break
+READER
+chmod 755 /usr/local/sbin/ta-get-env
 "
 
 set_env_key() {
@@ -398,7 +410,35 @@ fi
 if [ "$POSTGRES_MODE" = "local" ] && [ -n "$POSTGRES_PASSWORD" ]; then
   set_env_key POSTGRES_PASSWORD "$POSTGRES_PASSWORD"
 fi
-pct exec "$CTID" -- chmod 600 "$ENV_FILE"
+
+# ── The credential vault key ─────────────────────────────────────────────────
+# Without this the setup wizard has nowhere to put a key, and every
+# credential has to be hand-edited into .env on the node — which is the
+# thing the wizard exists to avoid. Generated here because it is one line,
+# and the alternative is an operator hitting a dead end on their first
+# screen.
+#
+# A Fernet key is url-safe base64 of 32 random bytes, which is why this
+# does not need the application image: generating it before the build
+# rather than after keeps the .env complete in one pass.
+#
+# Never regenerated. The existing key is what makes the stored credentials
+# readable, and replacing it would silently orphan every one of them.
+if [ -z "$(pct exec "$CTID" -- /usr/local/sbin/ta-get-env "$ENV_FILE" INTEGRATION_VAULT_KEY 2>/dev/null)" ]; then
+  msg_info "generating a credential vault key"
+  VAULT_KEY="$(pct exec "$CTID" -- bash -c "head -c 32 /dev/urandom | base64 | tr '+/' '-_'" | tr -d '\r\n')"
+  if [ ${#VAULT_KEY} -eq 44 ]; then
+    set_env_key INTEGRATION_VAULT_KEY "$VAULT_KEY"
+    set_env_key INTEGRATION_VAULT_SCOPE "${INTEGRATION_VAULT_SCOPE:-default}"
+    msg_ok "vault key generated — back it up with the database; it cannot be recovered"
+  else
+    msg_warn "could not generate a vault key, so the setup wizard will have"
+    msg_warn "nowhere to store credentials. Add one to ${ENV_FILE} by hand:"
+    msg_warn "    INTEGRATION_VAULT_KEY=\$(python3 -c 'import base64,os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())')"
+  fi
+else
+  msg_ok "credential vault key already present — left alone"
+fi
 
 # ── Can podman actually build something? ─────────────────────────────────────
 # The smoke test this replaces started a container with `podman run`, which

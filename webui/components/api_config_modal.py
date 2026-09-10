@@ -246,11 +246,96 @@ def create_api_input_row(api_config):
     ], className="mb-3")
 
 
+#: The three groups, and what puts a credential in each. The readiness
+#: model decides; this only names the buckets.
+GROUP_TITLES = (
+    ("in-use", "Read by this configuration"),
+    ("providers", "Other model providers"),
+    ("unused", "Other services"),
+)
+
+
+def config_key_for(api_config) -> str:
+    """The name `get_api_key` knows this credential by.
+
+    Derived rather than tabulated: every entry's config key is its
+    environment variable lowercased, for all twenty of them. A second table
+    mapping one to the other is a second thing to keep in step.
+    """
+    return str(api_config["env_var"]).lower()
+
+
+def _group_for(api_config, in_use_keys, provider_keys):
+    """Which section a row belongs in."""
+    config_key = config_key_for(api_config)
+    if config_key in in_use_keys:
+        return "in-use"
+    if config_key in provider_keys:
+        return "providers"
+    return "unused"
+
+
+def grouped_credentials():
+    """The sixteen rows, sorted into what this deployment reads and what it
+    does not.
+
+    Every row is still rendered — the callbacks gather all sixteen inputs
+    by id, and more importantly a credential you cannot find is worse than
+    one you have to expand. But a flat list of sixteen equally-weighted
+    fields, twelve of them labelled "Required", tells an operator nothing
+    about which two to go and get, and that was the complaint.
+
+    Bootstrap's accordion collapses with CSS rather than unmounting, so a
+    collapsed section's inputs are still in the DOM and still saved.
+    """
+    from tradingagents.setup import evaluate_readiness
+    from tradingagents.setup.readiness import MODEL_PROVIDERS
+
+    try:
+        readiness = evaluate_readiness()
+        in_use = {
+            credential.key
+            for requirement in readiness.requirements
+            if requirement.level != "optional"
+            for credential in requirement.credentials
+        }
+    except Exception:
+        # Never let a configuration problem hide the screen for fixing
+        # configuration problems.
+        in_use = set()
+
+    provider_keys = {item.key for item in MODEL_PROVIDERS.values()}
+    buckets: dict[str, list] = {key: [] for key, _ in GROUP_TITLES}
+    for api in API_CONFIGS:
+        buckets[_group_for(api, in_use, provider_keys)].append(
+            create_api_input_row(api)
+        )
+
+    items = []
+    for key, title in GROUP_TITLES:
+        rows = buckets[key]
+        if not rows:
+            continue
+        items.append(
+            dbc.AccordionItem(
+                rows,
+                title=f"{title} ({len(rows)})",
+                item_id=f"api-group-{key}",
+            )
+        )
+
+    return dbc.Accordion(
+        items,
+        id="api-credential-groups",
+        active_item="api-group-in-use",
+        always_open=True,
+        flush=True,
+    )
+
+
 def create_api_config_modal():
     """Create the API configuration modal"""
     
-    # Build API input rows
-    api_inputs = [create_api_input_row(api) for api in API_CONFIGS]
     
     # Add Alpaca paper trading toggle
     alpaca_paper_toggle = dbc.Row([
@@ -353,8 +438,14 @@ def create_api_config_modal():
                     
                     html.Hr(),
                     
-                    html.H5("Credentials", className="mb-3"),
-                    html.Div(api_inputs),
+                    html.H5("Credentials", className="mb-1"),
+                    html.P(
+                        "Grouped by whether this configuration reads them. "
+                        "Everything is here — it always was — but the sixteen "
+                        "rows are not sixteen things to do.",
+                        className="text-muted small mb-3",
+                    ),
+                    grouped_credentials(),
                     
                     html.Hr(),
                     

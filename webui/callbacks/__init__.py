@@ -21,6 +21,7 @@ from .pulse_callbacks import register_pulse_callbacks
 from .override_callbacks import register_override_callbacks
 from .replay_callbacks import register_replay_callbacks
 from .evaluation_callbacks import register_evaluation_callbacks
+from .setup_callbacks import register_setup_callbacks
 
 def register_all_callbacks(app):
     """Register all callback functions with the Dash app"""
@@ -42,3 +43,4 @@ def register_all_callbacks(app):
     register_replay_callbacks(app)
     register_decision_explorer_callbacks(app)
     register_evaluation_callbacks(app)
+    register_setup_callbacks(app)

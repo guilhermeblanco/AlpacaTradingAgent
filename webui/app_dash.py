@@ -52,6 +52,18 @@ def create_app():
     # Set app title
     app.title = APP_CONFIG["title"]
 
+    # Serve the generated stylesheet.
+    #
+    # webui/utils/styles.py holds the design tokens and every rule the
+    # workbench depends on — board cards, the vitals strip, the decision
+    # tape — and nothing imported it, so none of it ever reached a browser.
+    # The tests passed because they asserted against the string rather than
+    # against anything served, which is the same mistake that left a
+    # clientside callback unattached. Injected here rather than dropped into
+    # assets/ because the token block is generated from Python and there
+    # should stay exactly one definition of it.
+    app.index_string = _index_string()
+
     # Set the layout
     app.layout = create_main_layout()
 
@@ -59,6 +71,37 @@ def create_app():
     register_all_callbacks(app)
 
     return app
+
+
+def _index_string() -> str:
+    """Dash's default index, plus the generated stylesheet.
+
+    Placed after `{%css%}` so that where a rule here and one in
+    assets/custom.css collide, this one wins — it is the newer of the two
+    and the one built against the design tokens.
+    """
+    from webui.utils.styles import CSS
+
+    return """<!DOCTYPE html>
+<html>
+    <head>
+        {%metas%}
+        <title>{%title%}</title>
+        {%favicon%}
+        {%css%}
+        <style>
+""" + CSS + """
+        </style>
+    </head>
+    <body>
+        {%app_entry%}
+        <footer>
+            {%config%}
+            {%scripts%}
+            {%renderer%}
+        </footer>
+    </body>
+</html>"""
 
 
 def run_app(port=7860, share=False, server_name="127.0.0.1", debug=False, max_threads=1):

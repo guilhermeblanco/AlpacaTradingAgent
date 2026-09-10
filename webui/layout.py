@@ -1,6 +1,22 @@
-"""
-Layout module for TradingAgents WebUI
-Organizes the main application layout and component assembly
+"""Assembling the application.
+
+The layout used to be one scroll of fourteen stacked panels. This puts them
+into the five stages described in webui/config/navigation.py, with the
+vitals strip pinned above the tab bar because "is this working right now?"
+is a question you should never have to navigate to answer.
+
+Two properties are load-bearing, and both are tested:
+
+*Every panel stays in the tree.* Bootstrap tab panes are hidden with CSS,
+not unmounted, so a `dcc.Interval` on the Operate tab keeps ticking while
+you are reading the Decide tab, and a callback whose Output lives on
+another tab still resolves. Rendering tab bodies lazily would have been
+tidier and would have broken roughly ninety callbacks.
+
+*Panels cannot outgrow their column.* Each one sits in a shell that sets
+`min-width: 0` — a flex or grid child defaults to `min-width: auto`, which
+means "as wide as my widest child", which is how one long table used to
+push the whole page sideways. Wide content scrolls inside its own box.
 """
 
 from dash import dcc, html
@@ -24,7 +40,10 @@ from webui.components.pipeline_board import create_pipeline_board
 from webui.components.vitals import create_vitals_strip
 from webui.callbacks.pulse_callbacks import create_pulse_components
 from webui.components.evaluation_panel import create_evaluation_panel
+from webui.components.setup_panel import create_setup_panel
+from webui.components.setup_wizard import create_setup_wizard
 from webui.config.constants import COLORS, REFRESH_INTERVALS
+from webui.config.navigation import DEFAULT_STAGE, STAGES
 
 
 def create_intervals():
@@ -44,10 +63,10 @@ def create_intervals():
             interval=REFRESH_INTERVALS["medium"],
             n_intervals=0,
         ),
-        
+
         # Slow refresh for account data
         dcc.Interval(
-            id='slow-refresh-interval', 
+            id='slow-refresh-interval',
             interval=REFRESH_INTERVALS["slow"],
             n_intervals=0,
             disabled=False  # Always enabled for account data
@@ -66,141 +85,133 @@ def create_stores():
     ]
 
 
-def create_footer():
-    """Create the footer section"""
-    return dbc.Row(
+def _alpaca_account_card():
+    return dbc.Card(
+        dbc.CardBody([render_alpaca_account_section()]),
+        className="mb-4",
+    )
+
+
+#: Panel name → the factory that builds it. The names come from
+#: webui/config/navigation.py, which describes the arrangement; this maps
+#: them onto the components without the description having to import any.
+PANEL_FACTORIES = {
+    "config_panel": create_config_panel,
+    "pipeline_board": create_pipeline_board,
+    "chart_panel": create_chart_panel,
+    "status_panel": create_status_panel,
+    "workbench": create_workbench_panel,
+    "decision_explorer": create_decision_explorer,
+    "decision_panel": create_decision_panel,
+    "reports_panel": create_reports_panel,
+    "evaluation_panel": create_evaluation_panel,
+    "backtest_panel": create_backtest_panel,
+    "operations_panel": create_operations_panel,
+    "safety_panel": create_safety_panel,
+    "alpaca_account": _alpaca_account_card,
+    "cost_panel": create_cost_panel,
+    "setup_panel": create_setup_panel,
+}
+
+
+def panel_shell(name, component):
+    """One panel, boxed so it cannot push the page sideways.
+
+    `min-width: 0` is the whole trick. A flex or grid child defaults to
+    `min-width: auto`, meaning "at least as wide as my widest content", so
+    a single long table or a wide Plotly figure widens its column, then its
+    row, then the page. Setting it to zero lets the column win and the
+    content scroll inside `.panel-shell-body` instead.
+    """
+    return html.Section(
+        html.Div(component, className="panel-shell-body"),
+        id=f"panel-{name.replace('_', '-')}",
+        className="panel-shell",
+    )
+
+
+def create_stage_body(stage):
+    """Everything that belongs to one tab."""
+    return html.Div(
         [
-            dbc.Col(
-                dbc.Button("Refresh Status", id="refresh-btn", color="secondary", className="mb-2"),
-                width="auto",
-                className="d-flex justify-content-center"
-            ),
-            dbc.Col(
-                html.Div("Status updates automatically every 0.5 seconds", className="text-info small"),
-                width="auto",
-                className="d-flex align-items-center"
+            html.P(stage.blurb, className="stage-blurb"),
+            *(
+                panel_shell(name, PANEL_FACTORIES[name]())
+                for name in stage.panels
+                if name in PANEL_FACTORIES
             ),
         ],
-        className="d-flex justify-content-center"
+        className="stage-body",
+    )
+
+
+def create_stage_tabs():
+    """The tab bar and every stage's content.
+
+    All bodies are built here rather than in a callback. Bootstrap hides an
+    inactive pane with CSS and leaves it mounted, so intervals keep running
+    and callbacks keep resolving across tabs; building lazily would break
+    both for the sake of a first paint nobody is waiting on.
+    """
+    return dbc.Tabs(
+        [
+            dbc.Tab(
+                create_stage_body(stage),
+                label=stage.label,
+                tab_id=stage.id,
+                tab_class_name="stage-tab",
+                active_tab_class_name="stage-tab-active",
+            )
+            for stage in STAGES
+        ],
+        id="stage-tabs",
+        active_tab=DEFAULT_STAGE,
+        className="stage-tabs",
+    )
+
+
+def create_footer():
+    """Create the footer section"""
+    return html.Div(
+        [
+            dbc.Button(
+                "Refresh now",
+                id="refresh-btn",
+                color="secondary",
+                size="sm",
+                className="me-2",
+            ),
+            html.Span(
+                "Panels update themselves as state changes.",
+                className="text-muted small",
+            ),
+        ],
+        className="app-footer d-flex align-items-center justify-content-center",
     )
 
 
 def create_main_layout():
     """Create the main application layout"""
-    
-    # Create UI components
-    header = create_header()
-    config_card = create_config_panel()
-    status_card = create_status_panel()
-    chart_card = create_chart_panel()
-    decision_card = create_decision_panel()
-    reports_card = create_reports_panel()
-    
-    # Create Alpaca account card
-    alpaca_account_card = dbc.Card(
-        dbc.CardBody([
-            render_alpaca_account_section()
-        ]),
-        className="mb-4"
-    )
-    
-    # Create API config modal
-    api_config_modal = create_api_config_modal()
-    
-    # Assemble the layout
-    layout = dbc.Container(
+    return dbc.Container(
         [
-            # Intervals and stores
             *create_intervals(),
             *create_stores(),
-            
-            # API Configuration Modal
-            api_config_modal,
-            
-            # Client-side script to handle iframe messages for prompt modal
-            html.Script("""
-                window.addEventListener('message', function(event) {
-                    if (event.data && event.data.type === 'showPrompt') {
-                        // Find and trigger the appropriate show prompt button
-                        const buttons = document.querySelectorAll('[id*="show-prompt-"]');
-                        const reportType = event.data.reportType;
-                        
-                        // Find the button that matches this report type
-                        let targetButton = null;
-                        for (let button of buttons) {
-                            const buttonId = button.getAttribute('id');
-                            if (buttonId && buttonId.includes(reportType)) {
-                                targetButton = button;
-                                break;
-                            }
-                        }
-                        
-                        // If no direct match, try pattern matching
-                        if (!targetButton) {
-                            for (let button of buttons) {
-                                const buttonData = button.getAttribute('data-dash-props');
-                                if (buttonData && buttonData.includes(reportType)) {
-                                    targetButton = button;
-                                    break;
-                                }
-                            }
-                        }
-                        
-                        // Trigger the button click if found
-                        if (targetButton) {
-                            targetButton.click();
-                        } else {
-                            console.log('Could not find button for:', reportType);
-                            // Fallback: trigger any show prompt button and set content manually
-                            const anyPromptBtn = document.querySelector('[id*="show-prompt-"]');
-                            if (anyPromptBtn) {
-                                anyPromptBtn.click();
-                                // Try to set the modal content directly after a short delay
-                                setTimeout(() => {
-                                    const modalTitle = document.querySelector('#prompt-modal-title');
-                                    const modalContent = document.querySelector('#prompt-modal-content');
-                                    if (modalTitle) modalTitle.textContent = event.data.title;
-                                    if (modalContent) {
-                                        // This will be filled by the callback, but we can try to trigger it
-                                        console.log('Showing prompt for:', reportType);
-                                    }
-                                }, 100);
-                            }
-                        }
-                    }
-                });
-            """),
-            
-            # Main content
+            create_api_config_modal(),
+            create_setup_wizard(),
             *create_pulse_components(),
-            header,
+
+            create_header(),
+
+            # Above the tabs on purpose: "is this working right now?" should
+            # never be a question you have to navigate to answer.
             create_vitals_strip(),
-            create_pipeline_board(),
-            create_operations_panel(),
-            create_workbench_panel(),
-            create_decision_explorer(),
-            create_safety_panel(),
-            alpaca_account_card,
-            dbc.Row([
-                dbc.Col(config_card, md=6),
-                dbc.Col([
-                    chart_card,
-                    html.Div(className="mb-3"),  # Add some spacing
-                    status_card,
-                    html.Div(className="mb-3"),  # Add some spacing
-                    decision_card,
-                ], md=6)
-            ]),
-            reports_card,
-            create_backtest_panel(),
-            create_evaluation_panel(),
-            create_cost_panel(),
+
+            create_stage_tabs(),
+
             html.Div(className="mt-4"),
             create_footer(),
         ],
         fluid=True,
-        className="p-4",
-        style={"backgroundColor": COLORS["background"]}
+        className="p-4 app-shell",
+        style={"backgroundColor": COLORS["background"]},
     )
-    
-    return layout
