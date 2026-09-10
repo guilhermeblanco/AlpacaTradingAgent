@@ -7,9 +7,11 @@ state from the safety layer.
 
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
-from dash import Input, Output, html
+from dash import Input, Output, html, State
 
 from webui.config.constants import COLORS
+from webui.config.figures import HEIGHT_MEDIUM, style
+from webui.config.tokens import DEFAULT_THEME, palette_for
 
 
 def _fmt_usd(value):
@@ -62,24 +64,19 @@ def _budget_text():
         return "—", COLORS["pending"]
 
 
-def _build_daily_figure(per_day):
+def _build_daily_figure(per_day, *, theme=DEFAULT_THEME):
     days = sorted(per_day)
     figure = go.Figure(
         go.Bar(
             x=days,
             y=[per_day[d]["cost_usd"] for d in days],
-            marker_color=COLORS["primary"],
+            marker_color=palette_for(theme)["accent"],
         )
     )
-    figure.update_layout(
-        title="Estimated LLM cost per day",
-        template="plotly_dark",
-        paper_bgcolor=COLORS["card"],
-        plot_bgcolor=COLORS["card"],
-        margin={"l": 40, "r": 20, "t": 40, "b": 30},
-        yaxis={"title": "USD", "tickformat": ",.2f"},
-        showlegend=False,
-    )
+    # See the note in the backtest chart: the shared layout, so this
+    # follows the theme and gets automargin like everything else.
+    style(figure, title="Estimated LLM cost per day", height=HEIGHT_MEDIUM, theme=theme)
+    figure.update_yaxes(title="USD", tickformat=",.2f")
     return figure
 
 
@@ -176,9 +173,10 @@ def register_cost_callbacks(app):
             Output("cost-model-table", "children"),
         ],
         Input("cost-refresh-btn", "n_clicks"),
+        State("theme-store", "data"),
         prevent_initial_call=True,
     )
-    def refresh_cost_panel(n_clicks):
+    def refresh_cost_panel(n_clicks, theme=DEFAULT_THEME):
         hidden = {"display": "none"}
         empty = go.Figure()
         try:
@@ -224,7 +222,7 @@ def register_cost_callbacks(app):
             ],
             className="g-2",
         )
-        figure = _build_daily_figure(aggregates["per_day"])
+        figure = _build_daily_figure(aggregates["per_day"], theme=theme)
         symbol_table = _build_symbol_table(aggregates["per_symbol"], returns_by_symbol)
         model_table = _build_model_table(aggregates["per_model"])
         return cards, figure, {"display": "block"}, symbol_table, model_table

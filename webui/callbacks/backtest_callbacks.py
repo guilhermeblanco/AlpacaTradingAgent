@@ -9,6 +9,8 @@ import plotly.graph_objects as go
 from dash import Input, Output, State, html
 
 from webui.config.constants import COLORS
+from webui.config.figures import HEIGHT_LARGE, style
+from webui.config.tokens import DEFAULT_THEME, palette_for, rgb_triplet
 
 
 def _fmt_pct(value):
@@ -81,7 +83,8 @@ def _build_metric_cards(metrics, signals_used):
     )
 
 
-def _build_equity_figure(equity_curve, symbol):
+def _build_equity_figure(equity_curve, symbol, *, theme=DEFAULT_THEME):
+    palette = palette_for(theme)
     figure = go.Figure()
     figure.add_trace(
         go.Scatter(
@@ -89,20 +92,17 @@ def _build_equity_figure(equity_curve, symbol):
             y=list(equity_curve.values),
             mode="lines",
             name="Equity",
-            line={"color": COLORS["primary"], "width": 2},
+            line={"color": palette["accent"], "width": 2},
             fill="tozeroy",
-            fillcolor="rgba(59, 130, 246, 0.08)",
+            fillcolor=f"rgba({rgb_triplet(palette['accent']).replace(' ', ',')},0.08)",
         )
     )
-    figure.update_layout(
-        title=f"Equity Curve — {symbol}",
-        template="plotly_dark",
-        paper_bgcolor=COLORS["card"],
-        plot_bgcolor=COLORS["card"],
-        margin={"l": 40, "r": 20, "t": 40, "b": 30},
-        yaxis={"title": "Portfolio value ($)", "tickformat": ",.0f"},
-        showlegend=False,
-    )
+    # The shared layout rather than one of its own: this chart predated
+    # webui/config/figures.py and pinned itself to the dark Plotly
+    # template, so it was stuck in one theme and missing the automargin
+    # that stops its tick labels being clipped.
+    style(figure, title=f"Equity Curve — {symbol}", height=HEIGHT_LARGE, theme=theme)
+    figure.update_yaxes(title="Portfolio value ($)", tickformat=",.0f")
     return figure
 
 
@@ -171,10 +171,11 @@ def register_backtest_callbacks(app):
             State("backtest-window-bars", "value"),
             State("backtest-allow-shorts", "value"),
             State("backtest-slippage-model", "value"),
+            State("theme-store", "data"),
         ],
         prevent_initial_call=True,
     )
-    def run_backtest_callback(n_clicks, symbol, start_date, end_date, window_bars, allow_shorts, slippage_model):
+    def run_backtest_callback(n_clicks, symbol, start_date, end_date, window_bars, allow_shorts, slippage_model, theme=DEFAULT_THEME):
         hidden = {"display": "none"}
         empty = go.Figure()
 
@@ -219,7 +220,7 @@ def register_backtest_callbacks(app):
         status = html.Div(" · ".join(status_bits), className="text-muted small")
 
         metrics_cards = _build_metric_cards(full.metrics, full.signals_used)
-        figure = _build_equity_figure(full.equity_curve, symbol)
+        figure = _build_equity_figure(full.equity_curve, symbol, theme=theme)
         windows_table = _build_windows_table(result.windows)
         return status, metrics_cards, figure, {"display": "block"}, windows_table
 

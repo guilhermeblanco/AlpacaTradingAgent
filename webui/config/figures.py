@@ -19,32 +19,42 @@ from __future__ import annotations
 
 import plotly.graph_objects as go
 
-from webui.config.constants import COLORS
+from webui.config.tokens import DEFAULT_THEME, normalize_theme, palette_for
 
 #: Comfortable rather than tight. `t` leaves room for a title, and the
 #: others are a floor — `automargin` grows them when labels need it.
 MARGIN = {"l": 12, "r": 16, "t": 40, "b": 12}
 
-BASE_LAYOUT = {
-    "template": "plotly_dark",
-    "paper_bgcolor": COLORS["card"],
-    "plot_bgcolor": COLORS["card"],
-    "margin": MARGIN,
-    "font": {"color": COLORS["text"], "size": 12},
-    "showlegend": False,
-    "hoverlabel": {"font": {"size": 12}},
-    "title": {
-        "font": {"size": 13, "color": COLORS["text"]},
-        "x": 0,
-        "xanchor": "left",
-        "y": 0.97,
-        "yanchor": "top",
-    },
-    # Bar labels shrink to fit by default, which on a small chart means
-    # they shrink to unreadable. Below the floor they are hidden instead,
-    # which is the honest outcome — a label you cannot read is not a label.
-    "uniformtext": {"mode": "hide", "minsize": 10},
-}
+
+def base_layout(theme: str = DEFAULT_THEME) -> dict:
+    """The shared layout, in one theme's colours.
+
+    A figure is rendered in Python and shipped as JSON, so unlike every
+    other surface it cannot pick up a CSS variable — it has to be told
+    which palette to draw in. That is why every callback that builds one
+    takes the theme store as an Input.
+    """
+    palette = palette_for(theme)
+    return {
+        "template": "plotly_dark" if normalize_theme(theme) == "dark" else "plotly_white",
+        "paper_bgcolor": palette["surface"],
+        "plot_bgcolor": palette["surface"],
+        "margin": MARGIN,
+        "font": {"color": palette["text"], "size": 12},
+        "showlegend": False,
+        "hoverlabel": {"font": {"size": 12}},
+        "title": {
+            "font": {"size": 13, "color": palette["text"]},
+            "x": 0,
+            "xanchor": "left",
+            "y": 0.97,
+            "yanchor": "top",
+        },
+        # Bar labels shrink to fit by default, which on a small chart
+        # means they shrink to unreadable. Below the floor they are
+        # hidden instead — a label you cannot read is not a label.
+        "uniformtext": {"mode": "hide", "minsize": 10},
+    }
 
 #: Taller than before. A waterfall with four labelled steps in 260 pixels
 #: is a diagram of a waterfall rather than a reading of one.
@@ -53,26 +63,36 @@ HEIGHT_MEDIUM = 300
 HEIGHT_LARGE = 380
 
 
-def style(figure: go.Figure, *, title: str = "", height: int = HEIGHT_MEDIUM) -> go.Figure:
+def style(
+    figure: go.Figure,
+    *,
+    title: str = "",
+    height: int = HEIGHT_MEDIUM,
+    theme: str = DEFAULT_THEME,
+) -> go.Figure:
     """Apply the shared layout, then let the axes claim what they need."""
-    layout = dict(BASE_LAYOUT)
+    palette = palette_for(theme)
+    layout = base_layout(theme)
     if title:
-        layout["title"] = {**BASE_LAYOUT["title"], "text": title}
+        layout["title"] = {**layout["title"], "text": title}
     figure.update_layout(**layout, height=height)
-    figure.update_xaxes(automargin=True, gridcolor=COLORS["border"])
-    figure.update_yaxes(automargin=True, gridcolor=COLORS["border"])
+    figure.update_xaxes(automargin=True, gridcolor=palette["border"])
+    figure.update_yaxes(automargin=True, gridcolor=palette["border"])
     return figure
 
 
-def empty_figure(message: str, *, height: int = HEIGHT_SMALL) -> go.Figure:
+def empty_figure(
+    message: str, *, height: int = HEIGHT_SMALL, theme: str = DEFAULT_THEME
+) -> go.Figure:
     """A chart with nothing in it, saying why rather than showing an axis.
 
     Worth more care than it looks: on a fresh deployment every chart is
     this one, so it is the first impression of the whole workbench.
     """
+    palette = palette_for(theme)
     figure = go.Figure()
     figure.update_layout(
-        **{**BASE_LAYOUT, "margin": {"l": 8, "r": 8, "t": 8, "b": 8}},
+        **{**base_layout(theme), "margin": {"l": 8, "r": 8, "t": 8, "b": 8}},
         height=height,
         xaxis={"visible": False},
         yaxis={"visible": False},
@@ -80,7 +100,7 @@ def empty_figure(message: str, *, height: int = HEIGHT_SMALL) -> go.Figure:
             {
                 "text": message,
                 "showarrow": False,
-                "font": {"color": COLORS["pending"], "size": 12},
+                "font": {"color": palette["text-faint"], "size": 12},
                 "xref": "paper",
                 "yref": "paper",
                 "x": 0.5,

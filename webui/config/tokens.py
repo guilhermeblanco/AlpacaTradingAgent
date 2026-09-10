@@ -69,10 +69,76 @@ DARK_PALETTE: dict[str, str] = {
     "shadow": "#000000",
 }
 
-#: The one the interface renders in today. A light palette lands beside
-#: this in the next step; keeping the dark values byte-identical here is
-#: what makes that step reviewable.
-PALETTE: dict[str, str] = dict(DARK_PALETTE)
+#: The same roles, on a light ground.
+#:
+#: Not an inversion. Several colours have to change hue as well as
+#: lightness to keep their meaning: a #10B981 green that reads clearly on
+#: near-black is thin and hard to focus on against white, so the light
+#: palette uses a deeper one. Accents darken for the same reason. The
+#: "soft" ends of each family flip from deep tints to pale ones, because
+#: on a light ground a wash is lighter than its surface, not darker.
+LIGHT_PALETTE: dict[str, str] = {
+    "background": "#F1F5F9",
+    "surface-sunken": "#E2E8F0",
+    "surface": "#FFFFFF",
+    "surface-inset": "#F8FAFC",
+    "surface-raised": "#FFFFFF",
+    "border": "#D8E0EA",
+    "border-strong": "#B6C2D2",
+    "text-bright": "#020617",
+    "text": "#0F172A",
+    "text-soft": "#334155",
+    "text-muted": "#52627A",
+    "text-faint": "#71809A",
+    "accent": "#2563EB",
+    "accent-hover": "#1D4ED8",
+    "accent-strong": "#1E40AF",
+    "accent-deep": "#1E3A8A",
+    "accent-light": "#3B82F6",
+    "accent-lighter": "#93C5FD",
+    "positive": "#047857",
+    "positive-strong": "#036B4E",
+    "positive-deep": "#065F46",
+    "positive-deeper": "#064E3B",
+    "positive-light": "#10B981",
+    "positive-lighter": "#6EE7B7",
+    "caution": "#B45309",
+    "caution-light": "#D97706",
+    "negative": "#DC2626",
+    "negative-light": "#EF4444",
+    "neutral": "#52627A",
+    "info": "#0369A1",
+    "info-light": "#0284C7",
+    "highlight": "#0F766E",
+    "highlight-light": "#14B8A6",
+    "shadow": "#0F172A",
+}
+
+THEMES: dict[str, dict[str, str]] = {
+    "light": LIGHT_PALETTE,
+    "dark": DARK_PALETTE,
+}
+
+#: What a browser gets before it has said otherwise. Light, because the
+#: dark one is hard to read for long.
+DEFAULT_THEME = "light"
+
+
+def normalize_theme(value: str) -> str:
+    key = str(value or "").strip().lower()
+    return key if key in THEMES else DEFAULT_THEME
+
+
+def palette_for(theme: str) -> dict[str, str]:
+    """The palette a theme renders in."""
+    return THEMES[normalize_theme(theme)]
+
+
+#: The palette Python-side code reads when it has not been told a theme —
+#: chart colours, mostly. Server-rendered figures are handed the browser's
+#: theme explicitly; this is the fallback for everything that predates
+#: that and for anything rendered before a browser has spoken.
+PALETTE: dict[str, str] = dict(LIGHT_PALETTE)
 
 
 def rgb_triplet(value: str) -> str:
@@ -181,9 +247,23 @@ def palette_variables(palette: dict[str, str], selector: str = ":root") -> str:
     return "\n".join(lines)
 
 
+def status_color_for(value: str, theme: str) -> str:
+    """The hex a status is drawn in, under a given theme."""
+    palette_key, _bootstrap = STATUS_TOKENS[normalize_status(value)]
+    return palette_for(theme)[palette_key]
+
+
 def css_variables() -> str:
-    """The tokens as custom properties, for the stylesheet to consume."""
-    lines = [palette_variables(PALETTE)]
+    """Both palettes, as custom properties.
+
+    Light on `:root` so it is what a browser renders before any script
+    runs — no flash of the wrong theme — and dark under an attribute the
+    toggle sets on the document element.
+    """
+    lines = [
+        palette_variables(LIGHT_PALETTE),
+        palette_variables(DARK_PALETTE, '[data-theme="dark"]'),
+    ]
     scale = [":root {"]
     for name, value in SPACING.items():
         scale.append(f"    --ta-space-{name}: {value};")

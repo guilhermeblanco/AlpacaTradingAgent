@@ -18,7 +18,7 @@ from tradingagents.workbench.preview import (
 from webui.callbacks.board_callbacks import load_health
 from webui.callbacks.workbench_callbacks import load_tape
 from webui.components.workbench import gate_waterfall_figure
-from webui.config.tokens import status_color
+from webui.config.tokens import DEFAULT_THEME, status_color
 from webui.utils.persistence import get_persistence_runtime
 
 
@@ -185,9 +185,10 @@ def register_override_callbacks(app):
         Input("workbench-preview", "n_clicks"),
         State("workbench-selection", "value"),
         State("workbench-preview-notional", "value"),
+        State("theme-store", "data"),
         prevent_initial_call=True,
     )
-    def preview(n_clicks, decision_id, notional):
+    def preview(n_clicks, decision_id, notional, theme=DEFAULT_THEME):
         from dash import no_update
 
         if not n_clicks or not decision_id:
@@ -221,6 +222,8 @@ def register_override_callbacks(app):
 
         ledger = preview_ledger(result)
         figure = (
-            gate_waterfall_figure(ledger.waterfall()) if ledger is not None else no_update
+            gate_waterfall_figure(ledger.waterfall(), theme=theme)
+            if ledger is not None
+            else no_update
         )
         return render_preview(result, tape.gate_ledger), figure

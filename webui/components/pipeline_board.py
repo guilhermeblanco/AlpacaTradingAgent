@@ -14,13 +14,14 @@ from dash import dcc, html
 from tradingagents.workbench.tape import STAGES, StageState
 from webui.components.workbench import STATE_COLORS
 from webui.config.figures import HEIGHT_SMALL, empty_figure, style
+from webui.config.tokens import DEFAULT_THEME
 from webui.config.constants import COLORS
 
 
-def stage_distribution_figure(counts) -> go.Figure:
+def stage_distribution_figure(counts, *, theme=DEFAULT_THEME) -> go.Figure:
     """How many decisions sit at each stage — where the machine backs up."""
     if not any(counts.values()):
-        return empty_figure("No decisions recorded yet")
+        return empty_figure("No decisions recorded yet", theme=theme)
 
     labels = [label for _key, label in STAGES]
     values = [counts.get(key, 0) for key, _label in STAGES]
@@ -33,15 +34,15 @@ def stage_distribution_figure(counts) -> go.Figure:
             textposition="outside",
         )
     )
-    style(figure, title="Decisions by stage", height=HEIGHT_SMALL)
+    style(figure, title="Decisions by stage", height=HEIGHT_SMALL, theme=theme)
     figure.update_yaxes(rangemode="tozero")
     return figure
 
 
-def halt_breakdown_figure(counts) -> go.Figure:
+def halt_breakdown_figure(counts, *, theme=DEFAULT_THEME) -> go.Figure:
     """Which gate stops decisions most often."""
     if not counts:
-        return empty_figure("Nothing has been stopped")
+        return empty_figure("Nothing has been stopped", theme=theme)
 
     ordered = sorted(counts.items(), key=lambda item: item[1], reverse=True)
     figure = go.Figure(
@@ -54,16 +55,16 @@ def halt_breakdown_figure(counts) -> go.Figure:
             textposition="auto",
         )
     )
-    style(figure, title="Stopped by", height=HEIGHT_SMALL)
+    style(figure, title="Stopped by", height=HEIGHT_SMALL, theme=theme)
     figure.update_xaxes(rangemode="tozero", dtick=1)
     figure.update_yaxes(autorange="reversed")
     return figure
 
 
-def throughput_figure(series) -> go.Figure:
+def throughput_figure(series, *, theme=DEFAULT_THEME) -> go.Figure:
     """Decisions started per hour over the recent window."""
     if not series:
-        return empty_figure("No throughput yet")
+        return empty_figure("No throughput yet", theme=theme)
 
     figure = go.Figure(
         go.Scatter(
@@ -75,7 +76,7 @@ def throughput_figure(series) -> go.Figure:
             fillcolor="rgba(16, 185, 129, 0.10)",
         )
     )
-    style(figure, title="Decisions per hour", height=HEIGHT_SMALL)
+    style(figure, title="Decisions per hour", height=HEIGHT_SMALL, theme=theme)
     figure.update_yaxes(rangemode="tozero", dtick=1)
     return figure
 

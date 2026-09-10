@@ -21,6 +21,7 @@ from .decision_explorer_callbacks import register_decision_explorer_callbacks
 from .workbench_callbacks import register_workbench_callbacks
 from .board_callbacks import register_board_callbacks
 from .pulse_callbacks import register_pulse_callbacks
+from .theme_callbacks import register_theme_callbacks
 from .override_callbacks import register_override_callbacks
 from .replay_callbacks import register_replay_callbacks
 from .evaluation_callbacks import register_evaluation_callbacks
@@ -47,6 +48,7 @@ def register_all_callbacks(app):
     register_workbench_callbacks(app)
     register_board_callbacks(app)
     register_pulse_callbacks(app)
+    register_theme_callbacks(app)
     register_override_callbacks(app)
     register_replay_callbacks(app)
     register_decision_explorer_callbacks(app)

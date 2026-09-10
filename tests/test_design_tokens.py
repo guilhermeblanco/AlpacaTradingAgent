@@ -135,8 +135,16 @@ class StylesheetTests(unittest.TestCase):
         self.assertIn("var(--ta-border)", self.css)
 
     def test_no_palette_colour_is_repeated_as_a_literal_outside_the_root_block(self):
-        """A literal here is a colour that would not follow a theme change."""
-        body = self.css.split("}", 1)[1]
+        """A literal here is a colour that would not follow a theme change.
+
+        The declarations are subtracted rather than split off at the
+        first brace: there are two palette blocks now, light on `:root`
+        and dark under an attribute, and splitting once left the second
+        one looking like body literals.
+        """
+        from webui.config.tokens import css_variables
+
+        body = self.css.replace(css_variables(), "")
         literals = {value.upper() for value in re.findall(r"#[0-9A-Fa-f]{6}", body)}
 
         self.assertEqual(literals & {value.upper() for value in PALETTE.values()}, set())

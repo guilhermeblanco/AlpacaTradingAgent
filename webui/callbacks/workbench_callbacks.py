@@ -9,6 +9,7 @@ import dash_bootstrap_components as dbc
 from dash import Input, Output, State, html
 
 from tradingagents.workbench.tape import StageState
+from webui.config.tokens import DEFAULT_THEME
 from webui.components.workbench import (
     STATE_BADGES,
     GATE_STATUS_COLORS,
@@ -405,10 +406,11 @@ def register_workbench_callbacks(app):
         Output("workbench-evidence", "figure"),
         Output("workbench-outcomes", "figure"),
         Input("workbench-selection", "value"),
+        Input("theme-store", "data"),
     )
-    def render_selected(decision_id):
+    def render_selected(decision_id, theme=DEFAULT_THEME):
         if not decision_id:
-            blank = empty_figure("Select a decision")
+            blank = empty_figure("Select a decision", theme=theme)
             return (
                 html.Div(
                     "No decision selected.", className="text-muted py-4 text-center"
@@ -421,7 +423,7 @@ def register_workbench_callbacks(app):
         try:
             tape = load_tape(decision_id)
         except Exception as exc:
-            blank = empty_figure("Unavailable")
+            blank = empty_figure("Unavailable", theme=theme)
             return (
                 dbc.Alert(f"Unable to load decision: {exc}", color="danger"),
                 html.Div(),
@@ -430,7 +432,7 @@ def register_workbench_callbacks(app):
                 blank,
             )
         if tape is None:
-            blank = empty_figure("PostgreSQL required")
+            blank = empty_figure("PostgreSQL required", theme=theme)
             return (
                 dbc.Alert(NEEDS_POSTGRES, color="warning"),
                 html.Div(),
@@ -442,8 +444,9 @@ def register_workbench_callbacks(app):
             render_tape(tape),
             stage_rail(tape.stages, active=tape.current_stage),
             gate_waterfall_figure(
-                tape.gate_ledger.waterfall() if tape.gate_ledger else []
+                tape.gate_ledger.waterfall() if tape.gate_ledger else [],
+                theme=theme,
             ),
-            evidence_figure(tape.evidence_bars()),
-            outcome_figure(tape.outcomes),
+            evidence_figure(tape.evidence_bars(), theme=theme),
+            outcome_figure(tape.outcomes, theme=theme),
         )
