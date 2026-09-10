@@ -16,6 +16,10 @@ recomputes; walking through it does not.
 from dash import ALL, Input, Output, State, ctx, html, no_update
 import dash_bootstrap_components as dbc
 
+from webui.components.platform_settings import (
+    confirmation_detail,
+    settings_body,
+)
 from webui.components.setup_panel import readiness_summary
 from webui.components.setup_wizard import (
     POSTURE_STEP,
@@ -25,6 +29,7 @@ from webui.components.setup_wizard import (
     welcome_step,
 )
 from webui.config.navigation import SETUP_STAGE
+from tradingagents.setup.providers import role as get_role, selected
 
 
 def current_config():
@@ -188,7 +193,14 @@ def register_setup_callbacks(app):
         elif step_id == POSTURE_STEP:
             body = posture_step(current_config())
         elif requirement is not None:
-            body = requirement_step(requirement)
+            # A step whose id is also a role is a choice, not a statement:
+            # pick the provider, and its own fields follow.
+            role = get_role(step_id)
+            body = requirement_step(
+                requirement,
+                role=role,
+                chosen=selected(step_id, current_config()) if role else "",
+            )
         else:
             body = html.Div(
                 f"{step_id} is no longer part of this configuration.",
@@ -207,6 +219,53 @@ def register_setup_callbacks(app):
             f"Step {index + 1} of {len(plan)}",
             index == 0,
             "Done" if last else "Next",
+        )
+
+    @app.callback(
+        Output("wizard-save-status", "children", allow_duplicate=True),
+        Input({"type": "wizard-provider", "role": ALL}, "value"),
+        State({"type": "wizard-provider", "role": ALL}, "id"),
+        prevent_initial_call=True,
+    )
+    def choose_provider(values, ids):
+        """Store the provider the moment it is picked.
+
+        Stored rather than held in the browser because the fields shown
+        underneath come from the readiness model, which reads the
+        configuration — so the choice has to be somewhere the server can
+        see before it can render the right form.
+        """
+        from tradingagents.setup.providers import role as find_role
+        from tradingagents.setup.settings import get_runtime_settings
+
+        store = get_runtime_settings()
+        if store is None:
+            return dbc.Alert(
+                "Cannot record the choice: no database is configured, so "
+                "provider selection has to stay in the environment.",
+                color="warning", className="py-2 mb-0",
+            )
+
+        changed = []
+        config = current_config()
+        for identifier, value in zip(ids or [], values or []):
+            role = find_role(identifier["role"])
+            if role is None or not value or not role.setting:
+                continue
+            if str(config.get(role.setting) or "").lower() == str(value).lower():
+                continue
+            try:
+                store.set(role.setting, value, actor="setup-wizard")
+                changed.append(f"{role.label} → {role.provider(value).label}")
+            except Exception as exc:
+                return dbc.Alert(
+                    f"Unable to record the choice: {exc}",
+                    color="danger", className="py-2 mb-0",
+                )
+        if not changed:
+            return no_update
+        return dbc.Alert(
+            "; ".join(changed), color="info", className="py-2 mb-0"
         )
 
     # ── Saving ───────────────────────────────────────────────────────────
@@ -262,3 +321,166 @@ def register_setup_callbacks(app):
             color="success",
             className="py-2 mb-0",
         )
+
+
+def register_platform_callbacks(app):
+    """The settings an operator can change while it runs.
+
+    Split from the wizard because it answers a different question. The
+    wizard is "what does this need before it works"; this is "what is it
+    allowed to do right now", and the second one is asked repeatedly by
+    somebody who already knows the answer to the first.
+    """
+
+    @app.callback(
+        Output("platform-settings-body", "children"),
+        Output("platform-settings-history", "children"),
+        Input("platform-settings-interval", "n_intervals"),
+        Input("platform-settings-status", "children"),
+    )
+    def render(_intervals, _status):
+        from tradingagents.dataflows.config import get_api_key_source
+        from tradingagents.setup.settings import SETTINGS, get_runtime_settings
+
+        config = current_config()
+        sources = {}
+        for item in SETTINGS:
+            try:
+                sources[item.key] = get_api_key_source(item.key, item.env_var)
+            except Exception:
+                sources[item.key] = ""
+
+        store = get_runtime_settings()
+        if store is None:
+            history = html.Div(
+                "No database, so settings cannot be changed here — the "
+                "environment answers.",
+                className="small text-muted",
+            )
+        else:
+            try:
+                rows = store.history(limit=20)
+            except Exception as exc:
+                rows = []
+                history = html.Div(f"Unable to read history: {exc}",
+                                   className="small text-muted")
+            if rows:
+                history = html.Ul(
+                    [
+                        html.Li(
+                            f"{row['at']:%Y-%m-%d %H:%M} · {row['name']}: "
+                            f"{row['previous'] or '—'} → {row['new'] or '—'} "
+                            f"· {row['actor']}"
+                            + (f" · {row['reason']}" if row["reason"] else ""),
+                            className="small",
+                        )
+                        for row in rows
+                    ],
+                    className="mb-0",
+                )
+            elif store is not None:
+                history = html.Div("Nothing changed yet.",
+                                   className="small text-muted")
+
+        return settings_body(config, sources), history
+
+    @app.callback(
+        Output("platform-confirm-modal", "is_open"),
+        Output("platform-confirm-detail", "children"),
+        Output("platform-pending-change", "data"),
+        Output("platform-settings-status", "children"),
+        Input({"type": "platform-setting", "key": ALL}, "value"),
+        State({"type": "platform-setting", "key": ALL}, "id"),
+        prevent_initial_call=True,
+    )
+    def changed(values, ids):
+        """Apply a safe change; stop and ask about a dangerous one."""
+        from tradingagents.setup.settings import get_runtime_settings, setting
+
+        triggered = getattr(ctx, "triggered_id", None)
+        if not isinstance(triggered, dict):
+            return no_update, no_update, no_update, no_update
+
+        key = triggered.get("key")
+        item = setting(key)
+        if item is None:
+            return no_update, no_update, no_update, no_update
+
+        value = next(
+            (
+                value
+                for identifier, value in zip(ids or [], values or [])
+                if identifier.get("key") == key
+            ),
+            None,
+        )
+        config = current_config()
+        if str(config.get(key, item.default)) == str(value):
+            return no_update, no_update, no_update, no_update
+
+        if item.is_dangerous_change(value):
+            # Not a toggle. The consequence gets written out and a reason
+            # gets recorded, because this is reachable from any browser
+            # that can see the LXC.
+            return True, confirmation_detail(item, value), {"key": key, "value": value}, no_update
+
+        store = get_runtime_settings()
+        if store is None:
+            return no_update, no_update, no_update, dbc.Alert(
+                "No database, so this cannot be saved. Set it in the "
+                "environment and redeploy.",
+                color="warning", className="py-2 mb-0",
+            )
+        try:
+            store.set(key, value, actor="webui")
+        except Exception as exc:
+            return no_update, no_update, no_update, dbc.Alert(
+                f"Unable to save: {exc}", color="danger", className="py-2 mb-0"
+            )
+        return no_update, no_update, no_update, dbc.Alert(
+            f"{item.label} is now {value}.", color="success",
+            className="py-2 mb-0",
+        )
+
+    @app.callback(
+        Output("platform-confirm-modal", "is_open", allow_duplicate=True),
+        Output("platform-settings-status", "children", allow_duplicate=True),
+        Input("platform-confirm-accept", "n_clicks"),
+        Input("platform-confirm-cancel", "n_clicks"),
+        State("platform-pending-change", "data"),
+        State("platform-confirm-reason", "value"),
+        prevent_initial_call=True,
+    )
+    def confirm(_accept, _cancel, pending, reason):
+        from tradingagents.setup.settings import get_runtime_settings, setting
+
+        triggered = getattr(ctx, "triggered_id", None)
+        if triggered == "platform-confirm-cancel" or not pending:
+            # Re-rendering the body puts the control back where it was.
+            return False, dbc.Alert(
+                "Left as it was.", color="secondary", className="py-2 mb-0"
+            )
+
+        item = setting(pending.get("key"))
+        store = get_runtime_settings()
+        if item is None or store is None:
+            return False, dbc.Alert(
+                "Unable to save the change.", color="danger", className="py-2 mb-0"
+            )
+        try:
+            store.set(
+                item.key, pending.get("value"), actor="webui",
+                reason=(reason or "").strip(),
+            )
+        except Exception as exc:
+            return False, dbc.Alert(
+                f"Unable to save: {exc}", color="danger", className="py-2 mb-0"
+            )
+        return False, dbc.Alert(
+            [
+                html.Strong(f"{item.label} changed. "),
+                "The worker picks this up on its next cycle.",
+            ],
+            color="warning", className="py-2 mb-0",
+        )
+

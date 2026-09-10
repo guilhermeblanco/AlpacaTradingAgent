@@ -176,24 +176,45 @@ class MainTests(unittest.TestCase):
         scheduler.run_forever.assert_not_called()
         self.assertEqual(closed, [True])
 
-    def test_default_run_loops_on_the_configured_interval(self):
+    def test_the_default_run_supervises_rather_than_looping_blindly(self):
+        """`main()` no longer hands control to run_forever with a frozen
+        configuration; it re-reads the settings between cycles so a change
+        made in the UI lands without a restart."""
+        import threading
+
         from tradingagents.orchestration import autonomous_worker
 
-        scheduler = mock.Mock()
-        closed = []
+        captured = {}
+
+        def fake_supervise(*, stop, poll_seconds=15.0, interval_seconds=None):
+            captured["stop"] = stop
+            captured["interval"] = interval_seconds
 
         with mock.patch.object(
-            autonomous_worker,
-            "build_scheduler_from_env",
-            lambda: (scheduler, lambda: closed.append(True)),
+            autonomous_worker, "run_supervised", fake_supervise
         ), mock.patch(
             "sys.argv",
             ["tradingagents-autonomous-worker", "--interval-seconds", "42"],
         ):
             autonomous_worker.main()
 
-        scheduler.run_forever.assert_called_once_with(interval_seconds=42.0)
-        self.assertEqual(closed, [True])
+        self.assertIsInstance(captured["stop"], threading.Event)
+        self.assertEqual(captured["interval"], 42.0)
+
+    def test_no_interval_flag_leaves_the_setting_in_charge(self):
+        from tradingagents.orchestration import autonomous_worker
+
+        captured = {}
+
+        def fake_supervise(*, stop, poll_seconds=15.0, interval_seconds=None):
+            captured["interval"] = interval_seconds
+
+        with mock.patch.object(
+            autonomous_worker, "run_supervised", fake_supervise
+        ), mock.patch("sys.argv", ["tradingagents-autonomous-worker"]):
+            autonomous_worker.main()
+
+        self.assertIsNone(captured["interval"])
 
     def test_the_engine_is_released_when_a_cycle_raises(self):
         from tradingagents.orchestration import autonomous_worker
@@ -550,3 +571,161 @@ def _trade_intent(action="BUY"):
         ),
         trade_date="2026-09-09",
     )
+
+
+class SupervisorTests(unittest.TestCase):
+    """The loop that makes a setting worth changing.
+
+    Three behaviours, each required before "enable the worker" can be a
+    toggle rather than a redeploy: it idles instead of refusing to start,
+    it notices a change that alters the scheduler's shape, and a bad
+    setting leaves it waiting rather than dead.
+    """
+
+    def _run(self, configs, *, builder=None, cycles=None):
+        """Drive the supervisor through a fixed sequence of configs."""
+        import threading
+
+        from tradingagents.orchestration import autonomous_worker
+
+        stop = threading.Event()
+        seen = iter(configs)
+        built = []
+        closed = []
+        ran = []
+
+        def resolve():
+            try:
+                return next(seen)
+            except StopIteration:
+                stop.set()
+                return configs[-1]
+
+        def default_builder(config):
+            scheduler = mock.Mock()
+            scheduler.run_once.side_effect = lambda: ran.append(config) or {}
+            built.append(config)
+            return scheduler, lambda: closed.append(config)
+
+        with mock.patch.object(autonomous_worker, "resolve_config", resolve), \
+             mock.patch.object(
+                 autonomous_worker, "build_scheduler", builder or default_builder
+             ):
+            autonomous_worker.run_supervised(
+                stop=stop, poll_seconds=0.01, interval_seconds=0.01
+            )
+        return built, closed, ran
+
+    def _config(self, **overrides):
+        base = {
+            "autonomous_enabled": True,
+            "execution_broker": "alpaca",
+            "execution_gateway": "dry-run",
+            "llm_provider": "openai",
+            "deep_think_llm": "a",
+            "quick_think_llm": "b",
+            "persistence_backend": "postgres",
+            "autonomous_interval_seconds": "0.01",
+        }
+        base.update(overrides)
+        return base
+
+    def test_a_disabled_worker_idles_rather_than_refusing_to_start(self):
+        """It used to raise, so the container exited and there was nothing
+        left running to turn on."""
+        built, _closed, ran = self._run([self._config(autonomous_enabled=False)] * 2)
+
+        self.assertEqual(built, [])
+        self.assertEqual(ran, [])
+
+    def test_enabling_it_starts_a_scheduler_without_a_restart(self):
+        built, _closed, ran = self._run(
+            [self._config(autonomous_enabled=False), self._config()]
+        )
+
+        self.assertEqual(len(built), 1)
+        self.assertEqual(len(ran), 1)
+
+    def test_disabling_it_releases_the_scheduler(self):
+        _built, closed, _ran = self._run(
+            [self._config(), self._config(autonomous_enabled=False)]
+        )
+
+        self.assertEqual(len(closed), 1)
+
+    def test_a_change_of_shape_rebuilds(self):
+        """A different broker cannot be picked up by the next cycle; the
+        scheduler is holding the old one."""
+        built, closed, _ran = self._run(
+            [self._config(), self._config(execution_broker="tradier")]
+        )
+
+        self.assertEqual(
+            [item["execution_broker"] for item in built], ["alpaca", "tradier"]
+        )
+        # Twice: the old scheduler when it was replaced, and the new one
+        # on the way out.
+        self.assertEqual([item["execution_broker"] for item in closed],
+                         ["alpaca", "tradier"])
+
+    def test_going_live_rebuilds(self):
+        built, _closed, _ran = self._run(
+            [self._config(), self._config(execution_gateway="broker")]
+        )
+
+        self.assertEqual(
+            [item["execution_gateway"] for item in built], ["dry-run", "broker"]
+        )
+
+    def test_an_unchanged_configuration_reuses_the_scheduler(self):
+        """Rebuilding every cycle would reconstruct the broker, the
+        gateway and the persistence runtime for nothing."""
+        built, closed, ran = self._run([self._config(), self._config()])
+
+        self.assertEqual(len(built), 1)
+        self.assertEqual(len(ran), 2)
+        # Once, on shutdown — not between the two cycles.
+        self.assertEqual(len(closed), 1)
+
+    def test_a_setting_that_cannot_be_built_leaves_it_waiting(self):
+        """Exiting here would let one typo in the UI disable the worker
+        permanently, with nothing running to fix it from."""
+        attempts = []
+
+        def failing(config):
+            attempts.append(config)
+            raise ValueError("no such broker")
+
+        built, _closed, ran = self._run(
+            [self._config(), self._config()], builder=failing
+        )
+
+        self.assertEqual(len(attempts), 2)
+        self.assertEqual(ran, [])
+
+    def test_the_scheduler_is_released_on_the_way_out(self):
+        _built, closed, _ran = self._run([self._config()])
+
+        self.assertEqual(len(closed), 1)
+
+
+class ResolveConfigTests(unittest.TestCase):
+    def test_operator_overrides_beat_the_environment(self):
+        from tradingagents.orchestration import autonomous_worker
+
+        with mock.patch.dict(
+            "os.environ", {"EXECUTION_BROKER": "alpaca"}, clear=False
+        ), mock.patch(
+            "tradingagents.setup.settings.apply_overrides",
+            lambda config, **_: {**config, "execution_broker": "tradier"},
+        ):
+            config = autonomous_worker.resolve_config()
+
+        self.assertEqual(config["execution_broker"], "tradier")
+
+    def test_the_shape_signature_covers_what_cannot_be_hot_swapped(self):
+        from tradingagents.orchestration.autonomous_worker import SCHEDULER_SHAPING
+
+        for key in ("execution_broker", "execution_gateway", "llm_provider"):
+            self.assertIn(key, SCHEDULER_SHAPING)
+

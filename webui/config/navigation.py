@@ -72,7 +72,7 @@ STAGES: tuple[Stage, ...] = (
         id="setup",
         label="Set up",
         blurb="What this deployment still needs, and every setting behind it.",
-        panels=("setup_panel",),
+        panels=("setup_panel", "platform_settings"),
     ),
 )
 

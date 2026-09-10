@@ -151,6 +151,88 @@ class WelcomeTests(unittest.TestCase):
         self.assertIn("Nothing left to set up", text(welcome_step(readiness(), [])))
 
 
+class ProviderChoiceTests(unittest.TestCase):
+    """The step offers a choice rather than reporting one.
+
+    It used to say "Model provider — OpenAI. This applies because
+    llm_provider = openai", which accurately described a decision nobody
+    had been offered.
+    """
+
+    def _step(self, role_id, chosen, config=None):
+        from tradingagents.setup.providers import role as get_role
+
+        view = readiness(config)
+        return requirement_step(
+            view.get(role_id), role=get_role(role_id), chosen=chosen
+        )
+
+    def _radio_values(self, component):
+        if type(component).__name__ == "RadioItems":
+            return [option["value"] for option in component.options]
+        children = getattr(component, "children", None)
+        if isinstance(children, (list, tuple)):
+            for child in children:
+                found = self._radio_values(child)
+                if found:
+                    return found
+        elif children is not None:
+            return self._radio_values(children)
+        return []
+
+    def test_every_model_provider_is_offered(self):
+        from tradingagents.setup.providers import MODEL_PROVIDERS
+
+        offered = self._radio_values(self._step("model", "openai"))
+
+        self.assertEqual(set(offered), {item.id for item in MODEL_PROVIDERS})
+
+    def test_every_broker_is_offered(self):
+        offered = self._radio_values(self._step("broker", "alpaca"))
+
+        self.assertEqual(set(offered), {"alpaca", "tradier", "robinhood"})
+
+    def test_the_current_choice_is_preselected(self):
+        def radio(component):
+            if type(component).__name__ == "RadioItems":
+                return component
+            children = getattr(component, "children", None)
+            if isinstance(children, (list, tuple)):
+                for child in children:
+                    # `is not None`: a Dash component defines __len__, so
+                    # one with no children is falsy and a truthiness test
+                    # walks straight past it.
+                    found = radio(child)
+                    if found is not None:
+                        return found
+            elif children is not None:
+                return radio(children)
+            return None
+
+        self.assertEqual(radio(self._step("model", "anthropic")).value, "anthropic")
+
+    def test_the_fields_follow_the_choice(self):
+        """Picking Tradier asks for a Tradier token, not an Alpaca pair."""
+        rendered = text(
+            self._step("broker", "tradier", {"execution_broker": "tradier"})
+        )
+
+        self.assertIn("Access token", rendered)
+        self.assertNotIn("Key ID", rendered)
+
+    def test_a_role_with_one_implementation_shows_no_picker(self):
+        """A radio button with one option is not a choice."""
+        step = self._step("macro", "fred", {"autonomous_analysts": "market,macro"})
+
+        self.assertEqual(self._radio_values(step), [])
+        self.assertIn("only macro source implemented", text(step))
+
+    def test_a_provider_needing_nothing_says_why(self):
+        rendered = text(self._step("model", "ollama", {"llm_provider": "ollama"}))
+
+        self.assertIn("no key to set", rendered)
+
+
 class RequirementStepTests(unittest.TestCase):
     def test_it_says_what_the_credential_buys(self):
         view = readiness()

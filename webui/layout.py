@@ -40,6 +40,7 @@ from webui.components.pipeline_board import create_pipeline_board
 from webui.components.vitals import create_vitals_strip
 from webui.callbacks.pulse_callbacks import create_pulse_components
 from webui.components.evaluation_panel import create_evaluation_panel
+from webui.components.platform_settings import create_platform_settings
 from webui.components.setup_panel import create_setup_panel
 from webui.components.setup_wizard import create_setup_wizard
 from webui.config.constants import COLORS, REFRESH_INTERVALS
@@ -111,6 +112,7 @@ PANEL_FACTORIES = {
     "alpaca_account": _alpaca_account_card,
     "cost_panel": create_cost_panel,
     "setup_panel": create_setup_panel,
+    "platform_settings": create_platform_settings,
 }
 
 

@@ -289,7 +289,7 @@ def grouped_credentials():
     collapsed section's inputs are still in the DOM and still saved.
     """
     from tradingagents.setup import evaluate_readiness
-    from tradingagents.setup.readiness import MODEL_PROVIDERS
+    from tradingagents.setup.providers import MODEL_PROVIDERS
 
     try:
         readiness = evaluate_readiness()
@@ -304,7 +304,9 @@ def grouped_credentials():
         # configuration problems.
         in_use = set()
 
-    provider_keys = {item.key for item in MODEL_PROVIDERS.values()}
+    provider_keys = {
+        field.key for provider in MODEL_PROVIDERS for field in provider.fields
+    }
     buckets: dict[str, list] = {key: [] for key, _ in GROUP_TITLES}
     for api in API_CONFIGS:
         buckets[_group_for(api, in_use, provider_keys)].append(
