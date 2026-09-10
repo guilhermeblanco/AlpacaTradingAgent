@@ -78,6 +78,19 @@ def requirement_row(requirement):
                     ),
                     html.Strong(requirement.title, className="me-2"),
                     dbc.Badge(level_label, color=colour, className="me-2"),
+                    # Every row, whatever its level. The wizard skips the
+                    # optional ones on purpose — walking somebody through
+                    # Alpha Vantage is the laundry list with a progress bar
+                    # — but skipping them there and offering no other route
+                    # left them reachable only through a collapsed section
+                    # of the integrations modal. This is the other route.
+                    dbc.Button(
+                        "Change" if done else "Configure",
+                        id={"type": "configure-role", "role": requirement.id},
+                        color="link",
+                        size="sm",
+                        className="p-0 ms-auto",
+                    ),
                 ],
                 className="d-flex align-items-center flex-wrap",
             ),
@@ -153,8 +166,10 @@ def create_setup_panel():
                         html.H4("Set up", className="mb-1"),
                         html.P(
                             "Three things are usually enough: a model provider, "
-                            "a broker, and one market-data key. What follows is "
-                            "what this configuration actually needs.",
+                            "a broker, and one market-data key. Everything this "
+                            "configuration can use is listed below, required or "
+                            "not — Configure any of them to set it, Change to "
+                            "swap the provider or rotate a key.",
                             className="text-muted small mb-0",
                         ),
                     ],
@@ -165,6 +180,7 @@ def create_setup_panel():
                     id="open-setup-wizard-btn",
                     color="primary",
                     className="me-2 mb-3",
+                    title="Walks through only what is missing and required",
                 ),
                 dbc.Button(
                     [html.I(className="fas fa-key me-2"), "All integrations"],
@@ -174,7 +190,53 @@ def create_setup_panel():
                 ),
                 dcc.Interval(id="setup-readiness-interval", interval=30_000),
                 html.Div(id="setup-readiness"),
+                role_editor_modal(),
             ]
         ),
         className="mb-4",
     )
+
+
+def role_editor_modal():
+    """Change one provider, or fill in one that was never set.
+
+    The same editor the wizard uses, so a field looks and behaves the
+    same whether you met it on the way in or came back to it a month
+    later.
+    """
+    return dbc.Modal(
+        [
+            dbc.ModalHeader(dbc.ModalTitle(id="role-editor-title")),
+            dbc.ModalBody(
+                [
+                    html.Div(id="role-editor-body"),
+                    html.Div(id="role-editor-status", className="mt-2"),
+                ]
+            ),
+            dbc.ModalFooter(
+                [
+                    # Removing a credential is a real operation, not an
+                    # oversight: a key that is rotated away needs to be
+                    # gone rather than blank-and-therefore-kept.
+                    dbc.Button(
+                        "Remove stored keys",
+                        id="role-editor-clear",
+                        color="outline-danger",
+                        size="sm",
+                        className="me-auto",
+                    ),
+                    dbc.Button(
+                        "Cancel", id="role-editor-cancel",
+                        color="secondary", outline=True, className="me-2",
+                    ),
+                    dbc.Button("Save", id="role-editor-save", color="primary"),
+                ]
+            ),
+            dcc.Store(id="role-editor-target"),
+        ],
+        id="role-editor-modal",
+        is_open=False,
+        size="lg",
+        scrollable=True,
+    )
+
