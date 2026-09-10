@@ -276,16 +276,24 @@ class ProxmoxScriptTests(unittest.TestCase):
         self.assertIn("lxc.mount.entry: /dev/net/tun", self.script)
         self.assertIn("lxc.cgroup2.devices.allow: c 10:200 rwm", self.script)
 
-    def test_a_container_is_started_before_the_image_is_built(self):
-        """Two attempts at this deployment failed at STEP 4 of 7, minutes in,
-        because podman could not start a container at all. The smoke test
-        uses the image the build begins from, so it costs nothing on a cold
-        cache and a second on a warm one."""
-        smoke = self.script.index("smoke-testing container start")
+    def test_a_two_line_build_is_probed_before_the_real_one(self):
+        """Three attempts died at STEP 4 of 7, minutes in. The probe is a
+        build rather than a `podman run` because those are different code
+        paths — `podman run` took the default bridge and passed while a RUN
+        step asked buildah for a namespace and failed."""
+        probe = self.script.index("probing how the build reaches the network")
         build = self.script.index("building the application image")
 
-        self.assertLess(smoke, build)
-        self.assertIn("podman run --rm docker.io/library/python", self.script)
+        self.assertLess(probe, build)
+        self.assertIn("RUN true", self.script)
+
+    def test_the_probe_chooses_the_build_network_and_records_it(self):
+        """Finding out that the default fails is only half of it; the answer
+        has to reach the real build, and survive into a later `make build`
+        run by hand inside the LXC."""
+        self.assertIn('--network=host', self.script)
+        self.assertIn('set_env_key BUILD_NETWORK', self.script)
+        self.assertIn('BUILD_NETWORK="$BUILD_NETWORK" build', self.script)
 
     def test_podmans_runtime_helpers_are_named_explicitly(self):
         """`--no-install-recommends` plus podman is a trap: on Ubuntu these

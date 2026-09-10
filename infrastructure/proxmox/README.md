@@ -103,17 +103,29 @@ Ubuntu keeps it in `universe` — a current podman-compose goes into
 That is what makes the base image a preference. Pick whichever apt-based
 template you already keep updated.
 
-## It checks before it commits twenty minutes
+## It probes before it commits twenty minutes
 
-Between installing podman and building the image, the script starts a
-throwaway container from `python:3.14-slim-bookworm` — the image the build
-begins from, so on a cold cache it is not extra work, and on a warm one it
-takes a second. That single command exercises everything that has broken
-here: the runtime, the storage driver, and the network namespace.
+Between installing podman and building the image, the script runs a two-line
+build: the same base image the real one starts from, plus `RUN true`. On a
+cold cache that is not extra work — it pulls what STEP 1 needs anyway — and
+on a warm one it takes a second.
 
-A build is a terrible place to learn that podman cannot start a container.
-The first two attempts at this deployment both failed at STEP 4 of 7, several
-minutes in, with errors that named a binary rather than a cause.
+It is a *build* and not a `podman run` for a reason worth knowing. An earlier
+version of this check started a container, passed, and the real build failed
+at the same step as always: `podman run` takes the default bridge, while a
+RUN step asks buildah for a namespace, and buildah reached for pasta, which
+could not configure one in this LXC even with `/dev/net/tun` present.
+Exercising the path that works tells you nothing about the path that does not.
+
+The probe also decides. If podman's own choice works it is left alone; if it
+does not, the build is given `--network=host` and the answer is written to
+`.env`, so a `make build` run by hand in the LXC later does not rediscover
+it. RUN steps then share the container's own network, which is all apt and
+pip need, and a build publishes nothing. Force it yourself with
+`BUILD_NETWORK=host`.
+
+Three attempts at this deployment died at STEP 4 of 7, minutes in. All three
+would have surfaced here in seconds.
 
 ## The first run is slow
 

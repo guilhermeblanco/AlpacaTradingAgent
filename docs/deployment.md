@@ -90,6 +90,12 @@ Other targets: `logs`, `status`, `shell`, `psql`, `restart`, `down`, `reset`
 - **In a nested unprivileged LXC**, podman needs `nesting=1,keyctl=1,fuse=1`
   on the container and the `fuse-overlayfs` storage driver, because the kernel
   refuses overlayfs-on-overlayfs there. The Proxmox script sets both.
+- **A build's RUN steps may need `--network=host` there.** `podman run` and a
+  RUN step inside `podman build` take different paths to a network namespace,
+  and in a nested unprivileged LXC the second can fail where the first
+  succeeds. `BUILD_NETWORK` in `.env` (or the environment) is what the
+  Makefile passes to `podman build`; the Proxmox script probes for the right
+  value with a two-line build and records it.
 - **It also needs `/dev/net/tun`**, which an unprivileged LXC is not given.
   pasta and slirp4netns both set a container's network up by creating a tap
   device inside its namespace; without the device, podman fails with
