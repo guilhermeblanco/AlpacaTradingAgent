@@ -1,0 +1,164 @@
+# =============================================================================
+# TradingAgents — application stack (podman)
+#
+# One image, three long-lived roles plus a one-shot migration:
+#
+#   migrate                 alembic upgrade head, runs to completion first
+#   web                     the Dash workbench (port 7860)
+#   evaluation-worker       resolves decisions into outcomes at each horizon
+#   reconciliation-worker   keeps broker state and our record in agreement
+#
+# The autonomous worker — the only service that can place an order without a
+# human clicking anything — is deliberately NOT here. It lives in
+# `podman-compose.autonomous.yml` and has to be asked for by name. Compose
+# `profiles` would have done the same job, but a provider that quietly ignores
+# an unknown key would then start it, and that is not a mistake this stack
+# should be able to make.
+#
+# PostgreSQL is likewise not here by default. `POSTGRES_MODE=external` (the
+# default) points the stack at a server you already run; `POSTGRES_MODE=local`
+# layers `podman-compose.postgres.yml` on top to run one alongside the app.
+#
+# `DATABASE_URL` reaches every service through one mechanism and only one:
+# compose interpolates `${DATABASE_URL}` and injects it. In external mode the
+# value comes from `.env`, which compose reads for interpolation on its own;
+# in local mode the Makefile exports the in-stack URL, and a shell variable
+# beats `.env`. So there is exactly one place to look when the stack talks to
+# the wrong database, and it is never two files disagreeing.
+#
+# Usage — through the Makefile, which owns the image build and picks the right
+# overlay files:
+#
+#   make build      # podman build -t localhost/tradingagents:latest
+#   make up         # migrate to head, then start the stack
+#   make logs       # follow everything
+#   make down       # stop, keep the volumes
+#
+# Running compose by hand works too, but then the overlay list is yours.
+# =============================================================================
+
+name: tradingagents
+
+# ── Shared definition ────────────────────────────────────────────────────────
+# `env_file` carries the API keys and every tunable documented in env.sample.
+# `environment` carries what the *deployment* decides — and it wins over
+# `env_file`, so those are the settings a stale .env cannot quietly override.
+x-app: &app
+  image: "${IMAGE:-localhost/tradingagents}:${TAG:-latest}"
+  env_file:
+    - .env
+  init: true
+  restart: unless-stopped
+  stop_grace_period: 30s
+  networks:
+    - tradingagents
+
+services:
+  # ── Schema, before anything reads it ───────────────────────────────────────
+  # Everything else waits for this to exit 0. A worker started against a schema
+  # older than its code writes rows nothing can read back.
+  migrate:
+    <<: *app
+    container_name: tradingagents-migrate
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: "${DATABASE_URL}"
+      TZ: "${TZ:-America/New_York}"
+    restart: "no"
+
+  # ── The workbench ──────────────────────────────────────────────────────────
+  web:
+    <<: *app
+    container_name: tradingagents-web
+    command:
+      - sh
+      - -c
+      - exec python run_webui_dash.py --server-name 0.0.0.0 --port 7860
+    environment:
+      DATABASE_URL: "${DATABASE_URL}"
+      PORT: "7860"
+      SERVER_NAME: "0.0.0.0"
+      # A clash must fail loudly: the port is published by the pod, so
+      # silently moving to 7861 would leave the mapping pointing at nothing
+      # while the process reports a clean start.
+      TRADINGAGENTS_STRICT_PORT: "1"
+      TZ: "${TZ:-America/New_York}"
+      PERSISTENCE_BACKEND: "${PERSISTENCE_BACKEND:-postgres}"
+      TRADINGAGENTS_CACHE_DIR: /app/tradingagents/dataflows/data_cache
+      TRADINGAGENTS_RESULTS_DIR: /app/eval_results
+      TRADINGAGENTS_MEMORY_LOG_PATH: /app/.tradingagents/memory/trading_memory.md
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      # Loopback by default. The Proxmox deployment sets HOST_BIND=0.0.0.0,
+      # where the LXC boundary is the access control.
+      - "${HOST_BIND:-127.0.0.1}:${HOST_PORT:-7860}:7860"
+    volumes:
+      - data-cache:/app/tradingagents/dataflows/data_cache
+      - eval-results:/app/eval_results
+      - trading-state:/app/.tradingagents
+    healthcheck:
+      # Liveness only — see webui/utils/health.py for why it checks nothing
+      # else. Losing the console because PostgreSQL blipped is the wrong
+      # failure mode; the vitals strip reports dependency health per
+      # dependency.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7860/healthz', timeout=3).read(1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  # ── Outcome attribution ────────────────────────────────────────────────────
+  evaluation-worker:
+    <<: *app
+    container_name: tradingagents-evaluation-worker
+    command: ["python", "-m", "tradingagents.evaluation.worker"]
+    environment:
+      DATABASE_URL: "${DATABASE_URL}"
+      TZ: "${TZ:-America/New_York}"
+      PERSISTENCE_BACKEND: "postgres"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - eval-results:/app/eval_results
+      - trading-state:/app/.tradingagents
+    # The worker heartbeats into the control plane and the probe reads that,
+    # not the process table — so a loop that is wedged but alive reads as
+    # unhealthy, which is the whole point.
+    healthcheck:
+      test: ["CMD", "python", "-m", "tradingagents.operations.control_plane", "check", "evaluation-worker", "--stale-after-seconds", "900"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 60s
+
+  # ── Broker/ledger agreement ────────────────────────────────────────────────
+  reconciliation-worker:
+    <<: *app
+    container_name: tradingagents-reconciliation-worker
+    command: ["python", "-m", "tradingagents.execution.reconciliation_worker"]
+    environment:
+      DATABASE_URL: "${DATABASE_URL}"
+      TZ: "${TZ:-America/New_York}"
+      PERSISTENCE_BACKEND: "postgres"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - trading-state:/app/.tradingagents
+    healthcheck:
+      test: ["CMD", "python", "-m", "tradingagents.operations.control_plane", "check", "reconciliation-worker", "--stale-after-seconds", "30"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  data-cache:
+  eval-results:
+  trading-state:
+
+networks:
+  tradingagents:

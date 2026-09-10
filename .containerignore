@@ -1,0 +1,44 @@
+# What stays out of the build context.
+#
+# `COPY . .` in the Containerfile means anything left here is baked into the
+# image and shipped wherever the image goes. The env rules below are the ones
+# that matter: the deployment's own .env lives at infrastructure/local/.env
+# and holds live broker credentials, and a bare `.env` pattern matches only
+# the repository root — which is exactly the kind of near-miss that puts
+# secrets in a layer.
+**/.env
+**/.env.*
+*.env
+
+.git
+.gitignore
+__pycache__
+**/__pycache__
+**/*.pyc
+.venv
+venv
+node_modules
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+output/
+.playwright-cli/
+*.log
+*.sqlite3
+*.db
+*.ipynb_checkpoints
+tradingagents/dataflows/data_cache/
+webui/__pycache__
+cli/__pycache__
+assets/
+
+# Nothing in the image reads these, and the provisioning scripts run on the
+# Proxmox node rather than inside a container.
+infrastructure/proxmox/
+docs/
+eval_results/

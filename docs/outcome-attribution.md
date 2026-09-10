@@ -62,7 +62,7 @@ episode query transaction closes; each outcome then commits in its own short
 transaction. A missing price fails only that episode and is retried on the next
 cycle.
 
-Docker Compose runs this worker as a separate service. Configure
+The podman stack runs this worker as a separate service. Configure
 `EVALUATION_PRICE_PROVIDER`, `EVALUATION_HORIZONS_DAYS`,
 `EVALUATION_ESTIMATED_COST_PCT`, and `EVALUATION_WORKER_INTERVAL_SECONDS`.
 Provider selection is unrelated to `execution_broker`.
