@@ -63,6 +63,26 @@ DARK_PALETTE: dict[str, str] = {
     "info-light": "#7DD3FC",
     "highlight": "#2DD4BF",
     "highlight-light": "#5EEAD4",
+    # Callout grounds. A bull message, a passed gate, a green banner —
+    # a block of colour with text on it, rather than a line or a dot.
+    # These are the tokens that cannot be derived from the ones above:
+    # on a dark ground a callout is a deep tint, on a light ground a
+    # pale one, and the text on it inverts with it. Deriving either from
+    # `positive` alone gives an unreadable pairing in one of the two.
+    "positive-wash": "#064E3B",
+    "positive-wash-edge": "#047857",
+    "on-positive-wash": "#A7F3D0",
+    "negative-wash": "#7F1D1D",
+    "negative-wash-edge": "#B91C1C",
+    "on-negative-wash": "#FECACA",
+    "accent-wash": "#1E3A8A",
+    "accent-wash-edge": "#1D4ED8",
+    "on-accent-wash": "#BFDBFE",
+    # Text on a *saturated* colour — a primary button, the active tab,
+    # a filled badge. Near-white in both themes, because the accent is
+    # a strong blue in both; `text-bright` is the opposite end of the
+    # ground, which on a blue tab is near-black in light mode.
+    "on-accent": "#F8FAFC",
     # What a shadow is cast in. A theme decides this too: on a light
     # ground a black shadow is right, on a dark one it is barely visible
     # and the border does the work instead.
@@ -111,6 +131,20 @@ LIGHT_PALETTE: dict[str, str] = {
     "info-light": "#0284C7",
     "highlight": "#0F766E",
     "highlight-light": "#14B8A6",
+    "positive-wash": "#D1FAE5",
+    "positive-wash-edge": "#A7F3D0",
+    "on-positive-wash": "#065F46",
+    "negative-wash": "#FEE2E2",
+    "negative-wash-edge": "#FECACA",
+    "on-negative-wash": "#991B1B",
+    "accent-wash": "#DBEAFE",
+    "accent-wash-edge": "#BFDBFE",
+    "on-accent-wash": "#1E3A8A",
+    # Text on a *saturated* colour — a primary button, the active tab,
+    # a filled badge. Near-white in both themes, because the accent is
+    # a strong blue in both; `text-bright` is the opposite end of the
+    # ground, which on a blue tab is near-black in light mode.
+    "on-accent": "#FFFFFF",
     "shadow": "#0F172A",
 }
 
@@ -145,8 +179,7 @@ def rgb_triplet(value: str) -> str:
     """`#3B82F6` → `59 130 246`, for `rgb(var(--x) / 0.1)`.
 
     The stylesheet needs alpha variants of palette colours — a hover
-    wash, a focus ring, a shadow. Writing those as `rgba(59, 130, 246,
-    0.1)` pins the colour to one theme, so each token also publishes its
+    wash, a focus ring, a shadow. Writing those as `rgb(var(--ta-accent-rgb) / 0.1)` pins the colour to one theme, so each token also publishes its
     channels and the alpha is applied at the point of use.
     """
     raw = value.lstrip("#")
@@ -245,6 +278,21 @@ def palette_variables(palette: dict[str, str], selector: str = ":root") -> str:
         lines.append(f"    --ta-status-{status}: {palette[palette_key]};")
     lines.append("}")
     return "\n".join(lines)
+
+
+def iframe_style_block(theme: str = "") -> str:
+    """The palette as a `<style>` block, for a document of its own.
+
+    An iframe is a separate document: custom properties declared on the
+    parent's `:root` do not cross into it, so `var(--ta-surface)` inside
+    one resolves to nothing and the browser falls back to whatever the
+    property's initial value is. Anything rendered into an iframe has to
+    be handed the palette.
+
+    Both palettes are emitted, exactly as the main document gets them,
+    so the same `data-theme` attribute switches an iframe too.
+    """
+    return "<style>\n" + css_variables() + "\n</style>"
 
 
 def status_color_for(value: str, theme: str) -> str:

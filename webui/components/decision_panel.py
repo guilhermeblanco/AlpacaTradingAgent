@@ -22,7 +22,7 @@ def create_decision_panel():
                     "height": "400px", 
                     "overflowY": "auto",
                     "overflowX": "hidden",
-                    "border": "1px solid #334155",
+                    "border": "1px solid var(--ta-border)",
                     "borderRadius": "5px",
                     "padding": "15px",
                     "backgroundColor": PALETTE["surface"]

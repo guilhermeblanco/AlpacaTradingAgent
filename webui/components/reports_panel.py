@@ -39,9 +39,7 @@ def create_reports_panel():
                     ]
                 ),
                 label="📊 Market Analysis", 
-                tab_id="market-analysis",
-                label_style={"color": "var(--ta-text-muted)", "font-weight": "600"},
-                active_label_style={"color": "var(--ta-text-bright)", "font-weight": "700"}
+                tab_id="market-analysis"
             ),
             dbc.Tab(
                 html.Div(
@@ -57,9 +55,7 @@ def create_reports_panel():
                     ]
                 ),
                 label="📱 Social Sentiment", 
-                tab_id="social-sentiment",
-                label_style={"color": "var(--ta-text-muted)", "font-weight": "600"},
-                active_label_style={"color": "var(--ta-text-bright)", "font-weight": "700"}
+                tab_id="social-sentiment"
             ),
             dbc.Tab(
                 html.Div(
@@ -75,9 +71,7 @@ def create_reports_panel():
                     ]
                 ),
                 label="📰 News Analysis", 
-                tab_id="news-analysis",
-                label_style={"color": "var(--ta-text-muted)", "font-weight": "600"},
-                active_label_style={"color": "var(--ta-text-bright)", "font-weight": "700"}
+                tab_id="news-analysis"
             ),
             dbc.Tab(
                 html.Div(
@@ -93,9 +87,7 @@ def create_reports_panel():
                     ]
                 ),
                 label="📈 Fundamentals", 
-                tab_id="fundamentals-analysis",
-                label_style={"color": "var(--ta-text-muted)", "font-weight": "600"},
-                active_label_style={"color": "var(--ta-text-bright)", "font-weight": "700"}
+                tab_id="fundamentals-analysis"
             ),
             dbc.Tab(
                 html.Div(
@@ -111,9 +103,7 @@ def create_reports_panel():
                     ]
                 ),
                 label="🌍 Macro Analysis", 
-                tab_id="macro-analysis",
-                label_style={"color": "var(--ta-text-muted)", "font-weight": "600"},
-                active_label_style={"color": "var(--ta-text-bright)", "font-weight": "700"}
+                tab_id="macro-analysis"
             ),
             dbc.Tab(
                 html.Div(
@@ -125,9 +115,7 @@ def create_reports_panel():
                     className="debate-content-wrapper"
                 ),
                 label="🔍 Researcher Debate", 
-                tab_id="researcher-debate",
-                label_style={"color": "var(--ta-text-muted)", "font-weight": "600"},
-                active_label_style={"color": "var(--ta-text-bright)", "font-weight": "700"}
+                tab_id="researcher-debate"
             ),
             dbc.Tab(
                 html.Div(
@@ -143,9 +131,7 @@ def create_reports_panel():
                     ]
                 ),
                 label="🎯 Research Manager", 
-                tab_id="research-manager",
-                label_style={"color": "var(--ta-text-muted)", "font-weight": "600"},
-                active_label_style={"color": "var(--ta-text-bright)", "font-weight": "700"}
+                tab_id="research-manager"
             ),
             dbc.Tab(
                 html.Div(
@@ -161,9 +147,7 @@ def create_reports_panel():
                     ]
                 ),
                 label="🧠 Trader Plan", 
-                tab_id="trader-plan",
-                label_style={"color": "var(--ta-text-muted)", "font-weight": "600"},
-                active_label_style={"color": "var(--ta-text-bright)", "font-weight": "700"}
+                tab_id="trader-plan"
             ),
             dbc.Tab(
                 html.Div(
@@ -175,9 +159,7 @@ def create_reports_panel():
                     className="debate-content-wrapper"
                 ),
                 label="⚖️ Risk Debate", 
-                tab_id="risk-debate",
-                label_style={"color": "var(--ta-text-muted)", "font-weight": "600"},
-                active_label_style={"color": "var(--ta-text-bright)", "font-weight": "700"}
+                tab_id="risk-debate"
             ),
             dbc.Tab(
                 html.Div(
@@ -193,19 +175,17 @@ def create_reports_panel():
                     ]
                 ),
                 label="⚡ Final Decision", 
-                tab_id="final-decision",
-                label_style={"color": "var(--ta-text-muted)", "font-weight": "600"},
-                active_label_style={"color": "var(--ta-text-bright)", "font-weight": "700"}
+                tab_id="final-decision"
             ),
         ],
         id="tabs",
         active_tab="market-analysis",
         className="enhanced-tabs",
         style={
-            "background": "linear-gradient(135deg, #1E293B 0%, #0F172A 100%)",
+            "background": "linear-gradient(135deg, var(--ta-surface) 0%, var(--ta-background) 100%)",
             "border-radius": "8px",
             "padding": "0.5rem",
-            "box-shadow": "0 4px 12px rgba(0, 0, 0, 0.15)"
+            "box-shadow": "0 4px 12px rgb(var(--ta-shadow-rgb) / 0.15)"
         }
     )
 

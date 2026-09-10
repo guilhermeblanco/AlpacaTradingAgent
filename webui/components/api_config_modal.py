@@ -222,7 +222,7 @@ def create_api_input_row(api_config):
                     className="api-key-input",
                     style={
                         "background": "var(--ta-surface)",
-                        "border": "1px solid #334155",
+                        "border": "1px solid var(--ta-border)",
                         "color": "var(--ta-text-soft)"
                     }
                 ),

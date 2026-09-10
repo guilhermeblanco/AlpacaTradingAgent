@@ -13,8 +13,13 @@ from dash import dcc, html
 
 from tradingagents.workbench.tape import STAGES, StageState
 from webui.components.workbench import STATE_COLORS
-from webui.config.figures import HEIGHT_SMALL, empty_figure, style
-from webui.config.tokens import DEFAULT_THEME
+from webui.config.figures import (
+    HEIGHT_SMALL,
+    empty_figure,
+    style,
+    translucent as _translucent,
+)
+from webui.config.tokens import DEFAULT_THEME, palette_for
 from webui.config.constants import COLORS
 
 
@@ -73,7 +78,7 @@ def throughput_figure(series, *, theme=DEFAULT_THEME) -> go.Figure:
             mode="lines+markers",
             line={"color": COLORS["secondary"], "width": 2},
             fill="tozeroy",
-            fillcolor="rgba(16, 185, 129, 0.10)",
+            fillcolor=_translucent(palette_for(theme)["positive"], 0.10),
         )
     )
     style(figure, title="Decisions per hour", height=HEIGHT_SMALL, theme=theme)

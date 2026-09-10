@@ -451,7 +451,7 @@ body {
 }
 
 .dash-markdown table thead th {
-    color: var(--ta-text-bright);
+    color: var(--ta-on-accent);
     font-weight: 600;
     padding: 16px 20px;
     text-align: left;
@@ -731,7 +731,7 @@ body {
 }
 
 .enhanced-tabs .nav-tabs .nav-link.active {
-    color: var(--ta-text-bright);
+    color: var(--ta-on-accent);
     background: linear-gradient(135deg, var(--ta-accent) 0%, var(--ta-accent-hover) 100%);
     box-shadow: 0 2px 4px rgb(var(--ta-accent-rgb) / 0.3);
 }
@@ -1040,7 +1040,7 @@ body {
 }
 
 .enhanced-tabs .nav-tabs .nav-link.active {
-    color: var(--ta-text-bright);
+    color: var(--ta-on-accent);
     background: linear-gradient(135deg, var(--ta-accent) 0%, var(--ta-accent-hover) 100%);
     border: none;
     box-shadow: 0 2px 8px rgb(var(--ta-accent-rgb) / 0.3);
@@ -1224,7 +1224,7 @@ body {
 .prompt-modal .btn-outline-primary:hover {
     background-color: var(--ta-accent);
     border-color: var(--ta-accent);
-    color: var(--ta-text-bright);
+    color: var(--ta-on-accent);
 }
 
 .prompt-modal .btn-secondary {
@@ -1419,7 +1419,7 @@ body {
 
 .tool-outputs-modal .btn-outline-primary:hover {
     background-color: var(--ta-accent);
-    color: var(--ta-text-bright);
+    color: var(--ta-on-accent);
 }
 
 .tool-outputs-modal .btn-outline-success {
@@ -1429,7 +1429,7 @@ body {
 
 .tool-outputs-modal .btn-outline-success:hover {
     background-color: var(--ta-positive);
-    color: var(--ta-text-bright);
+    color: var(--ta-on-accent);
 }
 
 .tool-outputs-modal .btn-secondary {
@@ -1569,7 +1569,7 @@ body {
 .api-config-modal .btn-outline-danger:hover {
     background-color: var(--ta-negative);
     border-color: var(--ta-negative);
-    color: var(--ta-text-bright);
+    color: var(--ta-on-accent);
 }
 
 .api-config-modal .btn-outline-info {
@@ -1580,7 +1580,7 @@ body {
 .api-config-modal .btn-outline-info:hover {
     background-color: var(--ta-info);
     border-color: var(--ta-info);
-    color: var(--ta-text-bright);
+    color: var(--ta-on-accent);
 }
 
 .api-config-modal .btn-primary {
@@ -1858,7 +1858,7 @@ body {
 .analysis-config-card .form-select:focus {
     border-color: var(--ta-highlight);
     background-color: var(--ta-background);
-    color: var(--ta-text-bright);
+    color: var(--ta-on-accent);
     box-shadow: 0 0 0 3px rgb(var(--ta-highlight-rgb) / 0.14);
 }
 
@@ -1939,7 +1939,7 @@ body {
 .segmented-radio .form-check-input:checked + .form-check-label {
     border-color: var(--ta-highlight);
     background: rgb(var(--ta-highlight-rgb) / 0.14);
-    color: var(--ta-text-bright);
+    color: var(--ta-on-accent);
 }
 
 .config-switch .form-check-label {
@@ -2578,7 +2578,7 @@ body {
     opacity: 1;
     border-color: var(--ta-highlight) !important;
     background: rgb(var(--ta-highlight-rgb) / 0.18) !important;
-    color: var(--ta-text-bright) !important;
+    color: var(--ta-on-accent) !important;
 }
 
 .orders-page-gap {

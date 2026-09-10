@@ -3,12 +3,13 @@ webui/components/ui.py
 """
 
 from datetime import datetime
+from webui.config.tokens import DEFAULT_THEME, iframe_style_block
 from webui.utils.state import app_state
 from webui.utils.charts import create_chart, create_welcome_chart
 import time
 
 
-def render_researcher_debate(symbol):
+def render_researcher_debate(symbol, *, theme=DEFAULT_THEME):
     """Render the Bull and Bear Researcher debate as a chat-like interface"""
     if not symbol:
         return "<p></p>"
@@ -94,11 +95,16 @@ def render_researcher_debate(symbol):
                 else:
                     messages.append(("bear", debate_history.strip()))
 
-    # Create a complete HTML document for the iframe with improved smooth scrolling
+    # A complete HTML document, so it needs the palette of its own: a
+    # custom property declared on the parent's :root does not cross an
+    # iframe boundary, and `var(--ta-surface)` inside one resolves to
+    # nothing at all.
+    palette = iframe_style_block()
     html = f"""
     <!DOCTYPE html>
-    <html>
+    <html data-theme="{theme}">
     <head>
+        {palette}
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
@@ -107,8 +113,8 @@ def render_researcher_debate(symbol):
                 margin: 0;
                 padding: 15px;
                 font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-                background-color: #1E293B;
-                color: #F1F5F9;
+                background-color: var(--ta-surface);
+                color: var(--ta-text);
                 line-height: 1.6;
             }}
             .debate-container {{
@@ -119,21 +125,21 @@ def render_researcher_debate(symbol):
                 overflow-y: auto;
                 scroll-behavior: auto;
                 scrollbar-width: thin;
-                scrollbar-color: #475569 #334155;
+                scrollbar-color: var(--ta-border-strong) var(--ta-border);
             }}
             .debate-container::-webkit-scrollbar {{
                 width: 8px;
             }}
             .debate-container::-webkit-scrollbar-track {{
-                background: #334155;
+                background: var(--ta-border);
                 border-radius: 4px;
             }}
             .debate-container::-webkit-scrollbar-thumb {{
-                background: #475569;
+                background: var(--ta-border-strong);
                 border-radius: 4px;
             }}
             .debate-container::-webkit-scrollbar-thumb:hover {{
-                background: #64748B;
+                background: var(--ta-text-faint);
             }}
             .message-row {{
                 display: flex;
@@ -164,26 +170,26 @@ def render_researcher_debate(symbol):
                 line-height: 1.5;
                 white-space: pre-wrap;
                 word-wrap: break-word;
-                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+                box-shadow: 0 2px 8px rgb(var(--ta-shadow-rgb) / 0.15);
                 transition: transform 0.2s ease, box-shadow 0.2s ease;
             }}
             .message:hover {{
                 transform: translateY(-1px);
-                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+                box-shadow: 0 4px 12px rgb(var(--ta-shadow-rgb) / 0.2);
             }}
             .bull-message {{
-                background: linear-gradient(135deg, #059669, #047857);
+                background: linear-gradient(135deg, var(--ta-positive-strong), var(--ta-positive-deep));
                 color: white;
                 border-bottom-left-radius: 4px;
                 margin-right: auto;
-                border-left: 4px solid #10B981;
+                border-left: 4px solid var(--ta-positive);
             }}
             .bear-message {{
-                background: linear-gradient(135deg, #DC2626, #B91C1C);
+                background: linear-gradient(135deg, var(--ta-negative), var(--ta-negative-wash-edge));
                 color: white;
                 border-bottom-right-radius: 4px;
                 margin-left: auto;
-                border-right: 4px solid #EF4444;
+                border-right: 4px solid var(--ta-negative);
             }}
             .message-header {{
                 display: flex;
@@ -199,15 +205,15 @@ def render_researcher_debate(symbol):
                 letter-spacing: 0.5px;
             }}
             .bull-message .message-author {{
-                color: #A7F3D0;
+                color: var(--ta-on-positive-wash);
             }}
             .bear-message .message-author {{
-                color: #FECACA;
+                color: var(--ta-on-negative-wash);
             }}
             .prompt-btn {{
-                background: rgba(255, 255, 255, 0.1);
-                border: 1px solid rgba(255, 255, 255, 0.2);
-                color: rgba(255, 255, 255, 0.8);
+                background: rgb(var(--ta-text-bright-rgb) / 0.1);
+                border: 1px solid rgb(var(--ta-text-bright-rgb) / 0.2);
+                color: rgb(var(--ta-text-bright-rgb) / 0.8);
                 border-radius: 4px;
                 padding: 4px 8px;
                 font-size: 0.7rem;
@@ -216,8 +222,8 @@ def render_researcher_debate(symbol):
                 opacity: 0.7;
             }}
             .prompt-btn:hover {{
-                background: rgba(255, 255, 255, 0.2);
-                border-color: rgba(255, 255, 255, 0.4);
+                background: rgb(var(--ta-text-bright-rgb) / 0.2);
+                border-color: rgb(var(--ta-text-bright-rgb) / 0.4);
                 opacity: 1;
                 transform: translateY(-1px);
             }}
@@ -230,7 +236,7 @@ def render_researcher_debate(symbol):
             }}
             .no-messages {{
                 text-align: center;
-                color: #94A3B8;
+                color: var(--ta-text-muted);
                 font-style: italic;
                 padding: 40px 20px;
                 opacity: 0.8;
@@ -238,33 +244,33 @@ def render_researcher_debate(symbol):
             .debate-header {{
                 text-align: center;
                 padding: 15px;
-                background: rgba(51, 65, 85, 0.5);
+                background: rgb(var(--ta-border-rgb) / 0.5);
                 border-radius: 10px;
                 margin-bottom: 20px;
-                border: 1px solid #334155;
+                border: 1px solid var(--ta-border);
             }}
             .debate-title {{
                 font-size: 1.1rem;
                 font-weight: bold;
-                color: #3B82F6;
+                color: var(--ta-accent);
                 margin-bottom: 5px;
             }}
             .debate-subtitle {{
                 font-size: 0.9rem;
-                color: #94A3B8;
+                color: var(--ta-text-muted);
             }}
             .scroll-to-bottom {{
                 position: fixed;
                 bottom: 30px;
                 right: 30px;
-                background: #3B82F6;
+                background: var(--ta-accent);
                 color: white;
                 border: none;
                 border-radius: 50%;
                 width: 48px;
                 height: 48px;
                 cursor: pointer;
-                box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+                box-shadow: 0 4px 12px rgb(var(--ta-accent-rgb) / 0.3);
                 transition: all 0.3s ease;
                 opacity: 0;
                 visibility: hidden;
@@ -275,9 +281,9 @@ def render_researcher_debate(symbol):
                 visibility: visible;
             }}
             .scroll-to-bottom:hover {{
-                background: #2563EB;
+                background: var(--ta-accent-hover);
                 transform: translateY(-2px);
-                box-shadow: 0 6px 16px rgba(59, 130, 246, 0.4);
+                box-shadow: 0 6px 16px rgb(var(--ta-accent-rgb) / 0.4);
             }}
         </style>
         <script>
@@ -643,7 +649,7 @@ def update_chart_period(period, analysis_date=None):
     # If no ticker, return welcome chart
     return create_welcome_chart()
 
-def render_risk_debate(symbol):
+def render_risk_debate(symbol, *, theme=DEFAULT_THEME):
     """Render the Risk, Safe, and Neutral debators debate as a chat-like interface"""
     if not symbol:
         return "<p></p>"
@@ -733,11 +739,16 @@ def render_risk_debate(symbol):
             if current_speaker and current_message.strip():
                 messages.append((current_speaker, current_message.strip()))
 
-    # Create a complete HTML document for the iframe with improved smooth scrolling
+    # A complete HTML document, so it needs the palette of its own: a
+    # custom property declared on the parent's :root does not cross an
+    # iframe boundary, and `var(--ta-surface)` inside one resolves to
+    # nothing at all.
+    palette = iframe_style_block()
     html = f"""
     <!DOCTYPE html>
-    <html>
+    <html data-theme="{theme}">
     <head>
+        {palette}
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
@@ -745,8 +756,8 @@ def render_risk_debate(symbol):
                 margin: 0;
                 padding: 15px;
                 font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-                background-color: #1E293B;
-                color: #F1F5F9;
+                background-color: var(--ta-surface);
+                color: var(--ta-text);
                 line-height: 1.6;
             }}
             .debate-container {{
@@ -757,21 +768,21 @@ def render_risk_debate(symbol):
                 overflow-y: auto;
                 scroll-behavior: auto;
                 scrollbar-width: thin;
-                scrollbar-color: #475569 #334155;
+                scrollbar-color: var(--ta-border-strong) var(--ta-border);
             }}
             .debate-container::-webkit-scrollbar {{
                 width: 8px;
             }}
             .debate-container::-webkit-scrollbar-track {{
-                background: #334155;
+                background: var(--ta-border);
                 border-radius: 4px;
             }}
             .debate-container::-webkit-scrollbar-thumb {{
-                background: #475569;
+                background: var(--ta-border-strong);
                 border-radius: 4px;
             }}
             .debate-container::-webkit-scrollbar-thumb:hover {{
-                background: #64748B;
+                background: var(--ta-text-faint);
             }}
             .message-row {{
                 display: flex;
@@ -802,33 +813,33 @@ def render_risk_debate(symbol):
                 line-height: 1.5;
                 white-space: pre-wrap;
                 word-wrap: break-word;
-                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+                box-shadow: 0 2px 8px rgb(var(--ta-shadow-rgb) / 0.15);
                 transition: transform 0.2s ease, box-shadow 0.2s ease;
             }}
             .message:hover {{
                 transform: translateY(-1px);
-                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+                box-shadow: 0 4px 12px rgb(var(--ta-shadow-rgb) / 0.2);
             }}
             .risky-message {{
-                background: linear-gradient(135deg, #DC2626, #B91C1C);
+                background: linear-gradient(135deg, var(--ta-negative), var(--ta-negative-wash-edge));
                 color: white;
                 border-bottom-left-radius: 4px;
                 margin-right: auto;
-                border-left: 4px solid #EF4444;
+                border-left: 4px solid var(--ta-negative);
             }}
             .safe-message {{
-                background: linear-gradient(135deg, #059669, #047857);
+                background: linear-gradient(135deg, var(--ta-positive-strong), var(--ta-positive-deep));
                 color: white;
                 border-bottom-left-radius: 4px;
                 margin-right: auto;
-                border-left: 4px solid #10B981;
+                border-left: 4px solid var(--ta-positive);
             }}
             .neutral-message {{
-                background: linear-gradient(135deg, #2563EB, #1D4ED8);
+                background: linear-gradient(135deg, var(--ta-accent-hover), var(--ta-accent-strong));
                 color: white;
                 border-bottom-right-radius: 4px;
                 margin-left: auto;
-                border-right: 4px solid #3B82F6;
+                border-right: 4px solid var(--ta-accent);
             }}
             .message-author {{
                 font-weight: bold;
@@ -839,20 +850,20 @@ def render_risk_debate(symbol):
                 letter-spacing: 0.5px;
             }}
             .risky-message .message-author {{
-                color: #FECACA;
+                color: var(--ta-on-negative-wash);
             }}
             .safe-message .message-author {{
-                color: #A7F3D0;
+                color: var(--ta-on-positive-wash);
             }}
             .neutral-message .message-author {{
-                color: #BFDBFE;
+                color: var(--ta-on-accent-wash);
             }}
             .message-content {{
                 font-size: 0.95rem;
             }}
             .no-messages {{
                 text-align: center;
-                color: #94A3B8;
+                color: var(--ta-text-muted);
                 font-style: italic;
                 padding: 40px 20px;
                 opacity: 0.8;
@@ -860,33 +871,33 @@ def render_risk_debate(symbol):
             .debate-header {{
                 text-align: center;
                 padding: 15px;
-                background: rgba(51, 65, 85, 0.5);
+                background: rgb(var(--ta-border-rgb) / 0.5);
                 border-radius: 10px;
                 margin-bottom: 20px;
-                border: 1px solid #334155;
+                border: 1px solid var(--ta-border);
             }}
             .debate-title {{
                 font-size: 1.1rem;
                 font-weight: bold;
-                color: #3B82F6;
+                color: var(--ta-accent);
                 margin-bottom: 5px;
             }}
             .debate-subtitle {{
                 font-size: 0.9rem;
-                color: #94A3B8;
+                color: var(--ta-text-muted);
             }}
             .scroll-to-bottom {{
                 position: fixed;
                 bottom: 30px;
                 right: 30px;
-                background: #3B82F6;
+                background: var(--ta-accent);
                 color: white;
                 border: none;
                 border-radius: 50%;
                 width: 48px;
                 height: 48px;
                 cursor: pointer;
-                box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+                box-shadow: 0 4px 12px rgb(var(--ta-accent-rgb) / 0.3);
                 transition: all 0.3s ease;
                 opacity: 0;
                 visibility: hidden;
@@ -897,9 +908,9 @@ def render_risk_debate(symbol):
                 visibility: visible;
             }}
             .scroll-to-bottom:hover {{
-                background: #2563EB;
+                background: var(--ta-accent-hover);
                 transform: translateY(-2px);
-                box-shadow: 0 6px 16px rgba(59, 130, 246, 0.4);
+                box-shadow: 0 6px 16px rgb(var(--ta-accent-rgb) / 0.4);
             }}
         </style>
         <script>

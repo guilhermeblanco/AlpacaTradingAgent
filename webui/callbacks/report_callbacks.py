@@ -195,10 +195,10 @@ def create_markdown_content(content, default_message="No content available yet."
         create_rich_report_content(content, min_height="1000px"),
         className="report-content-shell",
         style={
-            "background": "linear-gradient(135deg, #0F172A 0%, #1E293B 100%)",
+            "background": "linear-gradient(135deg, var(--ta-background) 0%, var(--ta-surface) 100%)",
             "border-radius": "8px",
             "padding": "1.5rem",
-            "border": "1px solid rgba(51, 65, 85, 0.3)",
+            "border": "1px solid rgb(var(--ta-border-rgb) / 0.3)",
             "color": "var(--ta-text-soft)",
             "line-height": "1.6"
         }
@@ -376,10 +376,10 @@ def register_report_callbacks(app):
                             dangerously_allow_html=False,
                             className='enhanced-markdown-content',
                             style={
-                                "background": "linear-gradient(135deg, #064E3B 0%, #047857 100%)",
+                                "background": "linear-gradient(135deg, var(--ta-positive-wash) 0%, var(--ta-positive-deep) 100%)",
                                 "border-radius": "8px",
                                 "padding": "1rem",
-                                "border-left": "4px solid #10B981",
+                                "border-left": "4px solid var(--ta-positive)",
                                 "color": "var(--ta-text-soft)",
                                 "margin-bottom": "1rem"
                             }
@@ -407,10 +407,10 @@ def register_report_callbacks(app):
                             dangerously_allow_html=False,
                             className='enhanced-markdown-content',
                             style={
-                                "background": "linear-gradient(135deg, #7F1D1D 0%, #B91C1C 100%)",
+                                "background": "linear-gradient(135deg, var(--ta-negative-wash) 0%, var(--ta-negative-wash-edge) 100%)",
                                 "border-radius": "8px",
                                 "padding": "1rem",
-                                "border-left": "4px solid #EF4444",
+                                "border-left": "4px solid var(--ta-negative)",
                                 "color": "var(--ta-text-soft)",
                                 "margin-bottom": "1rem"
                             }
@@ -439,10 +439,10 @@ def register_report_callbacks(app):
                         dangerously_allow_html=False,
                         className='enhanced-markdown-content',
                         style={
-                            "background": "linear-gradient(135deg, #064E3B 0%, #047857 100%)",
+                            "background": "linear-gradient(135deg, var(--ta-positive-wash) 0%, var(--ta-positive-deep) 100%)",
                             "border-radius": "8px",
                             "padding": "1rem",
-                            "border-left": "4px solid #10B981",
+                            "border-left": "4px solid var(--ta-positive)",
                             "color": "var(--ta-text-soft)",
                             "margin-bottom": "1rem"
                         }
@@ -467,10 +467,10 @@ def register_report_callbacks(app):
                         dangerously_allow_html=False,
                         className='enhanced-markdown-content',
                         style={
-                            "background": "linear-gradient(135deg, #7F1D1D 0%, #B91C1C 100%)",
+                            "background": "linear-gradient(135deg, var(--ta-negative-wash) 0%, var(--ta-negative-wash-edge) 100%)",
                             "border-radius": "8px",
                             "padding": "1rem",
-                            "border-left": "4px solid #EF4444",
+                            "border-left": "4px solid var(--ta-negative)",
                             "color": "var(--ta-text-soft)",
                             "margin-bottom": "1rem"
                         }
@@ -484,7 +484,7 @@ def register_report_callbacks(app):
         return html.Div(
             debate_components,
             style={
-                "background": "linear-gradient(135deg, #0F172A 0%, #1E293B 100%)",
+                "background": "linear-gradient(135deg, var(--ta-background) 0%, var(--ta-surface) 100%)",
                 "border-radius": "8px",
                 "padding": "1.5rem",
                 "min-height": "1000px",
@@ -556,10 +556,10 @@ def register_report_callbacks(app):
                             dangerously_allow_html=False,
                             className='enhanced-markdown-content',
                             style={
-                                "background": "linear-gradient(135deg, #7F1D1D 0%, #B91C1C 100%)",
+                                "background": "linear-gradient(135deg, var(--ta-negative-wash) 0%, var(--ta-negative-wash-edge) 100%)",
                                 "border-radius": "8px",
                                 "padding": "1rem",
-                                "border-left": "4px solid #EF4444",
+                                "border-left": "4px solid var(--ta-negative)",
                                 "color": "var(--ta-text-soft)",
                                 "margin-bottom": "1rem"
                             }
@@ -587,10 +587,10 @@ def register_report_callbacks(app):
                             dangerously_allow_html=False,
                             className='enhanced-markdown-content',
                             style={
-                                "background": "linear-gradient(135deg, #064E3B 0%, #047857 100%)",
+                                "background": "linear-gradient(135deg, var(--ta-positive-wash) 0%, var(--ta-positive-deep) 100%)",
                                 "border-radius": "8px",
                                 "padding": "1rem",
-                                "border-left": "4px solid #10B981",
+                                "border-left": "4px solid var(--ta-positive)",
                                 "color": "var(--ta-text-soft)",
                                 "margin-bottom": "1rem"
                             }
@@ -618,10 +618,10 @@ def register_report_callbacks(app):
                             dangerously_allow_html=False,
                             className='enhanced-markdown-content',
                             style={
-                                "background": "linear-gradient(135deg, #1E3A8A 0%, #1D4ED8 100%)",
+                                "background": "linear-gradient(135deg, var(--ta-accent-wash) 0%, var(--ta-accent-strong) 100%)",
                                 "border-radius": "8px",
                                 "padding": "1rem",
-                                "border-left": "4px solid #3B82F6",
+                                "border-left": "4px solid var(--ta-accent)",
                                 "color": "var(--ta-text-soft)",
                                 "margin-bottom": "1rem"
                             }
@@ -650,10 +650,10 @@ def register_report_callbacks(app):
                         dangerously_allow_html=False,
                         className='enhanced-markdown-content',
                         style={
-                            "background": "linear-gradient(135deg, #7F1D1D 0%, #B91C1C 100%)",
+                            "background": "linear-gradient(135deg, var(--ta-negative-wash) 0%, var(--ta-negative-wash-edge) 100%)",
                             "border-radius": "8px",
                             "padding": "1rem",
-                            "border-left": "4px solid #EF4444",
+                            "border-left": "4px solid var(--ta-negative)",
                             "color": "var(--ta-text-soft)",
                             "margin-bottom": "1rem"
                         }
@@ -678,10 +678,10 @@ def register_report_callbacks(app):
                         dangerously_allow_html=False,
                         className='enhanced-markdown-content',
                         style={
-                            "background": "linear-gradient(135deg, #064E3B 0%, #047857 100%)",
+                            "background": "linear-gradient(135deg, var(--ta-positive-wash) 0%, var(--ta-positive-deep) 100%)",
                             "border-radius": "8px",
                             "padding": "1rem",
-                            "border-left": "4px solid #10B981",
+                            "border-left": "4px solid var(--ta-positive)",
                             "color": "var(--ta-text-soft)",
                             "margin-bottom": "1rem"
                         }
@@ -706,10 +706,10 @@ def register_report_callbacks(app):
                         dangerously_allow_html=False,
                         className='enhanced-markdown-content',
                         style={
-                            "background": "linear-gradient(135deg, #1E3A8A 0%, #1D4ED8 100%)",
+                            "background": "linear-gradient(135deg, var(--ta-accent-wash) 0%, var(--ta-accent-strong) 100%)",
                             "border-radius": "8px",
                             "padding": "1rem",
-                            "border-left": "4px solid #3B82F6",
+                            "border-left": "4px solid var(--ta-accent)",
                             "color": "var(--ta-text-soft)",
                             "margin-bottom": "1rem"
                         }
@@ -723,7 +723,7 @@ def register_report_callbacks(app):
         return html.Div(
             debate_components,
             style={
-                "background": "linear-gradient(135deg, #0F172A 0%, #1E293B 100%)",
+                "background": "linear-gradient(135deg, var(--ta-background) 0%, var(--ta-surface) 100%)",
                 "border-radius": "8px",
                 "padding": "1.5rem",
                 "min-height": "1000px",

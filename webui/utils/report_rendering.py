@@ -140,7 +140,7 @@ def _table_component(table: TableBlock):
         for row in table.rows
     ]
     style_data_conditional = [
-        {"if": {"row_index": "odd"}, "backgroundColor": "rgba(15, 23, 42, 0.55)"},
+        {"if": {"row_index": "odd"}, "backgroundColor": "rgb(var(--ta-background-rgb) / 0.55)"},
     ]
     for col in columns:
         col_id = col["id"]
@@ -173,14 +173,14 @@ def _table_component(table: TableBlock):
                 "color": "var(--ta-text-bright)",
                 "fontWeight": "700",
                 "border": "0",
-                "borderBottom": "1px solid rgba(148, 163, 184, 0.28)",
+                "borderBottom": "1px solid rgb(var(--ta-text-muted-rgb) / 0.28)",
                 "padding": "12px 14px",
             },
             style_cell={
-                "backgroundColor": "rgba(30, 41, 59, 0.66)",
+                "backgroundColor": "rgb(var(--ta-surface-rgb) / 0.66)",
                 "color": "var(--ta-text-soft)",
                 "border": "0",
-                "borderBottom": "1px solid rgba(51, 65, 85, 0.55)",
+                "borderBottom": "1px solid rgb(var(--ta-border-rgb) / 0.55)",
                 "fontFamily": "Inter, Segoe UI, sans-serif",
                 "fontSize": "13px",
                 "lineHeight": "1.45",

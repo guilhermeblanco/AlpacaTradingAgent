@@ -12,6 +12,9 @@ from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from typing import Union
 from webui.config.tokens import PALETTE
 
+from webui.config.figures import translucent as _translucent
+from webui.config.tokens import DEFAULT_THEME, palette_for
+
 def create_chart(ticker: str, period: str = "1y", end_date: Union[str, datetime] = None):
     """
     Create a Plotly candlestick+volume chart for a given ticker and period.
@@ -103,7 +106,7 @@ def create_chart(ticker: str, period: str = "1y", end_date: Union[str, datetime]
     return fig
 
 
-def create_demo_chart(ticker, period="1y", end_date=None, error_msg=None):
+def create_demo_chart(ticker, period="1y", end_date=None, error_msg=None, *, theme=DEFAULT_THEME):
     """Create a demo chart with random walk data"""
     # Updated points mapping to reflect new timeframes
     points_map = {"15m":160, "1d":96, "1w":48, "1mo":90, "1y":252}  # Updated 1d to reflect 5Min data
@@ -168,8 +171,9 @@ def create_demo_chart(ticker, period="1y", end_date=None, error_msg=None):
     )
     if error_msg:
         fig.add_annotation(x=0.5,y=0.1,xref='paper',yref='paper',text=f"DEMO DATA: {error_msg}",
-                           showarrow=False,font=dict(color='red',size=12),
-                           bgcolor='rgba(255,255,255,0.7)',bordercolor='red',borderwidth=1)
+                           showarrow=False,font=dict(color=palette_for(theme)["negative"], size=12),
+                           bgcolor=_translucent(palette_for(theme)["surface"], 0.7),
+                           bordercolor=palette_for(theme)["negative"], borderwidth=1)
     return fig
 
 
