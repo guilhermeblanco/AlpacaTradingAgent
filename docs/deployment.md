@@ -90,6 +90,12 @@ Other targets: `logs`, `status`, `shell`, `psql`, `restart`, `down`, `reset`
 - **In a nested unprivileged LXC**, podman needs `nesting=1,keyctl=1,fuse=1`
   on the container and the `fuse-overlayfs` storage driver, because the kernel
   refuses overlayfs-on-overlayfs there. The Proxmox script sets both.
+- **Podman's runtime helpers are installed by name.** `pasta`, `catatonit`,
+  `aardvark-dns`, `netavark` and `crun` are `Recommends` on Ubuntu, so with
+  `--no-install-recommends` podman installs cleanly and fails later at the
+  moment of use — `pasta` breaks `podman build`, `catatonit` breaks every
+  service that sets `init: true`, and `aardvark-dns` breaks `postgres` as a
+  hostname. The Proxmox script names them and verifies them before building.
 - **The ordering conditions are probed for, not assumed.** Older
   podman-compose accepts `depends_on: condition:
   service_completed_successfully` and ignores it — the stack starts, looks

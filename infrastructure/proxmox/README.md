@@ -53,6 +53,19 @@ overlayfs in an unprivileged LXC is refused on most Proxmox kernels. Set
 `STORAGE_DRIVER=vfs` if fuse is unavailable — correct, much slower, much
 larger on disk.
 
+The script installs podman's runtime helpers **by name**, and checks for them
+before the build. On Ubuntu they are `Recommends` rather than `Depends`, so
+with `--no-install-recommends` podman installs cleanly and then fails at the
+moment of use, with an error that names a binary and not a package:
+
+| tool | what breaks without it |
+|---|---|
+| `pasta` (`passt`) | `podman build` — "could not find pasta, the network namespace can't be configured" |
+| `catatonit` | every service, since the compose files set `init: true` |
+| `aardvark-dns` | name resolution on the user-defined network, so `postgres` in `POSTGRES_MODE=local` |
+| `netavark` | the network backend |
+| `crun` | the OCI runtime |
+
 ## Why the distribution stopped mattering
 
 The stack relies on `depends_on: condition: service_completed_successfully`

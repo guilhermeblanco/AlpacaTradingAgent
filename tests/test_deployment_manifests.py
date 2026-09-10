@@ -160,6 +160,20 @@ class ComposeFileTests(unittest.TestCase):
                     "${DATABASE_URL}",
                 )
 
+    def test_the_containerfile_base_images_are_fully_qualified_too(self):
+        """Same rule as the compose images, and for the same reason: a short
+        name resolves through whatever shortnames.conf the host ships."""
+        for line in CONTAINERFILE.read_text().splitlines():
+            if not line.startswith("FROM "):
+                continue
+            image = line.split()[1]
+            registry = image.split("/", 1)[0]
+            with self.subTest(image=image):
+                self.assertTrue(
+                    registry == "localhost" or "." in registry or ":" in registry,
+                    f"{image} would resolve through an alias file",
+                )
+
     def test_the_web_healthcheck_and_the_image_agree_on_the_path(self):
         from webui.utils.health import HEALTH_PATH
 
@@ -253,6 +267,34 @@ class ProxmoxScriptTests(unittest.TestCase):
 
     def test_the_container_stays_unprivileged(self):
         self.assertIn("--unprivileged 1", self.script)
+
+    def test_podmans_runtime_helpers_are_named_explicitly(self):
+        """`--no-install-recommends` plus podman is a trap: on Ubuntu these
+        are Recommends, so podman installs cleanly and then fails at the
+        moment of use with an error naming a binary rather than a package.
+
+        pasta broke `podman build`; catatonit is what `init: true` runs as
+        pid 1; aardvark-dns is how `postgres` resolves on the user-defined
+        network in POSTGRES_MODE=local.
+        """
+        for package in ("passt", "netavark", "aardvark-dns", "catatonit", "crun"):
+            with self.subTest(package=package):
+                self.assertIn(package, self.script)
+
+    def test_the_runtime_helpers_are_verified_before_the_build(self):
+        """Twenty minutes into an image build is the wrong place to discover
+        that the network helper is absent."""
+        install = self.script.index("apt-get install")
+        check = self.script.index("podman runtime helpers present")
+        build = self.script.index("building the application image")
+
+        self.assertLess(install, check)
+        self.assertLess(check, build)
+
+    def test_pct_exec_does_not_inherit_a_locale_the_container_lacks(self):
+        """The node's LANG reaches a container with no locales generated, and
+        the perl warnings that follow bury the output that matters."""
+        self.assertIn("LC_ALL=C", self.script)
 
     def test_the_compose_ordering_capability_is_probed_not_assumed(self):
         """Older podman-compose accepts `service_completed_successfully` and
