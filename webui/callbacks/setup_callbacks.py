@@ -20,6 +20,7 @@ from webui.components.platform_settings import (
     confirmation_detail,
     settings_body,
 )
+from webui.components.provider_editor import provider_form
 from webui.components.setup_panel import readiness_summary
 from webui.components.setup_wizard import (
     POSTURE_STEP,
@@ -483,4 +484,189 @@ def register_platform_callbacks(app):
             ],
             color="warning", className="py-2 mb-0",
         )
+
+
+#: The editor's own id namespace. The wizard and this editor are mounted
+#: at the same time — Bootstrap panes stay in the DOM — so they cannot
+#: share field ids.
+EDITOR_FIELD = "editor-credential"
+EDITOR_PICKER = "editor-provider"
+
+
+def register_role_editor_callbacks(app):
+    """Configure or change any one provider, from the Set up list.
+
+    Reachable for every requirement including the optional ones, which
+    the wizard skips on purpose and which therefore had no route at all
+    except a collapsed section of the integrations modal.
+    """
+
+    @app.callback(
+        Output("role-editor-modal", "is_open"),
+        Output("role-editor-title", "children"),
+        Output("role-editor-body", "children"),
+        Output("role-editor-target", "data"),
+        Output("role-editor-status", "children"),
+        Input({"type": "configure-role", "role": ALL}, "n_clicks"),
+        Input("role-editor-cancel", "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def open_editor(clicks, _cancel):
+        triggered = getattr(ctx, "triggered_id", None)
+        if triggered == "role-editor-cancel":
+            return False, no_update, no_update, no_update, no_update
+        if not isinstance(triggered, dict):
+            return (no_update,) * 5
+
+        # The list re-renders on an interval, which recreates every button
+        # with n_clicks back at zero. An all-zero fire is that re-render,
+        # not somebody clicking.
+        if not any(clicks or []):
+            return (no_update,) * 5
+
+        role_id = triggered.get("role")
+        readiness = current_readiness()
+        requirement = readiness.get(role_id) if readiness else None
+        if requirement is None:
+            return (no_update,) * 5
+
+        role = get_role(role_id)
+        chosen = selected(role_id, current_config()) if role else ""
+        body = provider_form(
+            requirement, role=role, chosen=chosen,
+            id_type=EDITOR_FIELD, picker_type=EDITOR_PICKER, heading=False,
+        )
+        return True, requirement.title, body, role_id, ""
+
+    @app.callback(
+        Output("role-editor-status", "children", allow_duplicate=True),
+        Output("wizard-save-status", "children", allow_duplicate=True),
+        Input("role-editor-save", "n_clicks"),
+        State("role-editor-target", "data"),
+        State({"type": EDITOR_PICKER, "role": ALL}, "value"),
+        State({"type": EDITOR_PICKER, "role": ALL}, "id"),
+        State({"type": EDITOR_FIELD, "key": ALL}, "value"),
+        State({"type": EDITOR_FIELD, "key": ALL}, "id"),
+        prevent_initial_call=True,
+    )
+    def save_editor(_clicks, role_id, picker_values, picker_ids, values, ids):
+        from tradingagents.setup.providers import role as find_role
+        from tradingagents.setup.settings import get_runtime_settings
+
+        notes = []
+
+        # The provider choice first: the fields belong to whichever one is
+        # selected, so storing them the other way round would file a
+        # Tradier token under an Alpaca deployment.
+        settings_store = get_runtime_settings()
+        for identifier, value in zip(picker_ids or [], picker_values or []):
+            role = find_role(identifier.get("role"))
+            if role is None or not value or not role.setting:
+                continue
+            if str(current_config().get(role.setting) or "").lower() == str(value).lower():
+                continue
+            if settings_store is None:
+                notes.append(
+                    "The provider choice needs a database to be stored; "
+                    "set it in the environment instead."
+                )
+                break
+            try:
+                settings_store.set(role.setting, value, actor="setup-editor")
+                notes.append(f"{role.label} → {role.provider(value).label}")
+            except Exception as exc:
+                return _alert(f"Unable to record the choice: {exc}", "danger"), no_update
+
+        stored = _store_credentials(values, ids)
+        if isinstance(stored, str):
+            return _alert(stored, "warning"), no_update
+        if stored:
+            notes.append(
+                f"{stored} credential{'s' if stored != 1 else ''} saved"
+            )
+
+        if not notes:
+            return _alert("Nothing changed.", "secondary"), no_update
+        # Nudging the wizard's status also refreshes the readiness list.
+        return _alert("; ".join(notes), "success"), "saved"
+
+    @app.callback(
+        Output("role-editor-status", "children", allow_duplicate=True),
+        Output("wizard-save-status", "children", allow_duplicate=True),
+        Input("role-editor-clear", "n_clicks"),
+        State("role-editor-target", "data"),
+        prevent_initial_call=True,
+    )
+    def clear_editor(_clicks, role_id):
+        """Remove this provider's stored credentials.
+
+        Blank means "keep" everywhere else, which is right for a form and
+        useless for rotation — without this there is no way to take a key
+        back out short of psql.
+        """
+        from tradingagents.integrations import get_integration_vault
+        from tradingagents.setup.providers import role as find_role
+
+        role = find_role(role_id)
+        readiness = current_readiness()
+        requirement = readiness.get(role_id) if readiness else None
+        if requirement is None:
+            return _alert("Nothing to remove.", "secondary"), no_update
+
+        provider = (
+            role.provider(selected(role_id, current_config())) if role else None
+        )
+        keys = [
+            field.key
+            for field in (provider.fields if provider else requirement.credentials)
+            if field.type == "secret"
+        ]
+        if not keys:
+            return _alert("This provider stores no credentials.", "secondary"), no_update
+
+        vault = get_integration_vault()
+        if vault is None:
+            return _alert(
+                "No encrypted vault is configured, so nothing is stored here "
+                "to remove.", "warning",
+            ), no_update
+        try:
+            removed = vault.delete_many(keys, actor="setup-editor")
+        except Exception as exc:
+            return _alert(f"Unable to remove: {exc}", "danger"), no_update
+
+        return (
+            _alert(
+                f"Removed {removed} stored credential{'s' if removed != 1 else ''}. "
+                "Any environment value still applies.",
+                "success",
+            ),
+            "cleared",
+        )
+
+
+def _alert(message, colour):
+    return dbc.Alert(message, color=colour, className="py-2 mb-0")
+
+
+def _store_credentials(values, ids):
+    """Save the non-blank secret fields; returns a count or a message."""
+    from tradingagents.integrations import get_integration_vault
+
+    entered = {
+        identifier["key"]: value.strip()
+        for identifier, value in zip(ids or [], values or [])
+        if isinstance(value, str) and value.strip()
+    }
+    if not entered:
+        return 0
+
+    vault = get_integration_vault()
+    if vault is None:
+        return (
+            "The encrypted vault is not configured, so there is nowhere to "
+            "put these. Set INTEGRATION_VAULT_KEY and DATABASE_URL, or set "
+            "the credentials in the environment."
+        )
+    return vault.set_many(entered, actor="setup-editor")
 

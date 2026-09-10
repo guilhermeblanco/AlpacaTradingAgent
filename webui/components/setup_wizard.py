@@ -24,6 +24,8 @@ nothing has been recorded yet, none of which says the actual reason.
 from dash import dcc, html
 import dash_bootstrap_components as dbc
 
+from webui.components.provider_editor import provider_form
+
 #: The step after the requirements: nothing to fill in, just a plain
 #: statement of what the thing is currently allowed to do. It earns its
 #: place because "can this place an order?" is the one question worth
@@ -31,180 +33,6 @@ import dash_bootstrap_components as dbc
 POSTURE_STEP = "posture"
 
 WELCOME_STEP = "welcome"
-
-
-def _credential_field(step_id, credential, source):
-    configured = bool(source)
-    return html.Div(
-        [
-            dbc.Label(
-                [
-                    credential.label,
-                    dbc.Badge(
-                        "already set", color="success", className="ms-2"
-                    )
-                    if configured
-                    else None,
-                ],
-                className="mb-1",
-            ),
-            dbc.Input(
-                id={"type": "wizard-credential", "key": credential.key},
-                type="password",
-                placeholder=(
-                    "leave blank to keep the current value"
-                    if configured
-                    else credential.placeholder or "paste the key"
-                ),
-                autoComplete="off",
-                debounce=True,
-            ),
-            html.Div(
-                [
-                    html.A(
-                        "Where to get one",
-                        href=credential.obtain_url,
-                        target="_blank",
-                        rel="noopener noreferrer",
-                    ),
-                    html.Span(
-                        f" · reads from {credential.env_var} if you would rather "
-                        "set it in the environment",
-                        className="text-muted",
-                    ),
-                ],
-                className="small mt-1",
-            ),
-        ],
-        className="mb-3",
-        key=f"{step_id}-{credential.key}",
-    )
-
-
-def _generic_field(step_id, field, source):
-    """One field, rendered from its declared type.
-
-    The renderer is generic on purpose. Providers are described in
-    tradingagents/setup/providers.py and nothing here knows the name of a
-    vendor, so adding one is a registration rather than another branch in
-    a form.
-    """
-    if field.type == "secret":
-        return _credential_field(step_id, field, source)
-
-    identifier = {"type": "wizard-credential", "key": field.key}
-    if field.type == "bool":
-        control = dbc.Switch(
-            id=identifier, label="", value=bool(field.default), className="mt-1"
-        )
-    elif field.type == "choice":
-        control = dbc.Select(
-            id=identifier,
-            options=[{"label": label, "value": value}
-                     for value, label in field.choices],
-            value=field.default,
-        )
-    else:
-        control = dbc.Input(
-            id=identifier, type="text",
-            value=str(field.default) if field.default is not None else "",
-            placeholder=field.placeholder, debounce=True,
-        )
-
-    return html.Div(
-        [
-            dbc.Label(field.label, className="mb-1"),
-            control,
-            html.Div(field.help, className="small text-muted mt-1")
-            if field.help
-            else None,
-        ],
-        className="mb-3",
-        key=f"{step_id}-{field.key}",
-    )
-
-
-def provider_picker(role, chosen):
-    """Choose the provider, then supply what it needs.
-
-    The wizard used to state which provider was configured and ask for
-    its key — "Model provider — OpenAI. This applies because
-    llm_provider = openai." That is an accurate description of a decision
-    nobody was offered. Choosing is the step.
-    """
-    if len(role.providers) == 1:
-        only = role.providers[0]
-        return html.Div(
-            [
-                html.Div(
-                    [html.Strong(only.label), html.Span(f" — {only.blurb}",
-                                                        className="text-muted")],
-                    className="mb-1",
-                ),
-                html.Div(role.single_implementation_note,
-                         className="small text-muted"),
-            ],
-            className="mb-3",
-        )
-
-    return html.Div(
-        [
-            dbc.RadioItems(
-                id={"type": "wizard-provider", "role": role.id},
-                options=[
-                    {
-                        "label": html.Span(
-                            [
-                                html.Strong(provider.label),
-                                html.Span(f" — {provider.blurb}",
-                                          className="text-muted ms-1"),
-                            ]
-                        ),
-                        "value": provider.id,
-                    }
-                    for provider in role.providers
-                ],
-                value=chosen,
-                className="wizard-provider-choice",
-            ),
-        ],
-        className="mb-3",
-    )
-
-
-def requirement_step(requirement, role=None, chosen=""):
-    """One requirement: pick the provider, then fill in its fields."""
-    provider = role.provider(chosen) if role is not None else None
-    fields = provider.fields if provider is not None else requirement.credentials
-
-    return html.Div(
-        [
-            html.H5(role.label if role is not None else requirement.title,
-                    className="mb-1"),
-            html.P(role.blurb if role is not None else requirement.why,
-                   className="text-muted"),
-            html.P(
-                ["This applies because ", html.Code(requirement.because), "."],
-                className="text-muted small",
-            )
-            if requirement.because and role is None
-            else None,
-            html.Hr(),
-            provider_picker(role, chosen) if role is not None else None,
-            html.Div(
-                [
-                    _generic_field(
-                        requirement.id, field,
-                        requirement.sources.get(field.key, ""),
-                    )
-                    for field in fields
-                ]
-            ),
-            html.Div(provider.note, className="small text-muted")
-            if provider is not None and provider.note
-            else None,
-        ]
-    )
 
 
 def welcome_step(readiness, steps):
@@ -258,6 +86,12 @@ def welcome_step(readiness, steps):
                     ),
                 ],
                 className="small mb-0",
+            ),
+            html.P(
+                "This asks only for what is missing and required. Optional "
+                "providers, and changing one you have already set, are in "
+                "the list behind this dialog.",
+                className="small text-muted mb-0 mt-2",
             ),
         ]
     )
@@ -364,3 +198,9 @@ def create_setup_wizard():
         backdrop="static",
         scrollable=True,
     )
+
+
+def requirement_step(requirement, role=None, chosen=""):
+    """One wizard step: pick the provider, then fill in its fields."""
+    return provider_form(requirement, role=role, chosen=chosen)
+

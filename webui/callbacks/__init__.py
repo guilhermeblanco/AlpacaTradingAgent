@@ -23,6 +23,7 @@ from .replay_callbacks import register_replay_callbacks
 from .evaluation_callbacks import register_evaluation_callbacks
 from .setup_callbacks import (
     register_platform_callbacks,
+    register_role_editor_callbacks,
     register_setup_callbacks,
 )
 
@@ -48,3 +49,4 @@ def register_all_callbacks(app):
     register_evaluation_callbacks(app)
     register_setup_callbacks(app)
     register_platform_callbacks(app)
+    register_role_editor_callbacks(app)
