@@ -229,21 +229,21 @@ def create_workbench_panel():
                     dbc.Col(
                         dcc.Graph(
                             id="workbench-gate-waterfall",
-                            config={"displayModeBar": False},
+                            config={"displayModeBar": False, "responsive": True},
                         ),
                         lg=6,
                     ),
                     dbc.Col(
                         dcc.Graph(
                             id="workbench-evidence",
-                            config={"displayModeBar": False},
+                            config={"displayModeBar": False, "responsive": True},
                         ),
                         lg=3,
                     ),
                     dbc.Col(
                         dcc.Graph(
                             id="workbench-outcomes",
-                            config={"displayModeBar": False},
+                            config={"displayModeBar": False, "responsive": True},
                         ),
                         lg=3,
                     ),

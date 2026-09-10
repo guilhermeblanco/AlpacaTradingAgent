@@ -179,19 +179,19 @@ def create_pipeline_board():
                     dbc.Col(
                         dcc.Graph(
                             id="board-stage-distribution",
-                            config={"displayModeBar": False},
+                            config={"displayModeBar": False, "responsive": True},
                         ),
                         lg=5,
                     ),
                     dbc.Col(
                         dcc.Graph(
-                            id="board-halts", config={"displayModeBar": False}
+                            id="board-halts", config={"displayModeBar": False, "responsive": True}
                         ),
                         lg=3,
                     ),
                     dbc.Col(
                         dcc.Graph(
-                            id="board-throughput", config={"displayModeBar": False}
+                            id="board-throughput", config={"displayModeBar": False, "responsive": True}
                         ),
                         lg=4,
                     ),

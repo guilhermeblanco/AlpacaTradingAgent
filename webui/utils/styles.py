@@ -330,6 +330,106 @@ __TOKENS__
     border-color: var(--ta-border);
     transform: none;
 }
+
+/* ── Stages ──────────────────────────────────────────────────────────────
+   The five tabs, and the rules that stop a panel widening the page.
+
+   `min-width: 0` is the one that matters. A flex or grid child defaults to
+   `min-width: auto`, which resolves to "as wide as my widest content", so a
+   single long table or an unconstrained Plotly figure would widen its
+   column, then its row, then the document. Zero lets the column win and
+   the overflow scroll inside the panel where it belongs. */
+
+.app-shell {
+    max-width: 1800px;
+}
+
+.stage-tabs {
+    border-bottom: 1px solid var(--ta-border);
+    margin-bottom: var(--ta-space-lg);
+}
+
+.stage-tab .nav-link,
+.stage-tabs .nav-link {
+    color: var(--ta-text-muted);
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    padding: var(--ta-space-md) var(--ta-space-lg);
+    font-weight: 600;
+    letter-spacing: 0.01em;
+}
+
+.stage-tabs .nav-link:hover {
+    color: var(--ta-text);
+    border-bottom-color: var(--ta-border);
+}
+
+.stage-tabs .nav-link.active {
+    color: var(--ta-text);
+    background: transparent;
+    border-bottom-color: var(--ta-accent);
+}
+
+.stage-blurb {
+    color: var(--ta-text-muted);
+    font-size: 0.9rem;
+    margin: var(--ta-space-md) 0 var(--ta-space-lg);
+    max-width: 68ch;
+}
+
+.stage-body {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.panel-shell {
+    min-width: 0;
+    max-width: 100%;
+}
+
+.panel-shell-body {
+    min-width: 0;
+    max-width: 100%;
+}
+
+/* Wide things scroll in their own box rather than stretching the page.
+   Tables and pre blocks are the usual offenders; a figure is handled by
+   Plotly's own responsive sizing. */
+.panel-shell-body .table-responsive,
+.panel-shell-body table,
+.panel-shell-body pre {
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+.panel-shell-body pre {
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+/* Bootstrap columns inherit the same default, so they need it too. */
+.panel-shell-body .row > [class^="col"],
+.panel-shell-body .row > [class*=" col"] {
+    min-width: 0;
+}
+
+.app-footer {
+    padding-top: var(--ta-space-lg);
+    border-top: 1px solid var(--ta-border);
+}
+
+/* ── Set up ──────────────────────────────────────────────────────────── */
+
+.setup-requirement {
+    padding: var(--ta-space-md) 0;
+    border-bottom: 1px solid var(--ta-border);
+}
+
+.setup-requirement:last-child {
+    border-bottom: none;
+}
 """
 
 # .replace rather than %-formatting: the stylesheet is full of literal
