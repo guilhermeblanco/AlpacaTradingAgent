@@ -11,7 +11,7 @@ import signal
 import socket
 import threading
 from contextlib import nullcontext
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from tradingagents.agents.schemas import TradeIntent, trade_intent_action
@@ -50,6 +50,8 @@ def _enabled(name: str, default: str = "false") -> bool:
 #: gateway or the model client has to be rebuilt; a change to anything
 #: else is picked up by the next cycle on its own.
 SCHEDULER_SHAPING = (
+    "autonomous_max_concurrency",
+    "autonomous_provider_concurrency",
     "execution_broker",
     "execution_gateway",
     "llm_provider",
@@ -57,6 +59,15 @@ SCHEDULER_SHAPING = (
     "quick_think_llm",
     "persistence_backend",
 )
+
+
+def _positive_int(value, fallback: int) -> int:
+    """A count, or the fallback. Nothing here is useful at zero."""
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        return fallback
+    return parsed if parsed > 0 else fallback
 
 
 def resolve_config() -> dict:
@@ -81,6 +92,13 @@ def resolve_config() -> dict:
                 "AUTONOMOUS_INTERVAL_SECONDS", "1800"
             ),
             "autonomous_asset_filter": os.getenv("AUTONOMOUS_ASSET_FILTER", "all"),
+            "autonomous_max_concurrency": os.getenv(
+                "AUTONOMOUS_MAX_CONCURRENCY", "2"
+            ),
+            "autonomous_provider_concurrency": os.getenv(
+                "AUTONOMOUS_PROVIDER_CONCURRENCY", "2"
+            ),
+            "autonomous_max_candidates": os.getenv("AUTONOMOUS_MAX_CANDIDATES", "3"),
         }
     )
     try:
@@ -222,10 +240,12 @@ def build_scheduler(config: dict):
     if broker.capabilities.crypto:
         allowed.add("crypto")
     orchestrator = BatchOrchestrator(
-        max_workers=int(os.getenv("AUTONOMOUS_MAX_CONCURRENCY", "2")),
+        max_workers=_positive_int(config.get("autonomous_max_concurrency"), 2),
         provider_policies={
             config["llm_provider"]: ProviderPolicy(
-                max_concurrency=int(os.getenv("AUTONOMOUS_PROVIDER_CONCURRENCY", "2")),
+                max_concurrency=_positive_int(
+                    config.get("autonomous_provider_concurrency"), 2
+                ),
                 min_interval_seconds=float(
                     os.getenv("AUTONOMOUS_PROVIDER_MIN_INTERVAL_SECONDS", "0.25")
                 ),
@@ -263,6 +283,26 @@ def build_scheduler(config: dict):
     return scheduler, persistence.close
 
 
+def _restart_requested(config: dict, started_at) -> bool:
+    """Whether the UI asked this worker to restart since it started."""
+    from tradingagents.operations.services import restart_requested
+    from tradingagents.persistence import build_persistence_runtime
+
+    try:
+        runtime = build_persistence_runtime(config)
+    except Exception:
+        return False
+    try:
+        return restart_requested(
+            runtime.unit_of_work_factory, "autonomous-worker", started_at
+        )
+    finally:
+        try:
+            runtime.close()
+        except Exception:
+            pass
+
+
 def run_supervised(
     *,
     stop: threading.Event,
@@ -293,6 +333,7 @@ def run_supervised(
     scheduler = None
     close = None
     signature = None
+    started_at = datetime.now(timezone.utc)
 
     try:
         while not stop.is_set():
@@ -301,6 +342,12 @@ def run_supervised(
             # arrive while it happens. Beginning a cycle after being asked
             # to stop is the one thing this loop must not do.
             if stop.is_set():
+                break
+
+            # Checked with the configuration already in hand, rather than
+            # resolving it a second time: one read per cycle, not two.
+            if _restart_requested(config, started_at):
+                LOGGER.info("restart requested — exiting for the runtime to replace")
                 break
 
             if not autonomy_enabled(config):

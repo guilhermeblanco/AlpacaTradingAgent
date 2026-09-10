@@ -13,7 +13,10 @@ from .api_config_callbacks import register_api_config_callbacks
 from .backtest_callbacks import register_backtest_callbacks
 from .safety_callbacks import register_safety_callbacks
 from .cost_callbacks import register_cost_callbacks
-from .operations_callbacks import register_operations_callbacks
+from .operations_callbacks import (
+    register_operations_callbacks,
+    register_restart_callbacks,
+)
 from .decision_explorer_callbacks import register_decision_explorer_callbacks
 from .workbench_callbacks import register_workbench_callbacks
 from .board_callbacks import register_board_callbacks
@@ -40,6 +43,7 @@ def register_all_callbacks(app):
     register_safety_callbacks(app)
     register_cost_callbacks(app)
     register_operations_callbacks(app)
+    register_restart_callbacks(app)
     register_workbench_callbacks(app)
     register_board_callbacks(app)
     register_pulse_callbacks(app)

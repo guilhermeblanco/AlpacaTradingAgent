@@ -42,7 +42,14 @@ def load_recent(limit=60):
         return uow.workbench.board(limit=limit)
 
 
-def load_health(stale_after_seconds=120):
+def load_health(stale_after_seconds=None):
+    """Operational health, each service judged against its own cadence.
+
+    The default used to be 120 seconds for everything, which the
+    evaluation worker — beating once per 300-second cycle — could never
+    satisfy. It showed as permanently dead while its own container
+    healthcheck, at 900, called it fine.
+    """
     runtime = get_persistence_runtime()
     if runtime.unit_of_work_factory is None:
         return None
@@ -83,15 +90,20 @@ def _health_readings(health):
                 for control in paused
             ),
         ),
+        # "1/8 live" read as eight expected workers, one of them alive. It
+        # was eight rows in a table that never forgot a restart. Say what
+        # is actually known: how many are reporting, and name the ones
+        # that have gone quiet.
         vital(
             "Workers",
             (
-                f"{len(health.heartbeats) - len(stale)}/{len(health.heartbeats)} live"
+                f"{len(health.heartbeats) - len(stale)} reporting"
                 if health.heartbeats
                 else "none"
             ),
             "bad" if stale else "ok" if health.heartbeats else "idle",
-            "; ".join(f"{beat.service} stale" for beat in stale),
+            "; ".join(f"{beat.service} silent" for beat in stale)
+            or "All services reporting on schedule",
         ),
         vital(
             "Reconciliation",

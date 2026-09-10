@@ -190,14 +190,31 @@ def test_a_backend_without_operations_still_runs(tmp_path) -> None:
     assert worker.run_once(now=now).pending == 0
 
 
-def test_a_worker_id_is_generated_when_not_supplied(tmp_path) -> None:
-    """Two workers sharing an id would overwrite each other's heartbeat."""
-    repository = EvaluationRepository(tmp_path / "evaluation.sqlite3")
-    ids = {
-        EvaluationWorker(lambda: None, None, []).worker_id for _ in range(2)
-    }
+def test_a_worker_id_is_stable_across_restarts() -> None:
+    """It used to be a fresh uuid per process, so every restart left a
+    heartbeat row nobody would ever update again — and the vitals strip,
+    which counts rows, read four redeploys as "1/8 live"."""
+    first = EvaluationWorker(lambda: None, None, []).worker_id
+    second = EvaluationWorker(lambda: None, None, []).worker_id
 
-    assert len(ids) == 2
+    assert first == second
+
+
+def test_replicas_are_still_told_apart(monkeypatch) -> None:
+    """Stability must not become collision: two of the same worker do
+    need separate rows, and that is what the replica id is for."""
+    monkeypatch.setenv("REPLICA_ID", "2")
+    scaled = EvaluationWorker(lambda: None, None, []).worker_id
+    monkeypatch.delenv("REPLICA_ID")
+    single = EvaluationWorker(lambda: None, None, []).worker_id
+
+    assert scaled != single
+    assert scaled.endswith("-2")
+
+
+def test_an_explicit_id_always_wins() -> None:
+    """Anyone running two in one process has to say so."""
+    assert EvaluationWorker(lambda: None, None, [], worker_id="a").worker_id == "a"
 
 
 def test_run_forever_stops_when_asked(tmp_path) -> None:

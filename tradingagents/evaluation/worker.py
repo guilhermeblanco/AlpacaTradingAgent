@@ -12,6 +12,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 from uuid import uuid4
 
+from tradingagents.operations.services import instance_id, restart_requested
+
 from .attribution import EvaluationHorizon, attribute_episode_outcome
 from .price_registry import default_historical_price_registry
 
@@ -39,7 +41,10 @@ class EvaluationWorker:
         self.unit_of_work_factory = unit_of_work_factory
         self.prices = prices
         self.horizons = tuple(horizons)
-        self.worker_id = worker_id or f"evaluation-{uuid4()}"
+        # Stable, not a uuid. A fresh identity per process meant a new
+        # heartbeat row on every restart and a table that only grew; the
+        # vitals strip counts rows, so four redeploys read as "1/8 live".
+        self.worker_id = worker_id or instance_id("evaluation-worker")
 
     def run_once(self, *, now: Optional[datetime] = None) -> EvaluationWorkerResult:
         now = now or datetime.now(timezone.utc)
@@ -104,7 +109,15 @@ class EvaluationWorker:
     ) -> None:
         stop_event = stop_event or threading.Event()
         interval_seconds = max(1.0, float(interval_seconds))
+        started_at = datetime.now(timezone.utc)
         while not stop_event.is_set():
+            # Exit cleanly when asked, between units of work. The
+            # container's restart policy brings the process back; that is
+            # the whole mechanism, and it needs no socket in the web
+            # container. See tradingagents/operations/services.py.
+            if restart_requested(self.unit_of_work_factory, "evaluation-worker", started_at):
+                LOGGER.info("restart requested — exiting for the runtime to replace")
+                return
             result = self.run_once()
             LOGGER.info(
                 "evaluation cycle pending=%s resolved=%s failed=%s expired=%s",

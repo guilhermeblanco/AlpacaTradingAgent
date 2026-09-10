@@ -12,6 +12,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 from uuid import uuid4
 
+from tradingagents.operations.services import instance_id, restart_requested
+
 from .account_reconciliation import reconcile_account_position
 from .models import ExecutionResult
 from .reconciliation import BrokerOrderStatus, PersistentExecutionReconciler
@@ -59,7 +61,8 @@ class ReconciliationWorker:
         self.evaluation_prices = evaluation_prices
         self.evaluation_benchmark_symbol = evaluation_benchmark_symbol
         self.evaluation_experiment_id = evaluation_experiment_id
-        self.worker_id = worker_id or f"reconciler-{uuid4()}"
+        # Stable — see the note in the evaluation worker.
+        self.worker_id = worker_id or instance_id("reconciliation-worker")
         self.batch_size = max(1, int(batch_size))
         self.lease_seconds = max(1, int(lease_seconds))
         self.poll_seconds = max(1.0, float(poll_seconds))
@@ -223,7 +226,15 @@ class ReconciliationWorker:
     ) -> None:
         stop_event = stop_event or threading.Event()
         interval_seconds = max(1.0, float(interval_seconds))
+        started_at = datetime.now(timezone.utc)
         while not stop_event.is_set():
+            # Exit cleanly when asked, between units of work. The
+            # container's restart policy brings the process back; that is
+            # the whole mechanism, and it needs no socket in the web
+            # container. See tradingagents/operations/services.py.
+            if restart_requested(self.unit_of_work_factory, "reconciliation-worker", started_at):
+                LOGGER.info("restart requested — exiting for the runtime to replace")
+                return
             result = self.run_once()
             LOGGER.info(
                 "reconciliation cycle claimed=%s completed=%s rescheduled=%s failed=%s quarantined=%s",

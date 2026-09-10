@@ -143,6 +143,41 @@ SETTINGS: tuple[Setting, ...] = (
         "What each intent asks for before the gates clip it.",
         "text", default="1000",
     ),
+    # ── Limits ───────────────────────────────────────────────────────
+    # `daily_llm_token_budget` has existed as a validated config field
+    # since the safety guard was written, with no environment variable
+    # and no UI — so the only way to set it was to edit the source. It
+    # is the one limit that stops a runaway loop costing real money, so
+    # that is a poor place for it to live.
+    Setting(
+        "daily_llm_token_budget", "Daily token budget",
+        "Refuse to start new analyses after this many LLM tokens in a "
+        "day. 0 means no limit, which is the current default.",
+        "text", default="0",
+    ),
+    Setting(
+        "autonomous_max_concurrency", "Analyses in parallel",
+        "How many symbols the autonomous worker analyses at once. More "
+        "finishes a cycle sooner and spends the token budget faster.",
+        "text", default="2",
+    ),
+    Setting(
+        "autonomous_provider_concurrency", "Calls per provider",
+        "Concurrent requests to one model provider. Raise it only as far "
+        "as your rate limit allows; past that it buys retries.",
+        "text", default="2",
+    ),
+    Setting(
+        "autonomous_max_candidates", "Candidates per cycle",
+        "How many symbols the screener may hand over in one cycle.",
+        "text", default="3",
+    ),
+    Setting(
+        "evaluation_worker_interval_seconds", "Evaluation cadence",
+        "Seconds between evaluation passes. Also decides how long the "
+        "worker may be silent before it is reported as stale.",
+        "text", default="300",
+    ),
     Setting(
         "require_point_in_time_web_search", "Point-in-time sourcing",
         "Stand the hosted web search down even for current dates, so a run "

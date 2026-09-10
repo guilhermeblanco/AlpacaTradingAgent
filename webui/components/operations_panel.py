@@ -49,6 +49,9 @@ def create_operations_panel():
                         [
                             html.H5("Workers", className="mt-3"),
                             html.Div(id="operations-workers"),
+                            html.Div(
+                                id="operations-restart-status", className="mt-2"
+                            ),
                         ],
                         lg=7,
                     ),
