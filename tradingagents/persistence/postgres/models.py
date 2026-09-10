@@ -381,6 +381,47 @@ class SafetyTokenUsageRow(Base):
     tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
 
 
+class RuntimeSettingRow(Base):
+    """A setting an operator changed, which outranks the environment.
+
+    Deliberately separate from the credential vault: these are not
+    secrets, they are decisions, and they are worth reading in plain text
+    when someone asks why the worker is armed.
+    """
+
+    __tablename__ = "runtime_settings"
+
+    scope: Mapped[str] = mapped_column(String(120), primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_by: Mapped[str] = mapped_column(String(160), nullable=False)
+
+
+class RuntimeSettingAuditRow(Base):
+    """Every change, with who and what it was before.
+
+    A UI that can arm a trading system needs to be able to answer "who
+    turned this on, and when" without anyone having to remember.
+    """
+
+    __tablename__ = "runtime_setting_audit"
+    __table_args__ = (
+        Index("ix_runtime_setting_audit_scope_time", "scope", "occurred_at"),
+    )
+
+    event_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    scope: Mapped[str] = mapped_column(String(120), nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    previous_value: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    new_value: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    actor: Mapped[str] = mapped_column(String(160), nullable=False)
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
 class IntegrationCredentialRow(Base):
     __tablename__ = "integration_credentials"
 

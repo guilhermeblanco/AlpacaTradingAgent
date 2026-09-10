@@ -45,9 +45,27 @@ def _enabled(name: str, default: str = "false") -> bool:
     return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
 
 
-def build_scheduler_from_env():
-    if not _enabled("AUTONOMOUS_ENABLED"):
-        raise ValueError("Set AUTONOMOUS_ENABLED=true to start autonomous analysis")
+#: The settings that change the shape of a scheduler rather than the
+#: content of a cycle. A change to any of these means the broker, the
+#: gateway or the model client has to be rebuilt; a change to anything
+#: else is picked up by the next cycle on its own.
+SCHEDULER_SHAPING = (
+    "execution_broker",
+    "execution_gateway",
+    "llm_provider",
+    "deep_think_llm",
+    "quick_think_llm",
+    "persistence_backend",
+)
+
+
+def resolve_config() -> dict:
+    """The worker's configuration, with operator overrides applied.
+
+    Read fresh on every cycle. Settings that can be changed from the UI
+    are no use to anyone if the process that acts on them only looked
+    once, at boot.
+    """
     config = copy.deepcopy(DEFAULT_CONFIG)
     config.update(
         {
@@ -58,9 +76,44 @@ def build_scheduler_from_env():
             "llm_provider": os.getenv("LLM_PROVIDER", config["llm_provider"]),
             "deep_think_llm": os.getenv("DEEP_THINK_LLM", config["deep_think_llm"]),
             "quick_think_llm": os.getenv("QUICK_THINK_LLM", config["quick_think_llm"]),
+            "autonomous_enabled": _enabled("AUTONOMOUS_ENABLED"),
+            "autonomous_interval_seconds": os.getenv(
+                "AUTONOMOUS_INTERVAL_SECONDS", "1800"
+            ),
+            "autonomous_asset_filter": os.getenv("AUTONOMOUS_ASSET_FILTER", "all"),
         }
     )
-    config = validate_application_config(config)
+    try:
+        from tradingagents.setup.settings import apply_overrides
+
+        config = apply_overrides(config)
+    except Exception:
+        # No database, or an unreachable one. The environment still
+        # answers, which is the state every deployment starts in.
+        pass
+    return validate_application_config(config)
+
+
+def autonomy_enabled(config: dict | None = None) -> bool:
+    config = config if config is not None else resolve_config()
+    value = config.get("autonomous_enabled", False)
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def scheduler_signature(config: dict) -> tuple:
+    return tuple(str(config.get(key, "")) for key in SCHEDULER_SHAPING)
+
+
+def build_scheduler_from_env():
+    config = resolve_config()
+    if not autonomy_enabled(config):
+        raise ValueError("Set AUTONOMOUS_ENABLED=true to start autonomous analysis")
+    return build_scheduler(config)
+
+
+def build_scheduler(config: dict):
     persistence = build_persistence_runtime(config)
     if persistence.unit_of_work_factory is None:
         persistence.close()
@@ -210,30 +263,124 @@ def build_scheduler_from_env():
     return scheduler, persistence.close
 
 
+def run_supervised(
+    *,
+    stop: threading.Event,
+    poll_seconds: float = 15.0,
+    interval_seconds: float | None = None,
+) -> None:
+    """Run cycles, re-reading the settings between each one.
+
+    Three behaviours the old loop did not have, and each is required for
+    a setting to be worth having in the UI at all:
+
+    *It idles rather than refusing to start.* The worker used to raise
+    when AUTONOMOUS_ENABLED was false, so the container exited and there
+    was nothing running to turn on later. Now it starts, reports itself
+    paused, and waits — which is what makes "enable" a toggle rather
+    than a redeploy.
+
+    *It notices a change of shape.* Most settings are read afresh at the
+    top of each cycle for free. The ones that decide which broker, which
+    gateway or which model client to construct cannot be; those are
+    compared against the running scheduler's signature, and the
+    scheduler is rebuilt when they differ.
+
+    *It stops between cycles rather than mid-flight.* A cycle already
+    dispatching is allowed to finish. Turning the worker off is not an
+    emergency stop — the kill switch in the safety guard is.
+    """
+    scheduler = None
+    close = None
+    signature = None
+
+    try:
+        while not stop.is_set():
+            config = resolve_config()
+            # Reading the settings touches the database, so a stop can
+            # arrive while it happens. Beginning a cycle after being asked
+            # to stop is the one thing this loop must not do.
+            if stop.is_set():
+                break
+
+            if not autonomy_enabled(config):
+                if scheduler is not None:
+                    LOGGER.info("autonomous worker disabled — releasing scheduler")
+                    close()
+                    scheduler, close, signature = None, None, None
+                stop.wait(poll_seconds)
+                continue
+
+            current = scheduler_signature(config)
+            if scheduler is None or current != signature:
+                if scheduler is not None:
+                    LOGGER.info("configuration changed — rebuilding scheduler")
+                    close()
+                try:
+                    scheduler, close = build_scheduler(config)
+                except Exception as exc:
+                    # A bad setting should leave the worker waiting for a
+                    # better one, not dead. Exiting here would mean the UI
+                    # could disable itself permanently with one typo.
+                    LOGGER.error("cannot build scheduler: %s", exc)
+                    scheduler, close, signature = None, None, None
+                    stop.wait(poll_seconds)
+                    continue
+                signature = current
+                LOGGER.info(
+                    "autonomous worker armed broker=%s gateway=%s provider=%s",
+                    config.get("execution_broker"),
+                    config.get("execution_gateway"),
+                    config.get("llm_provider"),
+                )
+
+            result = scheduler.run_once()
+            LOGGER.info("autonomous cycle result=%s", result)
+
+            interval = (
+                interval_seconds
+                if interval_seconds is not None
+                else float(config.get("autonomous_interval_seconds") or 1800)
+            )
+            stop.wait(max(1.0, float(interval)))
+    finally:
+        if close is not None:
+            close()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run autonomous trading cycles")
     parser.add_argument("--once", action="store_true")
     parser.add_argument(
         "--interval-seconds",
         type=float,
-        default=float(os.getenv("AUTONOMOUS_INTERVAL_SECONDS", "1800")),
+        default=None,
+        help=(
+            "Override the cycle interval. Left off, the operator setting "
+            "answers, which is what lets it be changed without a restart."
+        ),
     )
     args = parser.parse_args()
     logging.basicConfig(
         level=os.getenv("LOG_LEVEL", "INFO"),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    scheduler, close = build_scheduler_from_env()
-    try:
-        for signum in (signal.SIGINT, signal.SIGTERM):
-            signal.signal(signum, lambda *_: scheduler.request_stop())
-        if args.once:
-            result = scheduler.run_once()
-            LOGGER.info("autonomous cycle result=%s", result)
-        else:
-            scheduler.run_forever(interval_seconds=args.interval_seconds)
-    finally:
-        close()
+    if args.once:
+        # One cycle, and it still respects the setting: a disabled worker
+        # asked to run once should say so rather than trade.
+        scheduler, close = build_scheduler_from_env()
+        try:
+            for signum in (signal.SIGINT, signal.SIGTERM):
+                signal.signal(signum, lambda *_: scheduler.request_stop())
+            LOGGER.info("autonomous cycle result=%s", scheduler.run_once())
+        finally:
+            close()
+        return
+
+    stop = threading.Event()
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(signum, lambda *_: stop.set())
+    run_supervised(stop=stop, interval_seconds=args.interval_seconds)
 
 
 if __name__ == "__main__":

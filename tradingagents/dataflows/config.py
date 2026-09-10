@@ -52,10 +52,31 @@ def set_config(config: Dict):
 
 
 def get_config() -> Dict:
-    """Get the current configuration."""
+    """Get the current configuration.
+
+    Operator overrides are layered on every call rather than once at
+    startup, because the whole point of them is that they take effect
+    without a restart. The store caches for a few seconds, so this costs
+    a dict copy rather than a query.
+
+    Precedence is runtime setting > environment > built-in default. The
+    environment answers the first boot and stops being authoritative
+    after that; see tradingagents/setup/settings.py for what that trade
+    gives up and what it puts in its place.
+    """
     if _config is None:
         initialize_config()
-    return validate_application_config(_config)
+
+    config = dict(_config)
+    try:
+        from tradingagents.setup.settings import apply_overrides
+
+        config = apply_overrides(config)
+    except Exception:
+        # No database, an unreachable one, or a partially imported
+        # package during startup. The environment still answers.
+        pass
+    return validate_application_config(config)
 
 
 def set_runtime_api_keys(api_keys: Dict[str, str]):
@@ -95,6 +116,17 @@ def get_api_key(key_name: str, env_var_name: str) -> str:
     ):
         return _runtime_api_keys[key_name]
 
+    # Then operator settings, for the handful of keys that are settings
+    # rather than secrets. `alpaca_use_paper` is the reason this is here:
+    # it is not a field of the config model, it is read through this
+    # function, and it has to be changeable from the UI like the rest.
+    #
+    # Narrow on purpose — only keys on the settings allow-list are looked
+    # up, so no credential can be shadowed by a row in a plain-text table.
+    stored_setting = _runtime_setting(key_name)
+    if stored_setting is not None:
+        return stored_setting
+
     from tradingagents.integrations import get_configured_credential
 
     vaulted_value = get_configured_credential(key_name)
@@ -113,10 +145,29 @@ def get_api_key(key_name: str, env_var_name: str) -> str:
 
 #: Where `get_api_key` found a value, in the order it looks.
 KEY_SOURCE_SESSION = "session"
+KEY_SOURCE_SETTING = "setting"
 KEY_SOURCE_VAULT = "vault"
 KEY_SOURCE_ENVIRONMENT = "environment"
 KEY_SOURCE_CONFIG = "config"
 KEY_SOURCE_NONE = ""
+
+
+def _runtime_setting(key_name: str):
+    """An operator override for `key_name`, if it is a setting at all."""
+    try:
+        from tradingagents.setup.settings import (
+            get_runtime_settings,
+            setting,
+        )
+
+        if setting(key_name) is None:
+            return None
+        store = get_runtime_settings()
+        if store is None:
+            return None
+        return store.all().get(key_name)
+    except Exception:
+        return None
 
 
 def get_api_key_source(key_name: str, env_var_name: str) -> str:
@@ -130,6 +181,9 @@ def get_api_key_source(key_name: str, env_var_name: str) -> str:
     value = _runtime_api_keys.get(key_name)
     if value:
         return KEY_SOURCE_SESSION
+
+    if _runtime_setting(key_name) is not None:
+        return KEY_SOURCE_SETTING
 
     from tradingagents.integrations import get_configured_credential
 
