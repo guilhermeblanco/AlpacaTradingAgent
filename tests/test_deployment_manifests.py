@@ -268,6 +268,25 @@ class ProxmoxScriptTests(unittest.TestCase):
     def test_the_container_stays_unprivileged(self):
         self.assertIn("--unprivileged 1", self.script)
 
+    def test_the_lxc_is_given_a_tun_device(self):
+        """pasta and slirp4netns both build a container's network by making
+        a tap device in its namespace, and an unprivileged LXC has no
+        /dev/net/tun. Without it podman reports `pasta failed with exit code
+        -1:` and nothing after the colon."""
+        self.assertIn("lxc.mount.entry: /dev/net/tun", self.script)
+        self.assertIn("lxc.cgroup2.devices.allow: c 10:200 rwm", self.script)
+
+    def test_a_container_is_started_before_the_image_is_built(self):
+        """Two attempts at this deployment failed at STEP 4 of 7, minutes in,
+        because podman could not start a container at all. The smoke test
+        uses the image the build begins from, so it costs nothing on a cold
+        cache and a second on a warm one."""
+        smoke = self.script.index("smoke-testing container start")
+        build = self.script.index("building the application image")
+
+        self.assertLess(smoke, build)
+        self.assertIn("podman run --rm docker.io/library/python", self.script)
+
     def test_podmans_runtime_helpers_are_named_explicitly(self):
         """`--no-install-recommends` plus podman is a trap: on Ubuntu these
         are Recommends, so podman installs cleanly and then fails at the

@@ -16,6 +16,11 @@
 #          override any CONFIG var inline, e.g.:
 #            CTID=194 IP_CIDR=10.64.8.94/24 STORAGE=local-zfs bash -c "$(curl -fsSL .../tradingagents.sh)"
 #
+# IT EDITS THE CT CONFIG. Beyond `pct create`, the script appends two lines to
+#          /etc/pve/lxc/<ctid>.conf to expose /dev/net/tun, which podman's
+#          network helpers need and an unprivileged LXC does not get. Adding
+#          them restarts the container.
+#
 # IDEMPOTENT: safe to re-run. CT missing → create; CT exists → update in place
 #          (fetch/reset the repo to REPO_REF, rebuild the image, rewrite the
 #          unit, restart). It does NOT re-apply the LXC's network or resources
@@ -152,6 +157,46 @@ for feature in nesting=1 keyctl=1 fuse=1; do
        msg_warn "    pct set $CTID --features nesting=1,keyctl=1,fuse=1 && pct reboot $CTID" ;;
   esac
 done
+
+# ── /dev/net/tun ─────────────────────────────────────────────────────────────
+# Both of podman's rootless network helpers — pasta and slirp4netns — set up
+# a container's network by creating a tap device inside its namespace, and
+# that needs /dev/net/tun. An unprivileged LXC is not given one, and the
+# failure names nothing useful:
+#
+#     setup network: pasta failed with exit code -1:
+#
+# with an empty message after the colon. There is no fallback to reach for
+# here: slirp4netns wants the same device, so the device is the fix.
+#
+# `pct set` has no option for this, so it goes into the CT's config file
+# directly, and needs a restart to take effect.
+[ -c /dev/net/tun ] || modprobe tun 2>/dev/null || true
+CT_CONF="/etc/pve/lxc/${CTID}.conf"
+TUN_ADDED=0
+if [ -f "$CT_CONF" ]; then
+  grep -q '^lxc.cgroup2.devices.allow: c 10:200 rwm' "$CT_CONF" \
+    || { echo 'lxc.cgroup2.devices.allow: c 10:200 rwm' >>"$CT_CONF"; TUN_ADDED=1; }
+  grep -q '^lxc.mount.entry: /dev/net/tun' "$CT_CONF" \
+    || { echo 'lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file' >>"$CT_CONF"; TUN_ADDED=1; }
+else
+  msg_warn "no config at ${CT_CONF} — cannot add /dev/net/tun automatically"
+fi
+if [ "$TUN_ADDED" = "1" ]; then
+  msg_info "added /dev/net/tun to CT ${CTID} — restarting to apply"
+  pct stop "$CTID" >/dev/null 2>&1 || true
+  pct start "$CTID"
+  for _ in $(seq 1 30); do pct exec "$CTID" -- getent hosts github.com >/dev/null 2>&1 && break; sleep 2; done
+fi
+if ! pct exec "$CTID" -- test -c /dev/net/tun; then
+  msg_err "/dev/net/tun is absent inside CT ${CTID}, so podman cannot give a"
+  msg_err "container a network. These two lines belong in ${CT_CONF}:"
+  msg_err "    lxc.cgroup2.devices.allow: c 10:200 rwm"
+  msg_err "    lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file"
+  msg_err "and the node itself needs the module: modprobe tun"
+  exit 1
+fi
+msg_ok "/dev/net/tun available"
 
 # ── Podman ───────────────────────────────────────────────────────────────────
 # `--no-install-recommends` is a trap here. On Ubuntu the pieces podman
@@ -353,6 +398,22 @@ if [ "$POSTGRES_MODE" = "local" ] && [ -n "$POSTGRES_PASSWORD" ]; then
   set_env_key POSTGRES_PASSWORD "$POSTGRES_PASSWORD"
 fi
 pct exec "$CTID" -- chmod 600 "$ENV_FILE"
+
+# ── Can podman actually run something? ───────────────────────────────────────
+# The build is the wrong place to discover that it cannot. This starts the
+# very image the build begins from, so on a cold cache it is not extra work —
+# it pulls what STEP 1 needs anyway — and on a warm one it takes a second. It
+# exercises the whole path that has broken twice now: the runtime, the network
+# namespace, and the storage driver.
+msg_info "smoke-testing container start"
+if ! pct exec "$CTID" -- podman run --rm docker.io/library/python:3.14-slim-bookworm true; then
+  msg_err "podman cannot start a container in CT ${CTID}."
+  msg_err "Networking is the usual cause — check /dev/net/tun and the helpers:"
+  msg_err "    pct exec ${CTID} -- test -c /dev/net/tun && echo tun ok"
+  msg_err "    pct exec ${CTID} -- podman info --debug 2>&1 | tail -40"
+  exit 1
+fi
+msg_ok "containers start and get a network"
 
 # ── The image ────────────────────────────────────────────────────────────────
 msg_info "building the application image (slow on a cold cache — see the header)"

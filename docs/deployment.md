@@ -90,6 +90,11 @@ Other targets: `logs`, `status`, `shell`, `psql`, `restart`, `down`, `reset`
 - **In a nested unprivileged LXC**, podman needs `nesting=1,keyctl=1,fuse=1`
   on the container and the `fuse-overlayfs` storage driver, because the kernel
   refuses overlayfs-on-overlayfs there. The Proxmox script sets both.
+- **It also needs `/dev/net/tun`**, which an unprivileged LXC is not given.
+  pasta and slirp4netns both set a container's network up by creating a tap
+  device inside its namespace; without the device, podman fails with
+  `pasta failed with exit code -1:` and nothing after the colon. The script
+  adds the device to the CT config and restarts.
 - **Podman's runtime helpers are installed by name.** `pasta`, `catatonit`,
   `aardvark-dns`, `netavark` and `crun` are `Recommends` on Ubuntu, so with
   `--no-install-recommends` podman installs cleanly and fails later at the

@@ -48,6 +48,25 @@ LXC stays **unprivileged**, and `systemd` supervises the stack directly. The
 LXC needs `nesting=1,keyctl=1,fuse=1` for this, which the script sets on
 create and warns about on an existing CT that lacks them.
 
+It also needs **`/dev/net/tun`**, which an unprivileged LXC is not given.
+Podman's network helpers — pasta, and slirp4netns equally — set a container's
+network up by creating a tap device inside its namespace, and without the
+device that fails as:
+
+```
+setup network: pasta failed with exit code -1:
+```
+
+with nothing after the colon. `pct set` has no option for it, so the script
+appends two lines to `/etc/pve/lxc/<ctid>.conf` and restarts the container:
+
+```
+lxc.cgroup2.devices.allow: c 10:200 rwm
+lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file
+```
+
+If your node has no `/dev/net/tun` at all, `modprobe tun` on the node first.
+
 Storage driver is **fuse-overlayfs**, not the kernel's overlay: nested
 overlayfs in an unprivileged LXC is refused on most Proxmox kernels. Set
 `STORAGE_DRIVER=vfs` if fuse is unavailable — correct, much slower, much
@@ -83,6 +102,18 @@ Ubuntu keeps it in `universe` — a current podman-compose goes into
 
 That is what makes the base image a preference. Pick whichever apt-based
 template you already keep updated.
+
+## It checks before it commits twenty minutes
+
+Between installing podman and building the image, the script starts a
+throwaway container from `python:3.14-slim-bookworm` — the image the build
+begins from, so on a cold cache it is not extra work, and on a warm one it
+takes a second. That single command exercises everything that has broken
+here: the runtime, the storage driver, and the network namespace.
+
+A build is a terrible place to learn that podman cannot start a container.
+The first two attempts at this deployment both failed at STEP 4 of 7, several
+minutes in, with errors that named a binary rather than a cause.
 
 ## The first run is slow
 
