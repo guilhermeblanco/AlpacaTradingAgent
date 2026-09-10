@@ -275,3 +275,62 @@ class DefaultConfigTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class IntegrationsGroupingTests(unittest.TestCase):
+    """The Integrations screen, reshaped by the same model.
+
+    The wizard asks for two or three things; this screen still has to show
+    all sixteen, because a credential you cannot find is worse than one you
+    have to expand. What changed is that they are no longer sixteen
+    equally-weighted rows with twelve of them marked "Required".
+    """
+
+    def test_the_config_key_is_derivable_from_the_environment_variable(self):
+        """So there is one table, not two that can drift apart."""
+        from webui.callbacks.api_config_callbacks import CONFIG_KEY_BY_ID
+        from webui.components.api_config_modal import API_CONFIGS, config_key_for
+
+        for entry in API_CONFIGS:
+            with self.subTest(api=entry["id"]):
+                self.assertEqual(
+                    config_key_for(entry), CONFIG_KEY_BY_ID[entry["id"]]
+                )
+
+    def test_every_credential_still_appears_somewhere(self):
+        """Grouping must not lose one: the save callback gathers all of
+        them by id, and a missing input is a silently unsavable key."""
+        from webui.components.api_config_modal import API_CONFIGS, grouped_credentials
+
+        def ids(component, found=None):
+            found = set() if found is None else found
+            identifier = getattr(component, "id", None)
+            if isinstance(identifier, str):
+                found.add(identifier)
+            children = getattr(component, "children", None)
+            if isinstance(children, (list, tuple)):
+                for child in children:
+                    ids(child, found)
+            elif children is not None:
+                ids(children, found)
+            return found
+
+        rendered = ids(grouped_credentials())
+
+        for entry in API_CONFIGS:
+            with self.subTest(api=entry["id"]):
+                self.assertIn(f"api-input-{entry['id']}", rendered)
+
+    def test_the_unused_model_providers_are_grouped_out_of_the_way(self):
+        from webui.components.api_config_modal import grouped_credentials
+
+        titles = [item.title for item in grouped_credentials().children]
+
+        self.assertTrue(
+            any("Other model providers" in title for title in titles), titles
+        )
+
+    def test_the_group_that_matters_is_the_one_open(self):
+        from webui.components.api_config_modal import grouped_credentials
+
+        self.assertEqual(grouped_credentials().active_item, "api-group-in-use")
