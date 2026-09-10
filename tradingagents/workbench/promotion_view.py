@@ -29,12 +29,20 @@ from tradingagents.evaluation import PromotionDecision, PromotionPolicy, assess_
 
 
 class PromotionView(BaseModel):
-    """A promotion verdict plus how it was arrived at."""
+    """A promotion verdict plus how it was arrived at.
 
-    challenger: str
-    champion: str
-    horizon: str
-    include_replays: bool
+    The three selections default to empty rather than being required. On a
+    fresh deployment nothing has been recorded yet, so the dropdowns that
+    feed this have no options and hand over None — and the whole point of
+    `unavailable` below is to say so in a sentence. A model that cannot be
+    constructed without the selections cannot carry the message explaining
+    that they are missing.
+    """
+
+    challenger: str = ""
+    champion: str = ""
+    horizon: str = ""
+    include_replays: bool = False
     decision: Optional[PromotionDecision] = None
     challenger_replays: int = 0
     champion_replays: int = 0
@@ -58,24 +66,48 @@ def _for_horizon(rows, horizon):
     return [row for row in rows or [] if row.horizon == horizon]
 
 
+def _has_experiments(uow) -> bool:
+    """Whether anything has been recorded to compare at all."""
+    try:
+        return bool(uow.evaluation.experiment_ids())
+    except Exception:
+        # Only used to choose between two messages; if the ledger cannot be
+        # read the more general one is the safer of the two.
+        return True
+
+
 def build_promotion_view(
     uow,
     *,
-    challenger: str,
-    champion: str,
-    horizon: str,
+    challenger: Optional[str],
+    champion: Optional[str],
+    horizon: Optional[str],
     policy: Optional[PromotionPolicy] = None,
     include_replays: bool = False,
 ) -> PromotionView:
     """Assess one challenger against one champion at one horizon."""
+    # Normalised here, at the boundary, because the callers are Dash
+    # dropdowns and an empty dropdown's value is None.
+    challenger = challenger or ""
+    champion = champion or ""
+    horizon = horizon or ""
+
     view = PromotionView(
         challenger=challenger,
         champion=champion,
         horizon=horizon,
-        include_replays=include_replays,
+        include_replays=bool(include_replays),
     )
     if not challenger or not champion:
-        view.unavailable = "Pick a challenger and a champion to compare."
+        # "Pick two" is unhelpful advice when there is nothing to pick from,
+        # which is the state every new deployment starts in.
+        view.unavailable = (
+            "Pick a challenger and a champion to compare."
+            if _has_experiments(uow)
+            else "No experiment has recorded an outcome yet. Run an analysis, "
+            "let the evaluation worker resolve it at a horizon, and this "
+            "comparison fills in."
+        )
         return view
     if challenger == champion:
         view.unavailable = "A variant compared against itself proves nothing."
