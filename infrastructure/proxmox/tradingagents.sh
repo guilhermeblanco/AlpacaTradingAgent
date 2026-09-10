@@ -21,6 +21,12 @@
 #          network helpers need and an unprivileged LXC does not get. Adding
 #          them restarts the container.
 #
+# IT REMEMBERS. The first run saves the topology it resolved to
+#          /etc/tradingagents/deploy-<ctid>.conf and reads it back after
+#          that, so a redeploy is just `./tradingagents.sh`. Environment
+#          variables still win; delete the file to forget. No credentials
+#          are saved there — DATABASE_URL lives in the CT's .env.
+#
 # IDEMPOTENT: safe to re-run. CT missing → create; CT exists → update in place
 #          (fetch/reset the repo to REPO_REF, rebuild the image, rewrite the
 #          unit, restart). It does NOT re-apply the LXC's network or resources
@@ -62,8 +68,26 @@
 set -euo pipefail
 APP="TradingAgents"
 
-# ── CONFIG (env-overridable) ─────────────────────────────────────────────────
+# ── CONFIG (env-overridable, and remembered) ─────────────────────────────────
+# Say it once. The first run records the topology it resolved, and later
+# runs read it back, so redeploying is `./tradingagents.sh` rather than a
+# line of flags to retype correctly. An environment variable still wins:
+# the saved file stores each value in `${VAR:-saved}` form, so it fills in
+# blanks rather than overriding a decision.
+#
+# CTID is the exception, because it names the file — you always say which
+# deployment, and everything else is remembered. Getting it wrong is also
+# the one mistake that matters: with the wrong CTID the script builds a
+# second container instead of updating yours.
+#
+# Credentials are deliberately not saved here. DATABASE_URL lives in the
+# CT's .env after the first run and is not needed again; writing it to the
+# node as well would put a database password in a second place for no
+# reason.
 CTID="${CTID:-194}"
+DEPLOY_CONF="${DEPLOY_CONF:-/etc/tradingagents/deploy-${CTID}.conf}"
+# shellcheck source=/dev/null
+[ -r "$DEPLOY_CONF" ] && . "$DEPLOY_CONF"
 CT_HOSTNAME="${CT_HOSTNAME:-tradingagents}"
 CT_PASSWORD="${CT_PASSWORD:-localdev123}"      # root password for console/SSH login
 STORAGE="${STORAGE:-local-lvm}"
@@ -526,6 +550,41 @@ systemctl enable tradingagents >/dev/null 2>&1
 systemctl restart tradingagents || true
 "
 
+# ── Remember the topology ────────────────────────────────────────────────────
+# Written after the work, not before, so a run that fell over on the way
+# does not leave a config file claiming otherwise.
+mkdir -p "$(dirname "$DEPLOY_CONF")"
+cat >"$DEPLOY_CONF" <<CONF
+# Written by tradingagents.sh for CT ${CTID}. Read on the next run, so a
+# redeploy is just: ${0}
+#
+# Each value is in \${VAR:-saved} form, so an environment variable passed
+# on the command line still wins. Delete a line to go back to the built-in
+# default; delete the file to forget everything.
+CT_HOSTNAME="\${CT_HOSTNAME:-${CT_HOSTNAME}}"
+STORAGE="\${STORAGE:-${STORAGE}}"
+BRIDGE="\${BRIDGE:-${BRIDGE}}"
+IP_CIDR="\${IP_CIDR:-${IP_CIDR}}"
+GATEWAY="\${GATEWAY:-${GATEWAY}}"
+TEMPLATE_FILE="\${TEMPLATE_FILE:-${TEMPLATE_FILE}}"
+TEMPLATE_MATCH="\${TEMPLATE_MATCH:-${TEMPLATE_MATCH}}"
+CORES="\${CORES:-${CORES}}"
+RAM_MB="\${RAM_MB:-${RAM_MB}}"
+SWAP_MB="\${SWAP_MB:-${SWAP_MB}}"
+DISK_GB="\${DISK_GB:-${DISK_GB}}"
+REPO_URL="\${REPO_URL:-${REPO_URL}}"
+REPO_REF="\${REPO_REF:-${REPO_REF}}"
+APP_DIR="\${APP_DIR:-${APP_DIR}}"
+HOST_PORT="\${HOST_PORT:-${HOST_PORT}}"
+POSTGRES_MODE="\${POSTGRES_MODE:-${POSTGRES_MODE}}"
+AUTONOMOUS="\${AUTONOMOUS:-${AUTONOMOUS}}"
+TZ_NAME="\${TZ_NAME:-${TZ_NAME}}"
+STORAGE_DRIVER="\${STORAGE_DRIVER:-${STORAGE_DRIVER}}"
+BUILD_NETWORK="\${BUILD_NETWORK:-${BUILD_NETWORK}}"
+CONF
+chmod 600 "$DEPLOY_CONF"
+msg_ok "topology saved to ${DEPLOY_CONF} — next time, just: ${0}"
+
 # ── Report ───────────────────────────────────────────────────────────────────
 CT_IP="$(pct exec "$CTID" -- hostname -I 2>/dev/null | awk '{print $1}' || true)"
 [ -n "$CT_IP" ] || CT_IP="${IP_CIDR%%/*}"
@@ -551,6 +610,8 @@ cat <<EOF
   Database      POSTGRES_MODE=${POSTGRES_MODE}
   Autonomous    $([ "$AUTONOMOUS" = "1" ] && echo "worker STARTED — AUTONOMOUS_ENABLED and EXECUTION_GATEWAY in .env still gate every order" || echo "worker not started (re-run with AUTONOMOUS=1)")
 
-  Upgrade       re-run this script; it resets to ${REPO_REF}, rebuilds, restarts.
+  Redeploy      ${0}
+                (topology remembered; DATABASE_URL already in .env)
+                Resets to ${REPO_REF}, rebuilds, restarts.
 
 EOF

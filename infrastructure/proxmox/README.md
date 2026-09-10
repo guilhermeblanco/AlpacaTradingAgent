@@ -11,12 +11,36 @@ DATABASE_URL='postgresql+psycopg://tradingagents:<pw>@10.64.8.78:5432/tradingage
   bash -c "$(curl -fsSL https://raw.githubusercontent.com/guilhermeblanco/AlpacaTradingAgent/main/infrastructure/proxmox/tradingagents.sh)"
 ```
 
-Override any CONFIG var inline:
+Override any CONFIG var inline — on the **first** run:
 
 ```bash
 CTID=194 IP_CIDR=10.64.8.94/24 STORAGE=local-zfs CORES=6 RAM_MB=8192 \
   bash -c "$(curl -fsSL .../tradingagents.sh)"
 ```
+
+## Redeploying
+
+```bash
+./tradingagents.sh
+```
+
+That is the whole command. The first run saves the topology it resolved to
+`/etc/tradingagents/deploy-<ctid>.conf` and later runs read it back, so
+there is nothing to retype and nothing to get wrong. `DATABASE_URL` is not
+needed either — it went into the CT's `.env` on the first run and is left
+alone after that.
+
+An environment variable still wins over the saved value, because each one
+is stored as `${VAR:-saved}`. Delete a line to fall back to the built-in
+default, or the file to forget everything. No credentials are saved there.
+
+`CTID` is the exception: it names the file, so pass it if your deployment
+is not 194. It is also the one worth getting right — with the wrong CTID
+the script builds a second container rather than updating yours.
+
+A redeploy resets the checkout to `REPO_REF`, rebuilds, and restarts. The
+rebuild reuses the dependency layer, so a code-only change takes a minute
+or two rather than the first run's forty.
 
 | script | what it does | base | default CT / IP / port |
 |---|---|---|---|
@@ -135,8 +159,15 @@ have no published wheel and are compiled. **Budget 15–40 minutes**, and leave
 the defaults alone (`CORES=4 RAM_MB=6144 DISK_GB=32`) — a 2 GB container fails
 partway through the build and the error does not say why.
 
-Re-runs reuse the layer cache and take a minute or two unless a dependency
-changed.
+**Re-runs are fast.** The image installs dependencies from `pyproject.toml`
+before copying the source, so a deploy that changed only Python code reuses
+the expensive layer and takes a minute or two. Only a change to
+`pyproject.toml` pays the full cost again.
+
+That ordering is load-bearing and easy to undo by accident — `COPY . .`
+before the install puts every dependency behind a layer that any edit
+invalidates, and a one-line change then recompiles chromadb. There is a
+test.
 
 ## Database: two shapes, one flag
 
