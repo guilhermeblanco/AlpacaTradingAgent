@@ -292,9 +292,10 @@ def posture_step(config):
         [
             html.H5("What it may do", className="mb-1"),
             html.P(
-                "Three independent switches, each defaulting to no. They live "
-                "in the deployment's environment rather than here, because a "
-                "setup wizard is the wrong place to arm a trading system.",
+                "Three independent switches, each defaulting to no. They are "
+                "not changed here, because a setup wizard is the wrong place "
+                "to arm a trading system — Platform settings, below, is where "
+                "each one lives, with a confirmation in front of it.",
                 className="text-muted",
             ),
             html.Hr(),
