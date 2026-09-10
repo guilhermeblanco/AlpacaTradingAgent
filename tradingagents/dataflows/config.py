@@ -111,6 +111,45 @@ def get_api_key(key_name: str, env_var_name: str) -> str:
     return api_key
 
 
+#: Where `get_api_key` found a value, in the order it looks.
+KEY_SOURCE_SESSION = "session"
+KEY_SOURCE_VAULT = "vault"
+KEY_SOURCE_ENVIRONMENT = "environment"
+KEY_SOURCE_CONFIG = "config"
+KEY_SOURCE_NONE = ""
+
+
+def get_api_key_source(key_name: str, env_var_name: str) -> str:
+    """Which layer supplies this key, or "" when nothing does.
+
+    Deliberately alongside `get_api_key` and in the same order: setup needs
+    to tell an operator not only whether a credential is configured but
+    where it came from, and two copies of that precedence in two files
+    would eventually disagree about it.
+    """
+    value = _runtime_api_keys.get(key_name)
+    if value:
+        return KEY_SOURCE_SESSION
+
+    from tradingagents.integrations import get_configured_credential
+
+    try:
+        if get_configured_credential(key_name):
+            return KEY_SOURCE_VAULT
+    except Exception:
+        # An unreachable or misconfigured vault is a reason to keep looking,
+        # not a reason to fail: the environment may still have the value.
+        pass
+
+    if os.getenv(env_var_name):
+        return KEY_SOURCE_ENVIRONMENT
+
+    if _config is not None and _config.get(key_name):
+        return KEY_SOURCE_CONFIG
+
+    return KEY_SOURCE_NONE
+
+
 def _coerce_bool(value) -> bool:
     if isinstance(value, bool):
         return value
