@@ -505,20 +505,24 @@ class PromotionViewTests(unittest.TestCase):
             for index in range(count)
         ]
 
-    def _uow(self, *, table=None, error=None, unverified=()):
+    def _uow(self, *, table=None, error=None, unverified=(), experiments=None):
         def outcomes(*, experiment_id=None, include_replays=True):
             if error:
                 raise error
             return list((table or {}).get((experiment_id, include_replays), []))
 
+        if experiments is None:
+            experiments = sorted({key[0] for key in (table or {})})
+
         return SimpleNamespace(
             evaluation=SimpleNamespace(
                 outcomes=outcomes,
                 unverified_decision_ids=lambda: set(unverified),
+                experiment_ids=lambda: list(experiments),
             )
         )
 
-    def _view(self, table, unverified=(), **kwargs):
+    def _view(self, table, unverified=(), experiments=None, **kwargs):
         from tradingagents.workbench.promotion_view import build_promotion_view
 
         options = {
@@ -529,7 +533,8 @@ class PromotionViewTests(unittest.TestCase):
         }
         options.update(kwargs)
         return build_promotion_view(
-            self._uow(table=table, unverified=unverified), **options
+            self._uow(table=table, unverified=unverified, experiments=experiments),
+            **options,
         )
 
     def test_a_clearly_better_challenger_is_eligible(self):
@@ -608,8 +613,19 @@ class PromotionViewTests(unittest.TestCase):
         self.assertIn("itself", view.unavailable)
 
     def test_a_missing_side_is_refused(self):
-        self.assertIn("Pick a challenger", self._view({}, challenger="").unavailable)
-        self.assertIn("Pick a challenger", self._view({}, champion="").unavailable)
+        # `experiments` is supplied because the point here is the missing
+        # selection; with nothing recorded the view says something more
+        # specific instead, which EmptySelectionTests covers.
+        recorded = ["champion", "deep"]
+
+        self.assertIn(
+            "Pick a challenger",
+            self._view({}, challenger="", experiments=recorded).unavailable,
+        )
+        self.assertIn(
+            "Pick a challenger",
+            self._view({}, champion="", experiments=recorded).unavailable,
+        )
 
     def test_a_missing_horizon_is_refused(self):
         self.assertIn("horizon", self._view({}, horizon="").unavailable)
@@ -637,6 +653,56 @@ class PromotionViewTests(unittest.TestCase):
 
     def test_the_replay_share_of_an_empty_comparison_is_nothing(self):
         self.assertEqual(self._view({}).replay_share_pct, 0.0)
+
+
+class EmptySelectionTests(PromotionViewTests):
+    """A deployment that has recorded nothing yet.
+
+    Every dropdown feeding this view is empty on day one, and an empty Dash
+    dropdown's value is None. The view used to require all three as strings,
+    so the panel that exists to explain "nothing to compare yet" was itself
+    the thing that could not be built — the UI showed three pydantic
+    validation errors instead of a sentence.
+    """
+
+    def test_no_selection_at_all_is_not_an_error(self):
+        view = self._view({}, challenger=None, champion=None, horizon=None)
+
+        self.assertFalse(view.available)
+        self.assertEqual(view.challenger, "")
+        self.assertEqual(view.champion, "")
+        self.assertEqual(view.horizon, "")
+
+    def test_an_empty_ledger_says_so_rather_than_saying_pick_two(self):
+        """"Pick a challenger" is unhelpful advice when there is nothing to
+        pick from."""
+        view = self._view({}, challenger=None, champion=None, experiments=[])
+
+        self.assertIn("No experiment has recorded an outcome yet", view.unavailable)
+
+    def test_a_populated_ledger_asks_for_a_selection(self):
+        view = self._view(
+            {}, challenger=None, champion=None, experiments=["champion", "deep"]
+        )
+
+        self.assertIn("Pick a challenger and a champion", view.unavailable)
+
+    def test_an_unreadable_ledger_falls_back_to_the_general_message(self):
+        from tradingagents.workbench.promotion_view import build_promotion_view
+
+        uow = SimpleNamespace(
+            evaluation=SimpleNamespace(
+                outcomes=lambda **_: [],
+                unverified_decision_ids=lambda: set(),
+                experiment_ids=lambda: (_ for _ in ()).throw(RuntimeError("down")),
+            )
+        )
+
+        view = build_promotion_view(
+            uow, challenger=None, champion=None, horizon=None
+        )
+
+        self.assertIn("Pick a challenger and a champion", view.unavailable)
 
 
 class ScorecardTests(PromotionViewTests):
