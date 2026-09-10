@@ -67,6 +67,15 @@ export TAG
 # handed to the containers verbatim by compose.
 _env = $(strip $(shell [ -f .env ] && sed -n 's/^$(1)=//p' .env | tail -1 | sed "s/^[\"']//; s/[\"']$$//"))
 
+# Which network the build's RUN steps get. Empty means podman decides, which
+# is right nearly everywhere. Inside a nested unprivileged LXC podman's choice
+# (pasta) can fail to configure a namespace at all, and `host` — the LXC's own
+# network — is the way through: RUN steps only need outbound access for apt
+# and pip, and a build publishes nothing. The Proxmox script probes for this
+# and records the answer here.
+BUILD_NETWORK     ?= $(call _env,BUILD_NETWORK)
+_BUILD_NET_FLAG   := $(if $(BUILD_NETWORK),--network=$(BUILD_NETWORK),)
+
 POSTGRES_DB       ?= $(or $(call _env,POSTGRES_DB),tradingagents)
 POSTGRES_USER     ?= $(or $(call _env,POSTGRES_USER),tradingagents)
 POSTGRES_PASSWORD ?= $(or $(call _env,POSTGRES_PASSWORD),tradingagents)
@@ -111,6 +120,7 @@ debug: ## Show the resolved provider, files, and image
 	@echo "postgres mode: $(POSTGRES_MODE)"
 	@echo "autonomous   : $(if $(AUTONOMOUS),yes,no)"
 	@echo "DATABASE_URL : $(if $(DATABASE_URL),<set by Makefile>,<from .env>)"
+	@echo "build network: $(if $(BUILD_NETWORK),$(BUILD_NETWORK),<podman default>)"
 
 # ── Preflight ────────────────────────────────────────────────────────────────
 # Both of these are silent-wrong-answer failures rather than loud ones, which
@@ -135,7 +145,7 @@ preflight: ## Check .env and DATABASE_URL before starting anything
 # ── Lifecycle ────────────────────────────────────────────────────────────────
 
 build: ## Build the application image from the repo root
-	podman build --tag $(IMAGE):$(TAG) --file $(REPO_ROOT)/Containerfile $(REPO_ROOT)
+	podman build $(_BUILD_NET_FLAG) --tag $(IMAGE):$(TAG) --file $(REPO_ROOT)/Containerfile $(REPO_ROOT)
 
 pull-images: ## Pull the third-party images (postgres) ahead of time
 	podman pull docker.io/library/postgres:17-alpine

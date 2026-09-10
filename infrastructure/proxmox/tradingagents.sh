@@ -93,6 +93,7 @@ POSTGRES_MODE="${POSTGRES_MODE:-external}"     # external | local
 AUTONOMOUS="${AUTONOMOUS:-0}"                  # 1 to also run the autonomous worker
 DATABASE_URL="${DATABASE_URL:-}"               # required for POSTGRES_MODE=external
 POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-}"     # used for POSTGRES_MODE=local
+BUILD_NETWORK="${BUILD_NETWORK:-}"             # empty: probe for it. 'host' to force.
 TZ_NAME="${TZ_NAME:-America/New_York}"
 # fuse-overlayfs, not the kernel's overlay: nested overlayfs in an
 # unprivileged LXC is refused on most Proxmox kernels. Set vfs if fuse is
@@ -399,25 +400,55 @@ if [ "$POSTGRES_MODE" = "local" ] && [ -n "$POSTGRES_PASSWORD" ]; then
 fi
 pct exec "$CTID" -- chmod 600 "$ENV_FILE"
 
-# ── Can podman actually run something? ───────────────────────────────────────
-# The build is the wrong place to discover that it cannot. This starts the
-# very image the build begins from, so on a cold cache it is not extra work —
-# it pulls what STEP 1 needs anyway — and on a warm one it takes a second. It
-# exercises the whole path that has broken twice now: the runtime, the network
-# namespace, and the storage driver.
-msg_info "smoke-testing container start"
-if ! pct exec "$CTID" -- podman run --rm docker.io/library/python:3.14-slim-bookworm true; then
-  msg_err "podman cannot start a container in CT ${CTID}."
-  msg_err "Networking is the usual cause — check /dev/net/tun and the helpers:"
-  msg_err "    pct exec ${CTID} -- test -c /dev/net/tun && echo tun ok"
-  msg_err "    pct exec ${CTID} -- podman info --debug 2>&1 | tail -40"
-  exit 1
+# ── Can podman actually build something? ─────────────────────────────────────
+# The smoke test this replaces started a container with `podman run`, which
+# passed — and the build failed anyway, at the same step as before. They are
+# different code paths: `podman run` took the default bridge, while a RUN step
+# in a build asks buildah for a namespace and buildah reached for pasta, which
+# cannot configure one in this LXC even with /dev/net/tun present. Testing the
+# path that works tells you nothing about the path that does not.
+#
+# So the probe is a two-line build: the same base image the real one starts
+# from, and a RUN step, which is precisely what breaks. It costs seconds
+# against a warm cache and, on a cold one, pulls what STEP 1 needs anyway.
+#
+# It also decides. If podman's own choice works, nothing is overridden. If it
+# does not, the build gets --network=host: the RUN steps then share the
+# container's network namespace, which is all apt and pip need, and a build
+# publishes nothing. The answer is recorded in .env so a later `make build`
+# inside the LXC does not have to rediscover it.
+if [ -n "$BUILD_NETWORK" ]; then
+  msg_ok "build network forced to ${BUILD_NETWORK} — not probing"
+else
+  msg_info "probing how the build reaches the network"
+  pct exec "$CTID" -- bash -c "
+    set -e
+    mkdir -p /var/tmp/ta-build-probe
+    printf 'FROM docker.io/library/python:3.14-slim-bookworm\nRUN true\n' \
+      >/var/tmp/ta-build-probe/Containerfile
+  "
+  if pct exec "$CTID" -- podman build -q --tag localhost/ta-build-probe:latest \
+       /var/tmp/ta-build-probe >/dev/null 2>&1; then
+    msg_ok "the build's default network works"
+  elif pct exec "$CTID" -- podman build -q --network=host \
+         --tag localhost/ta-build-probe:latest /var/tmp/ta-build-probe >/dev/null 2>&1; then
+    BUILD_NETWORK="host"
+    msg_warn "podman's default build network fails in this LXC — using --network=host."
+    msg_warn "RUN steps share the container's own network; they need it only for"
+    msg_warn "apt and pip, and a build publishes nothing."
+  else
+    msg_err "podman cannot build in CT ${CTID}, with or without host networking."
+    msg_err "Get the reason with:"
+    msg_err "    pct exec ${CTID} -- podman build --log-level=debug /var/tmp/ta-build-probe 2>&1 | tail -40"
+    exit 1
+  fi
+  pct exec "$CTID" -- podman rmi -f localhost/ta-build-probe:latest >/dev/null 2>&1 || true
 fi
-msg_ok "containers start and get a network"
+[ -z "$BUILD_NETWORK" ] || set_env_key BUILD_NETWORK "$BUILD_NETWORK"
 
 # ── The image ────────────────────────────────────────────────────────────────
 msg_info "building the application image (slow on a cold cache — see the header)"
-pct exec "$CTID" -- make -C "${APP_DIR}/infrastructure/local" build
+pct exec "$CTID" -- make -C "${APP_DIR}/infrastructure/local" BUILD_NETWORK="$BUILD_NETWORK" build
 msg_ok "image built: $(pct exec "$CTID" -- podman images --format '{{.Repository}}:{{.Tag}} {{.Size}}' localhost/tradingagents | head -1)"
 
 # ── The unit ─────────────────────────────────────────────────────────────────
