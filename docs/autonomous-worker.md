@@ -42,8 +42,14 @@ python -m tradingagents.orchestration.autonomous_worker --once
 Run the complete service set with:
 
 ```bash
-docker compose --profile autonomous up -d --build
+AUTONOMOUS=1 make -C infrastructure/local up
 ```
+
+The worker lives in its own compose overlay rather than behind a compose
+profile, so that starting it is always something somebody typed. Two further
+switches still stand between it and a real order: `AUTONOMOUS_ENABLED` and
+`EXECUTION_GATEWAY`, both defaulting to the safe value. See
+[deployment](deployment.md).
 
 The exchange calendar is independent of the broker: equities follow the XNYS
 calendar including holidays and early closes, while crypto candidates remain

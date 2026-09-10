@@ -1,0 +1,62 @@
+# =============================================================================
+# TradingAgents — the autonomous worker  (AUTONOMOUS=1)
+#
+# Overlay. Never used alone:
+#   AUTONOMOUS=1 make up
+#
+# This is the only service in the stack that can decide to place an order
+# with nobody watching. It is in a separate file so that starting it is
+# always a sentence somebody typed, never a default that came along for the
+# ride.
+#
+# Two independent switches stand between this container and a real order,
+# and both default to safe:
+#
+#   AUTONOMOUS_ENABLED=false   the worker starts, scans, and does nothing
+#   EXECUTION_GATEWAY=dry-run  intents are priced and gated but never sent
+#
+# Turning the first on gives you a worker that runs the whole pipeline and
+# journals what it *would* have done — which is the state you want to sit in
+# for a while before touching the second. Set EXECUTION_GATEWAY=broker only
+# once the gate ledger for those dry runs reads the way you expect, and check
+# which account ALPACA_USE_PAPER is pointing at before you do.
+# =============================================================================
+
+services:
+  autonomous-worker:
+    image: "${IMAGE:-localhost/tradingagents}:${TAG:-latest}"
+    container_name: tradingagents-autonomous-worker
+    command: ["python", "-m", "tradingagents.orchestration.autonomous_worker"]
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: "${DATABASE_URL}"
+      TZ: "${TZ:-America/New_York}"
+      PERSISTENCE_BACKEND: "postgres"
+      # Restated rather than inherited from .env, so the safe value is the one
+      # written down in the file you are reading when you ask "can this thing
+      # trade?". Override in .env deliberately.
+      AUTONOMOUS_ENABLED: "${AUTONOMOUS_ENABLED:-false}"
+      EXECUTION_BROKER: "${EXECUTION_BROKER:-alpaca}"
+      EXECUTION_GATEWAY: "${EXECUTION_GATEWAY:-dry-run}"
+    init: true
+    restart: unless-stopped
+    # Longer than the others: mid-cycle it may be holding a reservation and
+    # waiting on a broker acknowledgement, and a half-submitted intent is the
+    # one thing worth waiting out.
+    stop_grace_period: 60s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - data-cache:/app/tradingagents/dataflows/data_cache
+      - eval-results:/app/eval_results
+      - trading-state:/app/.tradingagents
+    healthcheck:
+      test: ["CMD", "python", "-m", "tradingagents.operations.control_plane", "check", "autonomous-worker", "--stale-after-seconds", "3600"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 120s
+    networks:
+      - tradingagents

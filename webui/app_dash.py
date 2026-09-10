@@ -27,10 +27,15 @@ def create_app():
 
     # One long-lived stream per tab replaces per-callback polling; see
     # webui/utils/pulse.py.
+    from webui.utils.health import register_health_route
     from webui.utils.pulse import register_pulse_route
     from webui.utils.state import app_state
 
     register_pulse_route(server, app_state)
+
+    # Liveness for the container runtime; see webui/utils/health.py for why it
+    # deliberately checks nothing but the process itself.
+    register_health_route(server)
 
     # Initialize Dash app with Bootstrap
     app = dash.Dash(

@@ -238,16 +238,26 @@ Common options:
 - `--debug`: Run in debug mode with more logging
 - `--max-threads N`: Set the maximum number of threads (default: 40)
 
-or launch it with Docker:
+or run the whole stack in containers — the web UI plus the evaluation and
+reconciliation workers, on one image, under podman:
 
 ```bash
-cp env.sample .env
-# Edit .env with your provider, market data, and Alpaca credentials first.
-docker compose up -d --build
+cd infrastructure/local
+cp .env.example .env      # provider, market data, and Alpaca credentials
+make build
+make up
 ```
 
-This starts a local web server at http://localhost:7860. To use a different
-host port, set `HOST_PORT`, for example `HOST_PORT=7861 docker compose up -d --build`.
+This starts a local web server at http://localhost:7860. `HOST_PORT` in `.env`
+moves it. Two switches change the topology, both defaulting to the cautious
+value: `POSTGRES_MODE=local make up` runs PostgreSQL in the stack rather than
+pointing at one you already have, and `AUTONOMOUS=1 make up` adds the
+autonomous worker — the only service that can place an order with nobody
+watching, which is why it has to be asked for by name.
+
+See [deployment](docs/deployment.md) for what is in the image and how the
+pieces fit, and [infrastructure/proxmox](infrastructure/proxmox/README.md) for
+a script that builds a Proxmox LXC running all of it.
 See [PostgreSQL persistence](docs/postgresql.md) for schema migrations,
 production hardening, backup guidance, and database integration tests.
 See [portfolio decision batches](docs/portfolio-decision-batches.md) for safely

@@ -52,6 +52,7 @@ intent notional remain hard ceilings on exposure-increasing orders.
 | `webui/` | Dash interface: `layout.py` composes panels from `components/`, `callbacks/` register interaction handlers, `utils/state.py` is the shared app state. Entry: `python run_webui_dash.py`. |
 | `cli/` | Terminal interface: `python -m cli.main`. |
 | `tests/` | Pytest suite; deterministic, no network, no live keys. |
+| `infrastructure/` | How it is deployed. `local/` is the podman stack — one image, the web UI plus the evaluation and reconciliation workers, with PostgreSQL and the autonomous worker as opt-in overlays. `proxmox/` provisions an LXC that runs it. See [deployment](docs/deployment.md). |
 
 ## The analysis lifecycle
 

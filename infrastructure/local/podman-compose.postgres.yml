@@ -1,0 +1,59 @@
+# =============================================================================
+# TradingAgents — PostgreSQL in the stack  (POSTGRES_MODE=local)
+#
+# Overlay. Never used alone:
+#
+#   POSTGRES_MODE=local make up
+#
+# Use this when the app should own its database — a laptop, a throwaway
+# environment, or a Proxmox LXC you want to snapshot and restore as one
+# thing. The default is the other way round: POSTGRES_MODE=external points
+# DATABASE_URL at a server you already run, and
+# `infrastructure/proxmox/postgres-database.sh` provisions the role and
+# database on it.
+#
+# This file adds a service and an ordering constraint. It does NOT set
+# DATABASE_URL — the Makefile exports the in-stack URL when POSTGRES_MODE is
+# local, and a shell variable beats .env for compose interpolation. One
+# mechanism, so the answer to "which database is it talking to" is always
+# `podman inspect tradingagents-web` and never an archaeology of overlays.
+#
+# Running compose by hand with this overlay therefore means exporting
+# DATABASE_URL yourself:
+#
+#   export DATABASE_URL=postgresql+psycopg://tradingagents:...@postgres:5432/tradingagents
+#   podman compose -f podman-compose.yml -f podman-compose.postgres.yml up -d
+# =============================================================================
+
+services:
+  postgres:
+    image: docker.io/library/postgres:17-alpine
+    container_name: tradingagents-postgres
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-tradingagents}"
+      POSTGRES_USER: "${POSTGRES_USER:-tradingagents}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-tradingagents}"
+      TZ: "${TZ:-America/New_York}"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tradingagents} -d ${POSTGRES_DB:-tradingagents}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    stop_grace_period: 30s
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - tradingagents
+    # Deliberately not published. Nothing outside the stack has business
+    # reaching it, and `make psql` goes in through `podman exec`.
+
+  # The migration is the only service that has to wait for the server itself;
+  # everything else already waits for the migration.
+  migrate:
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres-data:

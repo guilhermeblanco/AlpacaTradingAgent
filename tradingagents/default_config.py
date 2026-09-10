@@ -86,6 +86,14 @@ DEFAULT_CONFIG = {
     "persistence_backend": os.getenv("PERSISTENCE_BACKEND", "local"),
     "database_url": os.getenv("DATABASE_URL"),
     "safety_state_scope": os.getenv("SAFETY_STATE_SCOPE"),
+    # Live web search already stands down for any analysis of a past date,
+    # because the window reaches the hosted tool as prose rather than as a
+    # constraint. Set this to stand it down for current dates too — worth
+    # doing while reproducing a run, at the cost of recall. The gate reads
+    # this key; without the line it could only be set in code.
+    "require_point_in_time_web_search": os.getenv(
+        "REQUIRE_POINT_IN_TIME_WEB_SEARCH", "false"
+    ),
     "evaluation_enabled": True,
     "evaluation_db_path": None,  # Defaults to <results_dir>/evaluation.sqlite3
     "evaluation_benchmark_symbol": "SPY",

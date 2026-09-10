@@ -16,24 +16,26 @@ file remains an emergency host-level halt and is combined with shared state.
 
 ## Local setup
 
-1. Copy `env.sample` to `.env` and replace the PostgreSQL password.
-2. Start the application with `docker compose up -d --build`.
+1. `cd infrastructure/local && cp .env.example .env`, then set `DATABASE_URL`
+   to the server you want to use.
+2. Start the stack with `make up`. To run PostgreSQL in the stack instead of
+   pointing at an existing server, use `POSTGRES_MODE=local make up` and leave
+   `DATABASE_URL` blank — the Makefile composes it and the topology, not the
+   file, decides the host.
 
-Compose waits for PostgreSQL, applies `alembic upgrade head` in a one-shot
-migration service, and starts the web process only after migration succeeds.
-For a host installation, apply the schema directly with `alembic upgrade head`.
-Compose defaults to `PERSISTENCE_BACKEND=postgres`. Host installations must set
-that value explicitly after configuring `DATABASE_URL`; otherwise they retain
-the local SQLite/JSONL backend.
+The stack applies `alembic upgrade head` in a one-shot `migrate` service and
+starts nothing else until it exits 0, so no worker ever runs against a schema
+older than its code. It sets `PERSISTENCE_BACKEND=postgres` itself.
+
+For a host installation, apply the schema directly with `alembic upgrade head`
+and set `PERSISTENCE_BACKEND=postgres` explicitly after configuring
+`DATABASE_URL`; otherwise the local SQLite/JSONL backend stays in use.
 
 When Alembic runs on the host, use a host URL:
 
 ```dotenv
 DATABASE_URL=postgresql+psycopg://tradingagents:password@localhost:5432/tradingagents
 ```
-
-Inside Compose, the application URL is set automatically and uses `postgres` as
-the hostname.
 
 ## Schema ownership
 
@@ -72,7 +74,8 @@ workers claim due decisions with `FOR UPDATE SKIP LOCKED`, poll the broker named
 on the durable order, and either complete terminal decisions or reschedule open
 orders. Leases expire after a worker crash, and failures use bounded exponential
 backoff. Run the service with
-`python -m tradingagents.execution.reconciliation_worker` or Docker Compose.
+`python -m tradingagents.execution.reconciliation_worker`, or as the
+`reconciliation-worker` service in the podman stack.
 
 ## Operations
 
@@ -118,11 +121,11 @@ A throwaway database is enough, and the suite truncates every persistence
 table before each test so it can be reused across runs:
 
 ```bash
-docker run -d --name ta-test-pg -p 55433:5432 \
+podman run -d --name ta-test-pg -p 55433:5432 \
   -e POSTGRES_DB=tradingagents_test \
   -e POSTGRES_USER=tradingagents \
   -e POSTGRES_PASSWORD=tradingagents \
-  postgres:17-alpine
+  docker.io/library/postgres:17-alpine
 
 TEST_DATABASE_URL="postgresql+psycopg://tradingagents:tradingagents@localhost:55433/tradingagents_test" \
   python -m pytest tests/

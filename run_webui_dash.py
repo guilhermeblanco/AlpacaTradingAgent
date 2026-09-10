@@ -7,7 +7,37 @@ import argparse
 import sys
 import os
 import socket
-from webui.app_dash import run_app  
+from webui.app_dash import run_app
+
+
+#: Set truthy to bind the requested port or fail. See strict_port_requested().
+STRICT_PORT_ENV = "TRADINGAGENTS_STRICT_PORT"
+
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def strict_port_requested(env=None):
+    """Whether to refuse to fall back to a different port.
+
+    Port hunting is a convenience on a laptop, where the browser follows
+    whatever the console prints. Under a container runtime it is a trap: the
+    port is published by the pod, so moving from 7860 to 7861 does not
+    relocate the mapping — it makes the service unreachable while the process
+    reports that it started fine. The image sets this so a clash is a loud
+    failure instead of a quiet one.
+    """
+    env = os.environ if env is None else env
+    return str(env.get(STRICT_PORT_ENV, "")).strip().lower() in _TRUTHY
+
+
+def port_is_free(port, host="0.0.0.0"):
+    """Whether `port` can be bound on `host` right now."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        try:
+            probe.bind((host, port))
+            return True
+        except OSError:
+            return False
 
 
 def find_available_port(start_port, end_port=None):
@@ -70,14 +100,25 @@ def main():
     """Run the Dash web UI"""
     args = parse_args()
     
-    # Find an available port if the specified one is not available
-    port = find_available_port(args.port)
-    if port is None:
-        print(f"Error: Could not find an available port between {args.port} and {args.port + 100}")
-        return 1
-    
-    if port != args.port:
-        print(f"Port {args.port} is already in use. Using port {port} instead.")
+    # Find an available port if the specified one is not available — unless
+    # the port was published by something outside this process, in which case
+    # a different port is worse than no server at all.
+    if strict_port_requested():
+        if not port_is_free(args.port, args.server_name):
+            print(
+                f"Error: port {args.port} is already in use and "
+                f"{STRICT_PORT_ENV} forbids falling back to another one."
+            )
+            return 1
+        port = args.port
+    else:
+        port = find_available_port(args.port)
+        if port is None:
+            print(f"Error: Could not find an available port between {args.port} and {args.port + 100}")
+            return 1
+
+        if port != args.port:
+            print(f"Port {args.port} is already in use. Using port {port} instead.")
     
     print(f"Starting TradingAgents Dash Web UI on port {port}...")
     
@@ -101,4 +142,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main() or 0)

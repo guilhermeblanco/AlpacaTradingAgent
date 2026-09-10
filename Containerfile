@@ -1,4 +1,16 @@
-# syntax=docker/dockerfile:1.7
+# =============================================================================
+# TradingAgents — OCI image (built with podman/buildah).
+#
+#   podman build -t localhost/tradingagents:latest -f Containerfile .
+#
+# One image, several entry points: the web UI is the default CMD, the workers
+# and `alembic upgrade head` override it. That keeps the workers on exactly the
+# code the UI is showing, which matters because a decision's record is written
+# by the web process and resolved by the evaluation worker.
+#
+# No BuildKit directive: podman/buildah ignore `# syntax=`, and nothing here
+# needs it.
+# =============================================================================
 
 FROM python:3.14-slim-bookworm AS builder
 
@@ -40,7 +52,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     TRADINGAGENTS_CACHE_DIR=/app/tradingagents/dataflows/data_cache \
     TRADINGAGENTS_RESULTS_DIR=/app/eval_results \
     TRADINGAGENTS_MEMORY_LOG_PATH=/app/.tradingagents/memory/trading_memory.md \
-    MPLCONFIGDIR=/tmp/matplotlib
+    MPLCONFIGDIR=/tmp/matplotlib \
+    TRADINGAGENTS_STRICT_PORT=1
 
 WORKDIR /app
 
@@ -69,8 +82,10 @@ USER app
 
 EXPOSE 7860
 
+# `/healthz` is a plain 200 from the Flask server; hitting `/` would render the
+# whole Dash layout every 30 seconds for no reason.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
-    CMD python -c "import os, urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.environ.get(\"PORT\", \"7860\")}', timeout=3).read(1)"
+    CMD python -c "import os, urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.environ.get(\"PORT\", \"7860\")}/healthz', timeout=3).read(1)"
 
 CMD ["sh", "-c", "exec python run_webui_dash.py --server-name \"${SERVER_NAME:-0.0.0.0}\" --port \"${PORT:-7860}\""]
 
