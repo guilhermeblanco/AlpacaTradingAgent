@@ -2,7 +2,7 @@
 # =============================================================================
 # TradingAgents — Proxmox LXC running the podman stack.
 #
-# WHAT   : creates an unprivileged Debian LXC, installs podman +
+# WHAT   : creates an unprivileged Ubuntu LXC, installs podman +
 #          podman-compose, clones this repo, builds the application image, and
 #          runs the stack under a systemd unit so it comes back after a reboot.
 #
@@ -65,11 +65,18 @@ STORAGE="${STORAGE:-local-lvm}"
 BRIDGE="${BRIDGE:-vmbr0}"
 IP_CIDR="${IP_CIDR:-10.64.8.94/24}"            # or: NET=dhcp
 GATEWAY="${GATEWAY:-10.64.8.1}"
-# Debian 13. Not 12: its podman is 4.3 and its podman-compose predates
-# reliable `depends_on: service_completed_successfully`, which is what keeps a
-# worker from starting against a schema older than its code. If this filename
-# is stale the script finds the newest debian-13-standard by itself.
-TEMPLATE_FILE="${TEMPLATE_FILE:-debian-13-standard_13.1-2_amd64.tar.zst}"
+# Ubuntu 26.04 LTS. Any apt-based template works: the script does not depend
+# on the distribution's podman-compose being new enough, because it probes for
+# the one capability it needs and installs a current podman-compose itself if
+# the packaged one lacks it (see COMPOSE CAPABILITY below). So this is a
+# preference, not a requirement — 24.04 LTS and Debian 13 both work, e.g.
+#   TEMPLATE_FILE=ubuntu-24.04-standard_24.04-2_amd64.tar.zst TEMPLATE_MATCH='^ubuntu-24.04-standard'
+#
+# The exact point-release suffix moves; if this filename is not offered the
+# script downloads the newest template matching TEMPLATE_MATCH instead and
+# says which one it picked.
+TEMPLATE_FILE="${TEMPLATE_FILE:-ubuntu-26.04-standard_26.04-1_amd64.tar.zst}"
+TEMPLATE_MATCH="${TEMPLATE_MATCH:-^ubuntu-26.04-standard}"
 CORES="${CORES:-4}"; RAM_MB="${RAM_MB:-6144}"; SWAP_MB="${SWAP_MB:-2048}"; DISK_GB="${DISK_GB:-32}"
 
 REPO_URL="${REPO_URL:-https://github.com/guilhermeblanco/AlpacaTradingAgent}"
@@ -112,8 +119,8 @@ else
     pveam update >/dev/null 2>&1 || true
     if ! pveam available --section system 2>/dev/null | grep -q "$TEMPLATE_FILE"; then
       DISCOVERED="$(pveam available --section system 2>/dev/null | awk '{print $2}' \
-                    | grep -E '^debian-13-standard' | sort -V | tail -1 || true)"
-      [ -n "$DISCOVERED" ] || { msg_err "no debian-13-standard template offered by this node; set TEMPLATE_FILE"; exit 1; }
+                    | grep -E "$TEMPLATE_MATCH" | sort -V | tail -1 || true)"
+      [ -n "$DISCOVERED" ] || { msg_err "no template matching ${TEMPLATE_MATCH} offered by this node; set TEMPLATE_FILE"; exit 1; }
       msg_warn "template $TEMPLATE_FILE not offered; using $DISCOVERED"
       TEMPLATE_FILE="$DISCOVERED"
     fi
@@ -131,7 +138,7 @@ else
     --onboot 1 --description "$APP" >/dev/null
 fi
 pct start "$CTID" 2>/dev/null || true
-for _ in $(seq 1 30); do pct exec "$CTID" -- getent hosts deb.debian.org >/dev/null 2>&1 && break; sleep 2; done
+for _ in $(seq 1 30); do pct exec "$CTID" -- getent hosts github.com >/dev/null 2>&1 && break; sleep 2; done
 pct exec "$CTID" -- bash -c "echo 'root:${CT_PASSWORD}' | chpasswd" 2>/dev/null || true
 msg_ok "container up (root password: ${CT_PASSWORD})"
 
@@ -147,16 +154,60 @@ for feature in nesting=1 keyctl=1 fuse=1; do
 done
 
 # ── Podman ───────────────────────────────────────────────────────────────────
-msg_info "installing podman + podman-compose"
+msg_info "installing podman"
 pct exec "$CTID" -- bash -c "
   set -e; export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
   apt-get install -y -qq --no-install-recommends \
-    podman podman-compose buildah fuse-overlayfs uidmap slirp4netns \
-    git make python3 ca-certificates curl tzdata >/dev/null
+    podman buildah fuse-overlayfs uidmap slirp4netns \
+    git make python3 python3-venv ca-certificates curl tzdata >/dev/null
+  # podman-compose is in universe on Ubuntu and may be absent or old; it is
+  # dealt with separately below, so a failure here is not fatal.
+  apt-get install -y -qq --no-install-recommends podman-compose >/dev/null 2>&1 || true
   ln -sf /usr/share/zoneinfo/${TZ_NAME} /etc/localtime || true
   echo '${TZ_NAME}' >/etc/timezone
 "
+
+# ── COMPOSE CAPABILITY ───────────────────────────────────────────────────────
+# The stack relies on `depends_on: condition: service_completed_successfully`
+# to keep a worker from ever starting against a schema older than its code.
+# Older podman-compose accepts that key and ignores it, which is the worst
+# outcome: it starts, it looks fine, and the ordering guarantee is gone.
+#
+# So probe for the capability rather than trusting a version number or a
+# distribution. podman-compose is a single Python module, so asking whether it
+# knows the string is both cheap and exact. If it does not — or if the distro
+# had no package at all — install a current one into its own venv and put it
+# ahead of /usr/bin on PATH.
+msg_info "checking podman-compose understands the ordering conditions"
+# The interpreter comes from the wrapper's own shebang rather than being
+# assumed to be the system python3 — otherwise the venv installed below is
+# invisible to the probe on the next run, and every re-run reinstalls it while
+# reporting that the packaged one is inadequate.
+if pct exec "$CTID" -- bash -c '
+  bin=$(command -v podman-compose) || exit 1
+  py=$(head -1 "$bin" | sed "s|^#!||; s|^ *||")
+  case "$py" in */python*|python*) ;; *) py=python3 ;; esac
+  module=$("$py" -c "import importlib.util
+spec = importlib.util.find_spec(\"podman_compose\")
+print(spec.origin if spec else \"\")" 2>/dev/null)
+  [ -n "$module" ] || module="$bin"
+  grep -q service_completed_successfully "$module"
+'; then
+  msg_ok "packaged podman-compose $(pct exec "$CTID" -- podman-compose --version 2>/dev/null | sed -n 's/.*version //p' | tail -1) is sufficient"
+else
+  msg_warn "the packaged podman-compose cannot enforce start ordering — installing a current one"
+  pct exec "$CTID" -- bash -c "
+    set -e
+    python3 -m venv /opt/podman-compose
+    /opt/podman-compose/bin/pip install --quiet --upgrade pip
+    /opt/podman-compose/bin/pip install --quiet 'podman-compose>=1.2'
+    ln -sf /opt/podman-compose/bin/podman-compose /usr/local/bin/podman-compose
+  "
+  pct exec "$CTID" -- bash -c 'command -v podman-compose >/dev/null' \
+    || { msg_err "podman-compose is still not on PATH in CT $CTID"; exit 1; }
+  msg_ok "podman-compose installed at /opt/podman-compose"
+fi
 
 msg_info "configuring the ${STORAGE_DRIVER} storage driver"
 if [ "$STORAGE_DRIVER" = "fuse-overlayfs" ]; then

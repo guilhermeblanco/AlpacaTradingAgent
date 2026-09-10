@@ -21,7 +21,7 @@ CTID=194 IP_CIDR=10.64.8.94/24 STORAGE=local-zfs CORES=6 RAM_MB=8192 \
 | script | what it does | base | default CT / IP / port |
 |---|---|---|---|
 | `postgres-database.sh` | role + database on a PostgreSQL you already run | — | reaches `10.64.8.78:5432`, or `PG_CTID` via `pct exec` |
-| `tradingagents.sh` | LXC + podman + the app stack, under systemd | Debian 13 | 194 · 10.64.8.94 · 7860 |
+| `tradingagents.sh` | LXC + podman + the app stack, under systemd | Ubuntu 26.04 LTS | 194 · 10.64.8.94 · 7860 |
 
 **Idempotent:** re-running `tradingagents.sh` creates the LXC if it is missing,
 otherwise updates it in place — resets the checkout to `REPO_REF`, rebuilds the
@@ -52,6 +52,24 @@ Storage driver is **fuse-overlayfs**, not the kernel's overlay: nested
 overlayfs in an unprivileged LXC is refused on most Proxmox kernels. Set
 `STORAGE_DRIVER=vfs` if fuse is unavailable — correct, much slower, much
 larger on disk.
+
+## Why the distribution stopped mattering
+
+The stack relies on `depends_on: condition: service_completed_successfully`
+to keep a worker from ever starting against a schema older than its code.
+Older podman-compose accepts that key and **ignores** it, which is the worst
+of the three possible outcomes: the stack starts, it looks fine, and the
+ordering guarantee is quietly gone.
+
+So the script probes for the capability instead of trusting a version number
+or a distribution's packaging. podman-compose is a single Python module, so
+asking whether it knows the string is cheap and exact. If the packaged one
+cannot do it — or the distribution shipped none at all, which happens because
+Ubuntu keeps it in `universe` — a current podman-compose goes into
+`/opt/podman-compose` and is symlinked ahead of `/usr/bin` on PATH.
+
+That is what makes the base image a preference. Pick whichever apt-based
+template you already keep updated.
 
 ## The first run is slow
 
@@ -134,9 +152,12 @@ the decision history is on the other server and needs its own backup — a
 - **Written against the standard Proxmox layout but not tested on your node.**
   Confirm the CONFIG block, the template name, and the storage id before the
   first run.
-- **Debian 13, not 12.** Debian 12's podman is 4.3 and its podman-compose
-  predates dependable `depends_on: service_completed_successfully` — which is
-  exactly what stops a worker starting against a schema older than its code.
+- **The base is a preference, not a requirement.** Ubuntu 26.04 LTS by
+  default; 24.04 LTS and Debian 13 both work, e.g.
+  `TEMPLATE_FILE=debian-13-standard_13.1-2_amd64.tar.zst TEMPLATE_MATCH='^debian-13-standard'`.
+  Template point-release suffixes move, so if the named file is not offered
+  the script downloads the newest one matching `TEMPLATE_MATCH` and says
+  which it picked.
 - **The web UI runs on Werkzeug**, not a production WSGI server. That is a
   deliberate consequence of the server-sent pulse stream, which wants a
   long-lived threaded connection per tab; it is fine for the handful of

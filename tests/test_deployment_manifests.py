@@ -254,6 +254,22 @@ class ProxmoxScriptTests(unittest.TestCase):
     def test_the_container_stays_unprivileged(self):
         self.assertIn("--unprivileged 1", self.script)
 
+    def test_the_compose_ordering_capability_is_probed_not_assumed(self):
+        """Older podman-compose accepts `service_completed_successfully` and
+        ignores it — the stack starts, looks fine, and no longer guarantees
+        that migrations finish first. A distribution's package version is not
+        something to bet that on, so the script checks and installs its own
+        if the packaged one cannot do it."""
+        self.assertIn("service_completed_successfully", self.script)
+        self.assertIn("/opt/podman-compose", self.script)
+        self.assertIn("podman-compose>=1.2", self.script)
+
+    def test_the_template_is_discoverable_when_the_pinned_name_is_stale(self):
+        """Point-release suffixes move; a hard-coded filename that is no
+        longer offered should not be the end of the run."""
+        self.assertIn("TEMPLATE_MATCH", self.script)
+        self.assertIn("pveam available", self.script)
+
     def test_the_autonomous_worker_is_off_by_default(self):
         self.assertIn('AUTONOMOUS="${AUTONOMOUS:-0}"', self.script)
 
@@ -270,6 +286,15 @@ class ProxmoxScriptTests(unittest.TestCase):
             script = (REPO / "infrastructure" / "proxmox" / name).read_text()
             with self.subTest(script=name):
                 self.assertIn("set -euo pipefail", script)
+
+    def test_the_database_script_catches_a_misspelt_ctid(self):
+        """`PGCTID=102` silently took the network path and then failed
+        several steps later complaining about psql, which points at the
+        wrong problem. The variable is PG_CTID; a near miss says so."""
+        script = (REPO / "infrastructure" / "proxmox" / "postgres-database.sh").read_text()
+
+        self.assertIn("PGCTID", script)
+        self.assertIn("the variable is PG_CTID", script)
 
     def test_the_database_script_never_drops_anything(self):
         script = (REPO / "infrastructure" / "proxmox" / "postgres-database.sh").read_text()

@@ -90,6 +90,13 @@ Other targets: `logs`, `status`, `shell`, `psql`, `restart`, `down`, `reset`
 - **In a nested unprivileged LXC**, podman needs `nesting=1,keyctl=1,fuse=1`
   on the container and the `fuse-overlayfs` storage driver, because the kernel
   refuses overlayfs-on-overlayfs there. The Proxmox script sets both.
+- **The ordering conditions are probed for, not assumed.** Older
+  podman-compose accepts `depends_on: condition:
+  service_completed_successfully` and ignores it — the stack starts, looks
+  fine, and no longer guarantees that migrations finish first. The Proxmox
+  script checks whether the installed podman-compose knows the condition and
+  installs a current one if not, which is why the base image is a preference
+  rather than a requirement.
 
 ## Health
 
