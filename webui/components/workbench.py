@@ -12,6 +12,12 @@ from dash import dcc, html
 from tradingagents.workbench.tape import STAGES, StageState
 from webui.config.constants import COLORS
 from webui.config.tokens import status_badge, status_color
+from webui.config.figures import (
+    HEIGHT_MEDIUM,
+    HEIGHT_SMALL,
+    empty_figure,
+    style,
+)
 
 #: Stage and gate states share one vocabulary with agents and workers, so
 #: the same condition looks the same wherever it is drawn. See
@@ -23,32 +29,6 @@ GATE_STATUS_COLORS = {
     for status in ("passed", "clipped", "blocked", "skipped")
 }
 
-CHART_LAYOUT = {
-    "template": "plotly_dark",
-    "paper_bgcolor": COLORS["card"],
-    "plot_bgcolor": COLORS["card"],
-    "margin": {"l": 8, "r": 8, "t": 28, "b": 8},
-    "font": {"color": COLORS["text"], "size": 11},
-    "showlegend": False,
-}
-
-
-def empty_figure(message: str) -> go.Figure:
-    figure = go.Figure()
-    figure.update_layout(
-        **CHART_LAYOUT,
-        height=180,
-        xaxis={"visible": False},
-        yaxis={"visible": False},
-        annotations=[
-            {
-                "text": message,
-                "showarrow": False,
-                "font": {"color": COLORS["pending"], "size": 12},
-            }
-        ],
-    )
-    return figure
 
 
 def gate_waterfall_figure(steps) -> go.Figure:
@@ -84,8 +64,8 @@ def gate_waterfall_figure(steps) -> go.Figure:
             textposition="outside",
         )
     )
-    figure.update_layout(**CHART_LAYOUT, height=260, title="Size through the gates")
-    figure.update_yaxes(gridcolor=COLORS["border"], tickprefix="$")
+    style(figure, title="Size through the gates", height=HEIGHT_MEDIUM)
+    figure.update_yaxes(tickprefix="$")
     return figure
 
 
@@ -111,8 +91,8 @@ def evidence_figure(bars) -> go.Figure:
             textposition="auto",
         )
     )
-    figure.update_layout(**CHART_LAYOUT, height=240, title="Evidence scoreboard")
-    figure.update_xaxes(range=[0, 1], gridcolor=COLORS["border"])
+    style(figure, title="Evidence scoreboard", height=HEIGHT_MEDIUM)
+    figure.update_xaxes(range=[0, 1])
     figure.update_yaxes(autorange="reversed")
     return figure
 
@@ -138,10 +118,8 @@ def outcome_figure(outcomes) -> go.Figure:
             textposition="outside",
         )
     )
-    figure.update_layout(
-        **CHART_LAYOUT, height=220, title="Excess return vs benchmark"
-    )
-    figure.update_yaxes(gridcolor=COLORS["border"], ticksuffix="%", zerolinecolor=COLORS["border"])
+    style(figure, title="Excess return vs benchmark", height=HEIGHT_SMALL)
+    figure.update_yaxes(ticksuffix="%", zerolinecolor=COLORS["border"])
     return figure
 
 

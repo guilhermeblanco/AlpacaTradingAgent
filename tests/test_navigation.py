@@ -187,5 +187,84 @@ class ServedStylesheetTests(unittest.TestCase):
         self.assertEqual(used - defined, set())
 
 
+
+class FigureStyleTests(unittest.TestCase):
+    """Charts you can actually read.
+
+    The shared layout used to set `margin: {l: 8, r: 8, t: 28, b: 8}`, and
+    eight pixels is not enough room for a tick label — Plotly drew the axis
+    and clipped the numbers off the side. `automargin` is most of the fix:
+    each axis claims what its own labels need, instead of every chart
+    sharing one guess that has to work for all of them.
+    """
+
+    FIGURES = (
+        ("webui.components.workbench", "gate_waterfall_figure",
+         [{"label": "Requested", "kind": "start", "amount": 1000, "running": 1000},
+          {"label": "Sent", "kind": "total", "amount": 800, "running": 800}]),
+        ("webui.components.workbench", "evidence_figure",
+         [{"label": "Bullish", "value": 0.6}]),
+        ("webui.components.workbench", "outcome_figure",
+         [{"horizon": "1d", "excess_return_pct": 1.2}]),
+        ("webui.components.pipeline_board", "stage_distribution_figure",
+         {"decide": 2, "order": 1}),
+        ("webui.components.pipeline_board", "halt_breakdown_figure", {"risk sizing": 2}),
+        ("webui.components.pipeline_board", "throughput_figure",
+         [{"at": "10:00", "count": 3}]),
+    )
+
+    def _figures(self):
+        import importlib
+
+        for module_name, function_name, argument in self.FIGURES:
+            module = importlib.import_module(module_name)
+            yield function_name, getattr(module, function_name)(argument)
+
+    def test_both_axes_claim_the_room_their_labels_need(self):
+        for name, figure in self._figures():
+            with self.subTest(figure=name):
+                self.assertTrue(figure.layout.xaxis.automargin, name)
+                self.assertTrue(figure.layout.yaxis.automargin, name)
+
+    def test_no_margin_is_too_small_for_a_tick_label(self):
+        for name, figure in self._figures():
+            margin = figure.layout.margin
+            with self.subTest(figure=name):
+                self.assertGreaterEqual(min(margin.l, margin.r, margin.b), 12, name)
+
+    def test_every_chart_is_tall_enough_to_read(self):
+        for name, figure in self._figures():
+            with self.subTest(figure=name):
+                self.assertGreaterEqual(figure.layout.height, 200, name)
+
+    def test_a_label_too_small_to_read_is_hidden_rather_than_shrunk(self):
+        for name, figure in self._figures():
+            with self.subTest(figure=name):
+                self.assertEqual(figure.layout.uniformtext.mode, "hide")
+                self.assertGreaterEqual(figure.layout.uniformtext.minsize, 10)
+
+    def test_the_board_no_longer_imports_its_chart_style_from_the_workbench(self):
+        """A bar chart on the board should not depend on a different
+        panel in order to know what a chart looks like."""
+        source = (
+            pathlib.Path(__file__).resolve().parent.parent
+            / "webui" / "components" / "pipeline_board.py"
+        ).read_text()
+
+        self.assertNotIn("from webui.components.workbench import CHART_LAYOUT", source)
+        self.assertIn("from webui.config.figures import", source)
+
+    def test_an_empty_chart_says_why_in_the_middle_of_itself(self):
+        from webui.config.figures import empty_figure
+
+        figure = empty_figure("Nothing recorded yet")
+        annotation = figure.layout.annotations[0]
+
+        self.assertEqual(annotation.text, "Nothing recorded yet")
+        self.assertEqual((annotation.x, annotation.y), (0.5, 0.5))
+        self.assertFalse(figure.layout.xaxis.visible)
+
+
 if __name__ == "__main__":
     unittest.main()
+
