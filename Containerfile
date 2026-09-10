@@ -3,6 +3,10 @@
 #
 #   podman build -t localhost/tradingagents:latest -f Containerfile .
 #
+# Base images are fully qualified. A short name resolves through whatever
+# shortnames.conf the host happens to ship, which is a different registry on
+# a different machine and a prompt on a machine with nobody to answer it.
+#
 # One image, several entry points: the web UI is the default CMD, the workers
 # and `alembic upgrade head` override it. That keeps the workers on exactly the
 # code the UI is showing, which matters because a decision's record is written
@@ -12,7 +16,7 @@
 # needs it.
 # =============================================================================
 
-FROM python:3.14-slim-bookworm AS builder
+FROM docker.io/library/python:3.14-slim-bookworm AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -40,7 +44,7 @@ RUN python -m pip install --upgrade pip setuptools wheel \
     && python -m pip install ".[app]"
 
 
-FROM python:3.14-slim-bookworm AS runtime
+FROM docker.io/library/python:3.14-slim-bookworm AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

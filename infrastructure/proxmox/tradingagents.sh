@@ -154,12 +154,31 @@ for feature in nesting=1 keyctl=1 fuse=1; do
 done
 
 # ── Podman ───────────────────────────────────────────────────────────────────
-msg_info "installing podman"
+# `--no-install-recommends` is a trap here. On Ubuntu the pieces podman
+# actually needs at runtime — the network helper, the DNS server for
+# user-defined networks, the init process — are Recommends rather than
+# Depends, so podman installs cleanly and then fails at the moment of use,
+# minutes later, with an error that names a binary and not a package:
+#
+#   pasta         podman 5 configures the build container's netns with it
+#   netavark      the network backend
+#   aardvark-dns  resolves container names on a user-defined network, which
+#                 is how `postgres` resolves in POSTGRES_MODE=local
+#   catatonit     what `init: true` in the compose files runs as pid 1
+#   crun          the OCI runtime
+#
+# So they are named explicitly, and verified below rather than assumed.
+#
+# LC_ALL=C because pct exec forwards the node's LANG into a container that
+# has no locales generated, and the resulting perl warnings bury real output.
+msg_info "installing podman and its runtime helpers"
 pct exec "$CTID" -- bash -c "
-  set -e; export DEBIAN_FRONTEND=noninteractive
+  set -e
+  export DEBIAN_FRONTEND=noninteractive LC_ALL=C LANG=C
   apt-get update -qq
   apt-get install -y -qq --no-install-recommends \
-    podman buildah fuse-overlayfs uidmap slirp4netns \
+    podman buildah crun fuse-overlayfs uidmap \
+    passt netavark aardvark-dns catatonit slirp4netns \
     git make python3 python3-venv ca-certificates curl tzdata >/dev/null
   # podman-compose is in universe on Ubuntu and may be absent or old; it is
   # dealt with separately below, so a failure here is not fatal.
@@ -167,6 +186,29 @@ pct exec "$CTID" -- bash -c "
   ln -sf /usr/share/zoneinfo/${TZ_NAME} /etc/localtime || true
   echo '${TZ_NAME}' >/etc/timezone
 "
+
+# Fail here, naming what is missing, rather than twenty minutes into a build.
+# netavark and aardvark-dns live under /usr/lib/podman rather than on PATH on
+# Debian-family packagings, so they are looked for in both places.
+if ! pct exec "$CTID" -- bash -c '
+  missing=""
+  for tool in pasta crun fuse-overlayfs catatonit; do
+    command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
+  done
+  for tool in netavark aardvark-dns; do
+    command -v "$tool" >/dev/null 2>&1 && continue
+    [ -x "/usr/lib/podman/$tool" ] && continue
+    [ -x "/usr/libexec/podman/$tool" ] && continue
+    missing="$missing $tool"
+  done
+  [ -z "$missing" ] || { echo "missing:$missing"; exit 1; }
+'; then
+  msg_err "podman installed but cannot run containers — the tools listed above are absent."
+  msg_err "On Ubuntu they live in these packages:"
+  msg_err "    pct exec ${CTID} -- apt-get install -y passt netavark aardvark-dns catatonit crun"
+  exit 1
+fi
+msg_ok "podman runtime helpers present"
 
 # ── COMPOSE CAPABILITY ───────────────────────────────────────────────────────
 # The stack relies on `depends_on: condition: service_completed_successfully`
@@ -240,7 +282,7 @@ msg_ok "podman $(pct exec "$CTID" -- podman --version | awk '{print $3}') ready"
 # ── The repo ─────────────────────────────────────────────────────────────────
 msg_info "fetching ${REPO_URL} @ ${REPO_REF}"
 pct exec "$CTID" -- bash -c "
-  set -e
+  set -e; export LC_ALL=C LANG=C
   if [ -d '${APP_DIR}/.git' ]; then
     git -C '${APP_DIR}' remote set-url origin '${REPO_URL}'
     git -C '${APP_DIR}' fetch --depth 1 origin '${REPO_REF}'
