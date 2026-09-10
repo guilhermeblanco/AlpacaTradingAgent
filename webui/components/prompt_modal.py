@@ -38,14 +38,14 @@ def create_prompt_modal():
                                 children="Loading prompt...",
                                 className="prompt-content",
                                 style={
-                                    "background": "#0F172A",
+                                    "background": "var(--ta-background)",
                                     "border": "1px solid #334155",
                                     "border-radius": "8px",
                                     "padding": "1.5rem",
                                     "font-family": "monospace",
                                     "font-size": "14px",
                                     "line-height": "1.5",
-                                    "color": "#E2E8F0",
+                                    "color": "var(--ta-text-soft)",
                                     "white-space": "pre-wrap",
                                     "max-height": "400px",
                                     "overflow-y": "auto"

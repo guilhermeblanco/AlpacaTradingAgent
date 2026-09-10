@@ -26,6 +26,7 @@ from webui.components.pipeline_board import (
     stage_distribution_figure,
     throughput_figure,
 )
+from webui.config.tokens import DEFAULT_THEME
 from webui.components.vitals import vital
 from webui.components.workbench import empty_figure
 from webui.callbacks.workbench_callbacks import decision_option, load_tape
@@ -173,20 +174,22 @@ def _budget_reading():
         return vital("Token budget", "—", "idle", "")
 
 
-def build_board(selected=None):
+def build_board(selected=None, *, theme=DEFAULT_THEME):
     """Columns, and the three charts that break the board down.
 
     `selected` is whichever decision the tape is showing, so the board and
-    the tape visibly refer to the same thing.
+    the tape visibly refer to the same thing. `theme` has to be passed
+    rather than read: a figure is rendered here, in Python, and shipped
+    as JSON, so it is the one surface that cannot pick up a CSS variable.
     """
     try:
         tapes = load_recent()
     except Exception as exc:
         return (
             dbc.Alert(f"Unable to load the board: {exc}", color="danger"),
-            empty_figure("Unavailable"),
-            empty_figure("Unavailable"),
-            empty_figure("Unavailable"),
+            empty_figure("Unavailable", theme=theme),
+            empty_figure("Unavailable", theme=theme),
+            empty_figure("Unavailable", theme=theme),
         )
 
     live = live_cards(
@@ -213,9 +216,9 @@ def build_board(selected=None):
     )
     return (
         html.Div([note, columns] if note is not None else columns),
-        stage_distribution_figure(stage_counts(cards)),
-        halt_breakdown_figure(halt_counts(tapes)),
-        throughput_figure(throughput_series(tapes)),
+        stage_distribution_figure(stage_counts(cards), theme=theme),
+        halt_breakdown_figure(halt_counts(tapes), theme=theme),
+        throughput_figure(throughput_series(tapes), theme=theme),
     )
 
 
@@ -273,9 +276,10 @@ def register_board_callbacks(app):
         Input("board-interval", "n_intervals"),
         Input("board-refresh", "n_clicks"),
         Input("workbench-selection", "value"),
+        Input("theme-store", "data"),
     )
-    def update_board(_intervals, _clicks, selected):
-        return build_board(selected)
+    def update_board(_intervals, _clicks, selected, theme=DEFAULT_THEME):
+        return build_board(selected, theme=theme)
 
     @app.callback(
         Output("workbench-selection", "options", allow_duplicate=True),

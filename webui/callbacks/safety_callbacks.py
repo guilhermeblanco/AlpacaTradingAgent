@@ -51,13 +51,13 @@ def _status_cards(status):
         if guard is None:
             continue
         if guard.get("status") == "skipped":
-            color = COLORS.get("pending", "#9ca3af")
+            color = COLORS.get("pending", "var(--ta-text-muted)")
             icon = "fas fa-question-circle"
         elif guard["ok"]:
-            color = COLORS.get("completed", "#22c55e")
+            color = COLORS.get("completed", "var(--ta-positive)")
             icon = "fas fa-check-circle"
         else:
-            color = COLORS.get("error", "#ef4444")
+            color = COLORS.get("error", "var(--ta-negative)")
             icon = "fas fa-exclamation-triangle"
         cards.append(
             dbc.Col(

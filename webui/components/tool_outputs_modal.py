@@ -37,14 +37,14 @@ def create_tool_outputs_modal():
                         children="Loading tool outputs...",
                         className="tool-outputs-content",
                         style={
-                            "background": "#0F172A",
+                            "background": "var(--ta-background)",
                             "border": "1px solid #334155",
                             "border-radius": "8px",
                             "padding": "1.5rem",
                             "font-family": "monospace",
                             "font-size": "14px",
                             "line-height": "1.5",
-                            "color": "#E2E8F0"
+                            "color": "var(--ta-text-soft)"
                         }
                     )
                 ],

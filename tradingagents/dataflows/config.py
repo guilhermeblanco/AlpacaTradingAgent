@@ -127,6 +127,20 @@ def get_api_key(key_name: str, env_var_name: str) -> str:
     if stored_setting is not None:
         return stored_setting
 
+    # Then whichever integration instance is currently active for this
+    # field. Callers ask for `alpaca_api_key` and get the credentials of
+    # the Alpaca instance that is active — a paper one or a live one —
+    # without ever learning that instances exist.
+    from tradingagents.integrations.instances import active_credential
+
+    instance_value = active_credential(key_name)
+    if instance_value:
+        return instance_value
+
+    # Then a plain vault entry, which is what a deployment configured
+    # before instances existed has. Keeping this below instances but
+    # above the environment is what lets such a deployment be migrated
+    # one integration at a time rather than all at once.
     from tradingagents.integrations import get_configured_credential
 
     vaulted_value = get_configured_credential(key_name)
@@ -146,6 +160,7 @@ def get_api_key(key_name: str, env_var_name: str) -> str:
 #: Where `get_api_key` found a value, in the order it looks.
 KEY_SOURCE_SESSION = "session"
 KEY_SOURCE_SETTING = "setting"
+KEY_SOURCE_INTEGRATION = "integration"
 KEY_SOURCE_VAULT = "vault"
 KEY_SOURCE_ENVIRONMENT = "environment"
 KEY_SOURCE_CONFIG = "config"
@@ -184,6 +199,14 @@ def get_api_key_source(key_name: str, env_var_name: str) -> str:
 
     if _runtime_setting(key_name) is not None:
         return KEY_SOURCE_SETTING
+
+    from tradingagents.integrations.instances import active_credential
+
+    try:
+        if active_credential(key_name):
+            return KEY_SOURCE_INTEGRATION
+    except Exception:
+        pass
 
     from tradingagents.integrations import get_configured_credential
 

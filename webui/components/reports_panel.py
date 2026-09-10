@@ -40,8 +40,8 @@ def create_reports_panel():
                 ),
                 label="📊 Market Analysis", 
                 tab_id="market-analysis",
-                label_style={"color": "#94A3B8", "font-weight": "600"},
-                active_label_style={"color": "#FFFFFF", "font-weight": "700"}
+                label_style={"color": "var(--ta-text-muted)", "font-weight": "600"},
+                active_label_style={"color": "var(--ta-text-bright)", "font-weight": "700"}
             ),
             dbc.Tab(
                 html.Div(
@@ -58,8 +58,8 @@ def create_reports_panel():
                 ),
                 label="📱 Social Sentiment", 
                 tab_id="social-sentiment",
-                label_style={"color": "#94A3B8", "font-weight": "600"},
-                active_label_style={"color": "#FFFFFF", "font-weight": "700"}
+                label_style={"color": "var(--ta-text-muted)", "font-weight": "600"},
+                active_label_style={"color": "var(--ta-text-bright)", "font-weight": "700"}
             ),
             dbc.Tab(
                 html.Div(
@@ -76,8 +76,8 @@ def create_reports_panel():
                 ),
                 label="📰 News Analysis", 
                 tab_id="news-analysis",
-                label_style={"color": "#94A3B8", "font-weight": "600"},
-                active_label_style={"color": "#FFFFFF", "font-weight": "700"}
+                label_style={"color": "var(--ta-text-muted)", "font-weight": "600"},
+                active_label_style={"color": "var(--ta-text-bright)", "font-weight": "700"}
             ),
             dbc.Tab(
                 html.Div(
@@ -94,8 +94,8 @@ def create_reports_panel():
                 ),
                 label="📈 Fundamentals", 
                 tab_id="fundamentals-analysis",
-                label_style={"color": "#94A3B8", "font-weight": "600"},
-                active_label_style={"color": "#FFFFFF", "font-weight": "700"}
+                label_style={"color": "var(--ta-text-muted)", "font-weight": "600"},
+                active_label_style={"color": "var(--ta-text-bright)", "font-weight": "700"}
             ),
             dbc.Tab(
                 html.Div(
@@ -112,8 +112,8 @@ def create_reports_panel():
                 ),
                 label="🌍 Macro Analysis", 
                 tab_id="macro-analysis",
-                label_style={"color": "#94A3B8", "font-weight": "600"},
-                active_label_style={"color": "#FFFFFF", "font-weight": "700"}
+                label_style={"color": "var(--ta-text-muted)", "font-weight": "600"},
+                active_label_style={"color": "var(--ta-text-bright)", "font-weight": "700"}
             ),
             dbc.Tab(
                 html.Div(
@@ -126,8 +126,8 @@ def create_reports_panel():
                 ),
                 label="🔍 Researcher Debate", 
                 tab_id="researcher-debate",
-                label_style={"color": "#94A3B8", "font-weight": "600"},
-                active_label_style={"color": "#FFFFFF", "font-weight": "700"}
+                label_style={"color": "var(--ta-text-muted)", "font-weight": "600"},
+                active_label_style={"color": "var(--ta-text-bright)", "font-weight": "700"}
             ),
             dbc.Tab(
                 html.Div(
@@ -144,8 +144,8 @@ def create_reports_panel():
                 ),
                 label="🎯 Research Manager", 
                 tab_id="research-manager",
-                label_style={"color": "#94A3B8", "font-weight": "600"},
-                active_label_style={"color": "#FFFFFF", "font-weight": "700"}
+                label_style={"color": "var(--ta-text-muted)", "font-weight": "600"},
+                active_label_style={"color": "var(--ta-text-bright)", "font-weight": "700"}
             ),
             dbc.Tab(
                 html.Div(
@@ -162,8 +162,8 @@ def create_reports_panel():
                 ),
                 label="🧠 Trader Plan", 
                 tab_id="trader-plan",
-                label_style={"color": "#94A3B8", "font-weight": "600"},
-                active_label_style={"color": "#FFFFFF", "font-weight": "700"}
+                label_style={"color": "var(--ta-text-muted)", "font-weight": "600"},
+                active_label_style={"color": "var(--ta-text-bright)", "font-weight": "700"}
             ),
             dbc.Tab(
                 html.Div(
@@ -176,8 +176,8 @@ def create_reports_panel():
                 ),
                 label="⚖️ Risk Debate", 
                 tab_id="risk-debate",
-                label_style={"color": "#94A3B8", "font-weight": "600"},
-                active_label_style={"color": "#FFFFFF", "font-weight": "700"}
+                label_style={"color": "var(--ta-text-muted)", "font-weight": "600"},
+                active_label_style={"color": "var(--ta-text-bright)", "font-weight": "700"}
             ),
             dbc.Tab(
                 html.Div(
@@ -194,8 +194,8 @@ def create_reports_panel():
                 ),
                 label="⚡ Final Decision", 
                 tab_id="final-decision",
-                label_style={"color": "#94A3B8", "font-weight": "600"},
-                active_label_style={"color": "#FFFFFF", "font-weight": "700"}
+                label_style={"color": "var(--ta-text-muted)", "font-weight": "600"},
+                active_label_style={"color": "var(--ta-text-bright)", "font-weight": "700"}
             ),
         ],
         id="tabs",

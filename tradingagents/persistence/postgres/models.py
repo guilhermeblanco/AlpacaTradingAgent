@@ -388,6 +388,29 @@ class SafetyTokenUsageRow(Base):
     tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
 
 
+class IntegrationRow(Base):
+    """One configured third party, as an instance rather than a slot.
+
+    Several may exist per kind — two Alpaca accounts, a production model
+    key and an evaluation one — and exactly one is active for the kinds
+    where only one can answer. Credentials live in the vault under this
+    row's id, so two instances of one provider never overwrite each
+    other.
+    """
+
+    __tablename__ = "integrations"
+    __table_args__ = (Index("ix_integrations_kind_active", "kind", "active"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(60), nullable=False)
+    provider: Mapped[str] = mapped_column(String(60), nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_by: Mapped[Optional[str]] = mapped_column(String(160))
+
+
 class RuntimeSettingRow(Base):
     """A setting an operator changed, which outranks the environment.
 

@@ -11,7 +11,7 @@ from dash import dcc, html
 
 from tradingagents.workbench.tape import STAGES, StageState
 from webui.config.constants import COLORS
-from webui.config.tokens import status_badge, status_color
+from webui.config.tokens import DEFAULT_THEME, status_badge, status_color
 from webui.config.figures import (
     HEIGHT_MEDIUM,
     HEIGHT_SMALL,
@@ -31,10 +31,10 @@ GATE_STATUS_COLORS = {
 
 
 
-def gate_waterfall_figure(steps) -> go.Figure:
+def gate_waterfall_figure(steps, *, theme=DEFAULT_THEME) -> go.Figure:
     """Requested notional, every clip that reduced it, and what was sent."""
     if not steps:
-        return empty_figure("No gate ledger recorded for this decision")
+        return empty_figure("No gate ledger recorded for this decision", theme=theme)
 
     measures, values, labels, colors = [], [], [], []
     for step in steps:
@@ -64,15 +64,15 @@ def gate_waterfall_figure(steps) -> go.Figure:
             textposition="outside",
         )
     )
-    style(figure, title="Size through the gates", height=HEIGHT_MEDIUM)
+    style(figure, title="Size through the gates", height=HEIGHT_MEDIUM, theme=theme)
     figure.update_yaxes(tickprefix="$")
     return figure
 
 
-def evidence_figure(bars) -> go.Figure:
+def evidence_figure(bars, *, theme=DEFAULT_THEME) -> go.Figure:
     """The scoreboard dimensions the managers adjudicated on."""
     if not bars:
-        return empty_figure("No scored evidence recorded for this decision")
+        return empty_figure("No scored evidence recorded for this decision", theme=theme)
 
     labels = [bar["label"] for bar in bars]
     values = [bar["value"] for bar in bars]
@@ -91,16 +91,16 @@ def evidence_figure(bars) -> go.Figure:
             textposition="auto",
         )
     )
-    style(figure, title="Evidence scoreboard", height=HEIGHT_MEDIUM)
+    style(figure, title="Evidence scoreboard", height=HEIGHT_MEDIUM, theme=theme)
     figure.update_xaxes(range=[0, 1])
     figure.update_yaxes(autorange="reversed")
     return figure
 
 
-def outcome_figure(outcomes) -> go.Figure:
+def outcome_figure(outcomes, *, theme=DEFAULT_THEME) -> go.Figure:
     """Realized excess return at each resolved horizon."""
     if not outcomes:
-        return empty_figure("No horizon has resolved yet")
+        return empty_figure("No horizon has resolved yet", theme=theme)
 
     horizons = [item.get("horizon", "") for item in outcomes]
     excess = [float(item.get("excess_return_pct", 0.0) or 0.0) for item in outcomes]
@@ -118,7 +118,7 @@ def outcome_figure(outcomes) -> go.Figure:
             textposition="outside",
         )
     )
-    style(figure, title="Excess return vs benchmark", height=HEIGHT_SMALL)
+    style(figure, title="Excess return vs benchmark", height=HEIGHT_SMALL, theme=theme)
     figure.update_yaxes(ticksuffix="%", zerolinecolor=COLORS["border"])
     return figure
 

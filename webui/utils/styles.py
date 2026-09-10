@@ -40,10 +40,10 @@ __TOKENS__
     transition: background-color 0.5s ease;
 }
 .status-table tr:nth-child(even) {
-    background-color: #f2f2f2;
+    background-color: var(--ta-surface-inset);
 }
 .status-table tr:nth-child(odd) {
-    background-color: #ffffff;
+    background-color: var(--ta-surface);
 }
 /* Ensure text is visible on all rows regardless of background */
 .status-table td {
@@ -420,6 +420,94 @@ __TOKENS__
     border-top: 1px solid var(--ta-border);
 }
 
+/* ── Configuration ───────────────────────────────────────────────────
+   Pages down the side, sections across the top. The nav column is
+   sticky because a settings page is long and the list of pages is the
+   only way back out of one. */
+
+.config-nav-column {
+    min-width: 0;
+}
+
+.config-nav {
+    position: sticky;
+    top: var(--ta-space-md);
+}
+
+.config-page-link {
+    color: var(--ta-text-muted);
+    border-radius: var(--ta-radius);
+    padding: var(--ta-space-sm) var(--ta-space-md);
+    font-weight: var(--ta-weight-medium);
+}
+
+.config-page-link:hover {
+    color: var(--ta-text);
+    background: var(--ta-surface-inset);
+}
+
+.config-page-link.active {
+    color: var(--ta-text-bright);
+    background: var(--ta-accent);
+}
+
+.config-body-column,
+.config-page {
+    min-width: 0;
+}
+
+.config-section-tabs .nav-link {
+    color: var(--ta-text-muted);
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+}
+
+.config-section-tabs .nav-link.active {
+    color: var(--ta-text);
+    background: transparent;
+    border-bottom-color: var(--ta-accent);
+}
+
+/* ── Integrations ────────────────────────────────────────────────────
+   A list of what is configured, not a form per provider this build can
+   talk to. */
+
+.integration-section + .integration-section {
+    margin-top: var(--ta-space-lg);
+}
+
+.integration-kind {
+    color: var(--ta-text-muted);
+    font-size: var(--ta-size-small);
+    letter-spacing: 0.06em;
+}
+
+.integration-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--ta-space-md);
+    flex-wrap: wrap;
+    padding: var(--ta-space-sm) 0;
+    border-bottom: 1px solid var(--ta-border);
+}
+
+.integration-row:last-child {
+    border-bottom: none;
+}
+
+/* ── Theme toggle ────────────────────────────────────────────────── */
+
+.theme-toggle {
+    color: var(--ta-text-muted);
+    padding: var(--ta-space-xs) var(--ta-space-sm);
+}
+
+.theme-toggle:hover {
+    color: var(--ta-text);
+}
+
 /* ── Set up ──────────────────────────────────────────────────────────── */
 
 .setup-requirement {
@@ -436,171 +524,8 @@ __TOKENS__
 # percent signs (keyframes, widths) that would break interpolation.
 CSS = _CSS_TEMPLATE.replace("__TOKENS__", css_variables())
 
-# JavaScript for auto-refresh and UI improvements
-AUTO_REFRESH_JS = """
-<script>
-// Configuration
-const REFRESH_INTERVAL = 500; // 0.5 seconds
-const MAX_RETRIES = 3;
-const RETRY_DELAY = 500; // 0.5 seconds
-
-// Track last update time
-let lastUpdateTime = Date.now();
-let updateCount = 0;
-let lastStatusHtml = '';
-
-// SUPER AGGRESSIVE DOM INJECTION
-// This function will directly modify the DOM to force updates
-function forceStatusUpdate() {
-    // Find the status table
-    const statusPanel = document.getElementById('status-panel');
-    if (!statusPanel) return false;
-    
-    const statusTable = statusPanel.querySelector('table');
-    if (!statusTable) return false;
-    
-    // Get all rows in the table
-    const rows = statusTable.querySelectorAll('tr');
-    if (rows.length <= 1) return false; // Header only
-    
-    // Get the current time to show when we last updated
-    const now = new Date();
-    const timestamp = now.toLocaleTimeString();
-    
-    // Add a hidden timestamp element to force browser to recognize changes
-    let timestampEl = statusTable.querySelector('.update-timestamp');
-    if (!timestampEl) {
-        timestampEl = document.createElement('div');
-        timestampEl.className = 'update-timestamp';
-        timestampEl.style.display = 'none';
-        statusTable.appendChild(timestampEl);
-    }
-    timestampEl.textContent = now.toISOString();
-    
-    // Create a visual indicator that an update happened
-    let updateIndicator = document.getElementById('update-indicator');
-    if (!updateIndicator) {
-        updateIndicator = document.createElement('div');
-        updateIndicator.id = 'update-indicator';
-        updateIndicator.style.position = 'fixed';
-        updateIndicator.style.top = '10px';
-        updateIndicator.style.right = '10px';
-        updateIndicator.style.backgroundColor = 'rgba(0,0,0,0.7)';
-        updateIndicator.style.color = 'white';
-        updateIndicator.style.padding = '5px 10px';
-        updateIndicator.style.borderRadius = '5px';
-        updateIndicator.style.fontSize = '12px';
-        updateIndicator.style.zIndex = '1000';
-        document.body.appendChild(updateIndicator);
-    }
-    updateIndicator.textContent = 'Updated: ' + timestamp;
-    updateIndicator.style.backgroundColor = '#4CAF50';
-    setTimeout(() => {
-        updateIndicator.style.backgroundColor = 'rgba(0,0,0,0.7)';
-    }, 500);
-    
-    // Check for terminal output to find completed tasks
-    const pageText = document.body.innerText;
-    
-    // Look for patterns like "- Market Analyst: completed" in terminal output
-    // This regex will find all instances of agent status updates
-    const statusRegex = /- ([^:]+): (completed|in_progress|pending)/g;
-    const agentStatuses = {};
-    
-    let match;
-    while ((match = statusRegex.exec(pageText)) !== null) {
-        const agentName = match[1].trim();
-        const status = match[2];
-        // Store the latest status for each agent
-        agentStatuses[agentName] = status;
-    }
-    
-    // Update the status table based on what we found
-    let updated = false;
-    for (let i = 1; i < rows.length; i++) { // Skip header row
-        const row = rows[i];
-        const cells = row.querySelectorAll('td');
-        
-        if (cells.length >= 3) {
-            const agentNameCell = cells[1];
-            const statusCell = cells[2];
-            
-            if (agentNameCell && statusCell) {
-                const agentName = agentNameCell.textContent.trim();
-                
-                // If we found a status for this agent, update it
-                if (agentStatuses[agentName]) {
-                    const status = agentStatuses[agentName];
-                    
-                    // Only update if status has changed
-                    if (status === 'completed' && !statusCell.textContent.includes('COMPLETED')) {
-                        statusCell.innerHTML = '✅ COMPLETED';
-                        statusCell.style.color = 'green';
-                        row.style.animation = 'highlight 1s';
-                        updated = true;
-                    } else if (status === 'in_progress' && !statusCell.textContent.includes('IN PROGRESS')) {
-                        statusCell.innerHTML = '🔄 IN PROGRESS';
-                        statusCell.style.color = 'blue';
-                        statusCell.style.animation = 'pulse 1.5s infinite';
-                        row.style.animation = 'highlight 1s';
-                        updated = true;
-                    }
-                }
-            }
-        }
-    }
-    
-    // Force a repaint of the table
-    if (updated) {
-        statusTable.style.opacity = '0.99';
-        setTimeout(() => { statusTable.style.opacity = '1'; }, 10);
-    }
-    
-    return updated;
-}
-
-// Set up auto-refresh interval
-function setupAutoRefresh() {
-    console.log("[JS DEBUG] Setting up aggressive auto-refresh");
-    
-    // Initial update
-    forceStatusUpdate();
-    
-    // Set up interval for regular updates
-    setInterval(() => {
-        forceStatusUpdate();
-    }, REFRESH_INTERVAL);
-    
-    // Add visual indicator that auto-refresh is active
-    const statusIndicator = document.getElementById('auto-refresh-status');
-    if (statusIndicator) {
-        statusIndicator.textContent = 'Auto-refresh active';
-    }
-    
-    // Also hook into the refresh button if it exists
-    const refreshBtn = document.getElementById('refresh-status-btn');
-    if (refreshBtn) {
-        // Add our own click handler
-        refreshBtn.addEventListener('click', () => {
-            forceStatusUpdate();
-        });
-    }
-    
-    console.log("[JS DEBUG] Aggressive auto-refresh setup complete");
-}
-
-// Set up the auto-refresh when the page is loaded
-window.addEventListener('load', () => {
-    console.log("[JS DEBUG] Page loaded, setting up aggressive auto-refresh");
-    setTimeout(setupAutoRefresh, 1000);
-    
-    // Add keyboard shortcut (Ctrl+R) to manually trigger refresh
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'r' && e.ctrlKey) {
-            e.preventDefault();
-            forceStatusUpdate();
-        }
-    });
-});
-</script>
-""" 
+# AUTO_REFRESH_JS used to live here: a polling loop that stamped an
+# "Updated:" badge onto the page. Nothing has imported it since the
+# server-sent pulse replaced polling, and it carried the last colour in
+# this file that no theme could reach. Deleted rather than tokenised —
+# there is no sense theming a string nobody runs.

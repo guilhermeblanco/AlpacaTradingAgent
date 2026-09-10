@@ -63,18 +63,48 @@ class ApiConfigFixture(unittest.TestCase):
 
 
 class ModalToggleTests(ApiConfigFixture):
+    """This modal no longer owns the header button.
+
+    The header opens the Integrations screen now, which lists what is
+    configured rather than one field per provider this build can talk
+    to. This one stays reachable from Set up, because it is how a plain
+    vault entry is set — the arrangement a deployment made before
+    instances existed, which still resolves underneath them.
+    """
+
     def _toggle(self, triggered_id, is_open=False):
         with self._triggered(triggered_id):
-            return dash_callback(self.app, "api-config-modal.is_open")(0, 0, is_open)
-
-    def test_the_open_button_opens_it(self):
-        self.assertTrue(self._toggle("open-api-config-btn"))
+            return dash_callback(self.app, "api-config-modal.is_open")(0, is_open)
 
     def test_the_close_button_closes_it(self):
         self.assertFalse(self._toggle("close-api-config-btn", is_open=True))
 
     def test_anything_else_leaves_it_as_it_was(self):
         self.assertTrue(self._toggle("something-else", is_open=True))
+
+    def test_the_header_button_opens_the_integrations_screen_instead(self):
+        from webui.callbacks import integrations_callbacks
+
+        captured = {}
+
+        class App:
+            def callback(self, *_args, **_kwargs):
+                def decorate(function):
+                    captured[function.__name__] = function
+                    return function
+
+                return decorate
+
+        integrations_callbacks.register_integrations_callbacks(App())
+
+        # That module has its own `ctx` binding; the fixture patches this
+        # one's.
+        with mock.patch.object(
+            integrations_callbacks,
+            "ctx",
+            SimpleNamespace(triggered_id="open-api-config-btn"),
+        ):
+            self.assertTrue(captured["toggle"](1, None))
 
 
 class PasswordVisibilityTests(ApiConfigFixture):

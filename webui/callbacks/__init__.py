@@ -10,6 +10,8 @@ from .control_callbacks import register_control_callbacks
 from .trading_callbacks import register_trading_callbacks
 from .storage_callbacks import register_storage_callbacks
 from .api_config_callbacks import register_api_config_callbacks
+from .configuration_callbacks import register_configuration_callbacks
+from .integrations_callbacks import register_integrations_callbacks
 from .backtest_callbacks import register_backtest_callbacks
 from .safety_callbacks import register_safety_callbacks
 from .cost_callbacks import register_cost_callbacks
@@ -21,6 +23,7 @@ from .decision_explorer_callbacks import register_decision_explorer_callbacks
 from .workbench_callbacks import register_workbench_callbacks
 from .board_callbacks import register_board_callbacks
 from .pulse_callbacks import register_pulse_callbacks
+from .theme_callbacks import register_theme_callbacks
 from .override_callbacks import register_override_callbacks
 from .replay_callbacks import register_replay_callbacks
 from .evaluation_callbacks import register_evaluation_callbacks
@@ -39,6 +42,8 @@ def register_all_callbacks(app):
     register_trading_callbacks(app)
     register_storage_callbacks(app)
     register_api_config_callbacks(app)
+    register_integrations_callbacks(app)
+    register_configuration_callbacks(app)
     register_backtest_callbacks(app)
     register_safety_callbacks(app)
     register_cost_callbacks(app)
@@ -47,6 +52,7 @@ def register_all_callbacks(app):
     register_workbench_callbacks(app)
     register_board_callbacks(app)
     register_pulse_callbacks(app)
+    register_theme_callbacks(app)
     register_override_callbacks(app)
     register_replay_callbacks(app)
     register_decision_explorer_callbacks(app)

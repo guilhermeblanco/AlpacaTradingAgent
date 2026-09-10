@@ -26,10 +26,14 @@ COMPONENTS = pathlib.Path(__file__).resolve().parent.parent / "webui" / "compone
 
 
 class StageTests(unittest.TestCase):
-    def test_the_stages_are_the_lifecycle_in_order(self):
+    def test_the_stages_are_the_lifecycle_then_the_settings(self):
+        """Set up is not among them: it is a job that ends, and a tab
+        that never goes away for a job that ends reads as unfinished
+        forever. The wizard is the setting-up, and Configuration holds
+        the same list afterwards."""
         self.assertEqual(
             [item.id for item in STAGES],
-            ["watch", "decide", "evaluate", "operate", "setup"],
+            ["dashboard", "decide", "evaluate", "operate", "configuration"],
         )
 
     def test_the_default_stage_exists(self):
@@ -77,10 +81,27 @@ class PanelPlacementTests(unittest.TestCase):
 
     def test_the_run_form_is_on_the_first_stage(self):
         """It is how work starts, not a setting."""
-        self.assertEqual(panel_stage("config_panel"), "watch")
+        self.assertEqual(panel_stage("config_panel"), "dashboard")
 
-    def test_setup_is_a_destination_rather_than_a_panel_to_scroll_past(self):
-        self.assertEqual(panel_stage("setup_panel"), "setup")
+    def test_the_requirements_list_lives_under_configuration(self):
+        self.assertEqual(panel_stage("setup_panel"), "configuration")
+
+    def test_you_land_where_there_is_something_to_do(self):
+        """An empty Dashboard tells a half-configured deployment
+        nothing; the list of what is missing tells it everything."""
+        from webui.config.navigation import landing_stage
+
+        self.assertEqual(landing_stage(True), "dashboard")
+        self.assertEqual(landing_stage(False), "configuration")
+
+    def test_no_panel_is_in_a_stage_and_a_configuration_page_at_once(self):
+        """Rendering one twice is two components answering to one id."""
+        from webui.config.navigation import CONFIG_PAGES
+
+        in_pages = {name for page in CONFIG_PAGES for _label, name in page.sections}
+        in_stages = {panel for item in STAGES for panel in item.panels}
+
+        self.assertEqual(in_pages & in_stages, set())
 
 
 class MountedContentTests(unittest.TestCase):
@@ -114,7 +135,7 @@ class MountedContentTests(unittest.TestCase):
             "panel-workbench",
             "panel-evaluation-panel",
             "panel-safety-panel",
-            "panel-setup-panel",
+            "panel-configuration",
         ):
             with self.subTest(panel=expected):
                 self.assertIn(expected, ids)
@@ -263,6 +284,115 @@ class FigureStyleTests(unittest.TestCase):
         self.assertEqual(annotation.text, "Nothing recorded yet")
         self.assertEqual((annotation.x, annotation.y), (0.5, 0.5))
         self.assertFalse(figure.layout.xaxis.visible)
+
+
+
+class ConfigurationTests(unittest.TestCase):
+    """Pages of settings, each divided into sections."""
+
+    def test_every_page_says_what_it_is_for(self):
+        from webui.config.navigation import CONFIG_PAGES
+
+        for page in CONFIG_PAGES:
+            with self.subTest(page=page.id):
+                self.assertTrue(page.blurb.strip())
+                self.assertTrue(page.sections)
+
+    def test_every_section_names_a_panel_that_can_be_built(self):
+        from webui.config.navigation import CONFIG_PAGES
+
+        for page in CONFIG_PAGES:
+            for _label, name in page.sections:
+                with self.subTest(page=page.id, panel=name):
+                    self.assertIn(name, PANEL_FACTORIES)
+
+    def test_one_page_is_visible_and_the_rest_are_not(self):
+        from webui.components.configuration import create_configuration
+        from webui.config.navigation import CONFIG_PAGES, DEFAULT_CONFIG_PAGE
+
+        rendered = create_configuration(PANEL_FACTORIES)
+        pages = _find(
+            rendered,
+            lambda node: isinstance(getattr(node, "id", None), dict)
+            and node.id.get("type") == "config-page",
+        )
+
+        self.assertEqual(len(pages), len(CONFIG_PAGES))
+        visible = [page for page in pages if (page.style or {}).get("display") != "none"]
+        self.assertEqual(len(visible), 1)
+        self.assertEqual(visible[0].id["page"], DEFAULT_CONFIG_PAGE)
+
+    def test_every_page_is_mounted_even_while_hidden(self):
+        """Hidden with CSS rather than built on demand: a callback whose
+        Output is on another page has to keep resolving, and the
+        intervals refreshing these panels have to keep ticking."""
+        from webui.components.configuration import create_configuration
+
+        rendered = create_configuration(PANEL_FACTORIES)
+        found = _ids_of(rendered)
+
+        self.assertIn("setup-readiness", found)
+        self.assertIn("platform-settings-body", found)
+
+
+def _find(component, predicate, found=None):
+    found = [] if found is None else found
+    if predicate(component):
+        found.append(component)
+    children = getattr(component, "children", None)
+    if isinstance(children, (list, tuple)):
+        for child in children:
+            _find(child, predicate, found)
+    elif children is not None:
+        _find(children, predicate, found)
+    return found
+
+
+def _ids_of(component, found=None):
+    found = set() if found is None else found
+    identifier = getattr(component, "id", None)
+    if isinstance(identifier, str):
+        found.add(identifier)
+    children = getattr(component, "children", None)
+    if isinstance(children, (list, tuple)):
+        for child in children:
+            _ids_of(child, found)
+    elif children is not None:
+        _ids_of(children, found)
+    return found
+
+
+
+class UniqueIdTests(unittest.TestCase):
+    def test_no_two_components_answer_to_one_id(self):
+        """Everything is mounted at once — stage panes, configuration
+        pages, four modals — so a panel placed in two homes is two
+        components with one id, and Dash resolves that to whichever it
+        happened to find. It is silent, and it is the failure this whole
+        arrangement invites."""
+        from collections import Counter
+
+        from webui.layout import create_main_layout
+
+        found: list[str] = []
+
+        def walk(component):
+            identifier = getattr(component, "id", None)
+            if isinstance(identifier, str):
+                found.append(identifier)
+            elif isinstance(identifier, dict):
+                found.append(repr(sorted(identifier.items())))
+            children = getattr(component, "children", None)
+            if isinstance(children, (list, tuple)):
+                for child in children:
+                    walk(child)
+            elif children is not None:
+                walk(children)
+
+        walk(create_main_layout())
+        duplicates = {key: count for key, count in Counter(found).items() if count > 1}
+
+        self.assertEqual(duplicates, {})
 
 
 if __name__ == "__main__":

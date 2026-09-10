@@ -247,20 +247,17 @@ class ApiConfigCallbackTests(StateFixture):
 
         self.app = _app(register_api_config_callbacks)
 
-    def test_the_modal_opens_and_closes(self):
+    def test_the_modal_closes(self):
+        """It no longer opens itself from the header: that button goes to
+        the Integrations screen now, and this one is reached from Set up
+        as the way to set a plain vault entry."""
         callback = dash_callback(self.app, "api-config-modal.is_open")
-
-        with mock.patch(
-            "webui.callbacks.api_config_callbacks.ctx",
-            mock.Mock(triggered_id="open-api-config-btn"),
-        ):
-            self.assertTrue(callback(1, None, False))
 
         with mock.patch(
             "webui.callbacks.api_config_callbacks.ctx",
             mock.Mock(triggered_id="close-api-config-btn"),
         ):
-            self.assertFalse(callback(None, 1, True))
+            self.assertFalse(callback(1, True))
 
     def test_a_broker_connection_test_reports_its_checks(self):
         from tradingagents.broker.preflight import (
