@@ -221,9 +221,9 @@ def create_api_input_row(api_config):
                     placeholder=f"{api_config['placeholder']} (leave blank to keep current)",
                     className="api-key-input",
                     style={
-                        "background": "#1E293B",
+                        "background": "var(--ta-surface)",
                         "border": "1px solid #334155",
-                        "color": "#E2E8F0"
+                        "color": "var(--ta-text-soft)"
                     }
                 ),
                 dbc.Button(

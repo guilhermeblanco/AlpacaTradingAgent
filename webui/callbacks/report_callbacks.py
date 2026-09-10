@@ -199,7 +199,7 @@ def create_markdown_content(content, default_message="No content available yet."
             "border-radius": "8px",
             "padding": "1.5rem",
             "border": "1px solid rgba(51, 65, 85, 0.3)",
-            "color": "#E2E8F0",
+            "color": "var(--ta-text-soft)",
             "line-height": "1.6"
         }
     )
@@ -365,7 +365,7 @@ def register_report_callbacks(app):
                     bull_section = html.Div([
                         html.Div([
                             html.Div([
-                                html.Span("🐂 Bull Researcher", className="me-2", style={"fontWeight": "bold", "color": "#10B981"}),
+                                html.Span("🐂 Bull Researcher", className="me-2", style={"fontWeight": "bold", "color": "var(--ta-positive)"}),
                                 create_show_prompt_button("bull_report")
                             ], className="d-flex justify-content-between align-items-center mb-2")
                         ]),
@@ -380,7 +380,7 @@ def register_report_callbacks(app):
                                 "border-radius": "8px",
                                 "padding": "1rem",
                                 "border-left": "4px solid #10B981",
-                                "color": "#E2E8F0",
+                                "color": "var(--ta-text-soft)",
                                 "margin-bottom": "1rem"
                             }
                         )
@@ -396,7 +396,7 @@ def register_report_callbacks(app):
                     bear_section = html.Div([
                         html.Div([
                             html.Div([
-                                html.Span("🐻 Bear Researcher", className="me-2", style={"fontWeight": "bold", "color": "#EF4444"}),
+                                html.Span("🐻 Bear Researcher", className="me-2", style={"fontWeight": "bold", "color": "var(--ta-negative)"}),
                                 create_show_prompt_button("bear_report")
                             ], className="d-flex justify-content-between align-items-center mb-2")
                         ]),
@@ -411,7 +411,7 @@ def register_report_callbacks(app):
                                 "border-radius": "8px",
                                 "padding": "1rem",
                                 "border-left": "4px solid #EF4444",
-                                "color": "#E2E8F0",
+                                "color": "var(--ta-text-soft)",
                                 "margin-bottom": "1rem"
                             }
                         )
@@ -428,7 +428,7 @@ def register_report_callbacks(app):
                 bull_section = html.Div([
                     html.Div([
                         html.Div([
-                            html.Span("🐂 Bull Researcher", className="me-2", style={"fontWeight": "bold", "color": "#10B981"}),
+                            html.Span("🐂 Bull Researcher", className="me-2", style={"fontWeight": "bold", "color": "var(--ta-positive)"}),
                             create_show_prompt_button("bull_report")
                         ], className="d-flex justify-content-between align-items-center mb-2")
                     ]),
@@ -443,7 +443,7 @@ def register_report_callbacks(app):
                             "border-radius": "8px",
                             "padding": "1rem",
                             "border-left": "4px solid #10B981",
-                            "color": "#E2E8F0",
+                            "color": "var(--ta-text-soft)",
                             "margin-bottom": "1rem"
                         }
                     )
@@ -456,7 +456,7 @@ def register_report_callbacks(app):
                 bear_section = html.Div([
                     html.Div([
                         html.Div([
-                            html.Span("🐻 Bear Researcher", className="me-2", style={"fontWeight": "bold", "color": "#EF4444"}),
+                            html.Span("🐻 Bear Researcher", className="me-2", style={"fontWeight": "bold", "color": "var(--ta-negative)"}),
                             create_show_prompt_button("bear_report")
                         ], className="d-flex justify-content-between align-items-center mb-2")
                     ]),
@@ -471,7 +471,7 @@ def register_report_callbacks(app):
                             "border-radius": "8px",
                             "padding": "1rem",
                             "border-left": "4px solid #EF4444",
-                            "color": "#E2E8F0",
+                            "color": "var(--ta-text-soft)",
                             "margin-bottom": "1rem"
                         }
                     )
@@ -545,7 +545,7 @@ def register_report_callbacks(app):
                     risky_section = html.Div([
                         html.Div([
                             html.Div([
-                                html.Span("⚡ Risky Analyst", className="me-2", style={"fontWeight": "bold", "color": "#EF4444"}),
+                                html.Span("⚡ Risky Analyst", className="me-2", style={"fontWeight": "bold", "color": "var(--ta-negative)"}),
                                 create_show_prompt_button("aggressive_report")
                             ], className="d-flex justify-content-between align-items-center mb-2")
                         ]),
@@ -560,7 +560,7 @@ def register_report_callbacks(app):
                                 "border-radius": "8px",
                                 "padding": "1rem",
                                 "border-left": "4px solid #EF4444",
-                                "color": "#E2E8F0",
+                                "color": "var(--ta-text-soft)",
                                 "margin-bottom": "1rem"
                             }
                         )
@@ -576,7 +576,7 @@ def register_report_callbacks(app):
                     safe_section = html.Div([
                         html.Div([
                             html.Div([
-                                html.Span("🛡️ Safe Analyst", className="me-2", style={"fontWeight": "bold", "color": "#10B981"}),
+                                html.Span("🛡️ Safe Analyst", className="me-2", style={"fontWeight": "bold", "color": "var(--ta-positive)"}),
                                 create_show_prompt_button("conservative_report")
                             ], className="d-flex justify-content-between align-items-center mb-2")
                         ]),
@@ -591,7 +591,7 @@ def register_report_callbacks(app):
                                 "border-radius": "8px",
                                 "padding": "1rem",
                                 "border-left": "4px solid #10B981",
-                                "color": "#E2E8F0",
+                                "color": "var(--ta-text-soft)",
                                 "margin-bottom": "1rem"
                             }
                         )
@@ -607,7 +607,7 @@ def register_report_callbacks(app):
                     neutral_section = html.Div([
                         html.Div([
                             html.Div([
-                                html.Span("⚖️ Neutral Analyst", className="me-2", style={"fontWeight": "bold", "color": "#3B82F6"}),
+                                html.Span("⚖️ Neutral Analyst", className="me-2", style={"fontWeight": "bold", "color": "var(--ta-accent)"}),
                                 create_show_prompt_button("neutral_report")
                             ], className="d-flex justify-content-between align-items-center mb-2")
                         ]),
@@ -622,7 +622,7 @@ def register_report_callbacks(app):
                                 "border-radius": "8px",
                                 "padding": "1rem",
                                 "border-left": "4px solid #3B82F6",
-                                "color": "#E2E8F0",
+                                "color": "var(--ta-text-soft)",
                                 "margin-bottom": "1rem"
                             }
                         )
@@ -639,7 +639,7 @@ def register_report_callbacks(app):
                 risky_section = html.Div([
                     html.Div([
                         html.Div([
-                            html.Span("⚡ Risky Analyst", className="me-2", style={"fontWeight": "bold", "color": "#EF4444"}),
+                            html.Span("⚡ Risky Analyst", className="me-2", style={"fontWeight": "bold", "color": "var(--ta-negative)"}),
                             create_show_prompt_button("aggressive_report")
                         ], className="d-flex justify-content-between align-items-center mb-2")
                     ]),
@@ -654,7 +654,7 @@ def register_report_callbacks(app):
                             "border-radius": "8px",
                             "padding": "1rem",
                             "border-left": "4px solid #EF4444",
-                            "color": "#E2E8F0",
+                            "color": "var(--ta-text-soft)",
                             "margin-bottom": "1rem"
                         }
                     )
@@ -667,7 +667,7 @@ def register_report_callbacks(app):
                 safe_section = html.Div([
                     html.Div([
                         html.Div([
-                            html.Span("🛡️ Safe Analyst", className="me-2", style={"fontWeight": "bold", "color": "#10B981"}),
+                            html.Span("🛡️ Safe Analyst", className="me-2", style={"fontWeight": "bold", "color": "var(--ta-positive)"}),
                             create_show_prompt_button("conservative_report")
                         ], className="d-flex justify-content-between align-items-center mb-2")
                     ]),
@@ -682,7 +682,7 @@ def register_report_callbacks(app):
                             "border-radius": "8px",
                             "padding": "1rem",
                             "border-left": "4px solid #10B981",
-                            "color": "#E2E8F0",
+                            "color": "var(--ta-text-soft)",
                             "margin-bottom": "1rem"
                         }
                     )
@@ -695,7 +695,7 @@ def register_report_callbacks(app):
                 neutral_section = html.Div([
                     html.Div([
                         html.Div([
-                            html.Span("⚖️ Neutral Analyst", className="me-2", style={"fontWeight": "bold", "color": "#3B82F6"}),
+                            html.Span("⚖️ Neutral Analyst", className="me-2", style={"fontWeight": "bold", "color": "var(--ta-accent)"}),
                             create_show_prompt_button("neutral_report")
                         ], className="d-flex justify-content-between align-items-center mb-2")
                     ]),
@@ -710,7 +710,7 @@ def register_report_callbacks(app):
                             "border-radius": "8px",
                             "padding": "1rem",
                             "border-left": "4px solid #3B82F6",
-                            "color": "#E2E8F0",
+                            "color": "var(--ta-text-soft)",
                             "margin-bottom": "1rem"
                         }
                     )
@@ -1164,7 +1164,7 @@ def register_report_callbacks(app):
                             highlight_config={"theme": "dark"},
                             style={
                                 "white-space": "pre-wrap",
-                                "color": "#F8FAFC"  # Lighter text for better readability
+                                "color": "var(--ta-text-bright)"  # Lighter text for better readability
                             }
                         )
                         

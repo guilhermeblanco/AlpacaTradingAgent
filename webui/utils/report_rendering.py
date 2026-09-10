@@ -118,7 +118,7 @@ def table_to_chart_figure(table: TableBlock):
 
 def _markdown_component(content: str, min_height: Optional[str] = None):
     style = {
-        "color": "#E2E8F0",
+        "color": "var(--ta-text-soft)",
         "line-height": "1.6",
     }
     if min_height:
@@ -146,12 +146,12 @@ def _table_component(table: TableBlock):
         col_id = col["id"]
         style_data_conditional.extend(
             [
-                {"if": {"filter_query": f'{{{col_id}}} contains "BUY"', "column_id": col_id}, "color": "#34D399", "fontWeight": "700"},
-                {"if": {"filter_query": f'{{{col_id}}} contains "LONG"', "column_id": col_id}, "color": "#34D399", "fontWeight": "700"},
-                {"if": {"filter_query": f'{{{col_id}}} contains "SELL"', "column_id": col_id}, "color": "#F87171", "fontWeight": "700"},
-                {"if": {"filter_query": f'{{{col_id}}} contains "SHORT"', "column_id": col_id}, "color": "#F87171", "fontWeight": "700"},
-                {"if": {"filter_query": f'{{{col_id}}} contains "HOLD"', "column_id": col_id}, "color": "#FBBF24", "fontWeight": "700"},
-                {"if": {"filter_query": f'{{{col_id}}} contains "NEUTRAL"', "column_id": col_id}, "color": "#FBBF24", "fontWeight": "700"},
+                {"if": {"filter_query": f'{{{col_id}}} contains "BUY"', "column_id": col_id}, "color": "var(--ta-positive-light)", "fontWeight": "700"},
+                {"if": {"filter_query": f'{{{col_id}}} contains "LONG"', "column_id": col_id}, "color": "var(--ta-positive-light)", "fontWeight": "700"},
+                {"if": {"filter_query": f'{{{col_id}}} contains "SELL"', "column_id": col_id}, "color": "var(--ta-negative-light)", "fontWeight": "700"},
+                {"if": {"filter_query": f'{{{col_id}}} contains "SHORT"', "column_id": col_id}, "color": "var(--ta-negative-light)", "fontWeight": "700"},
+                {"if": {"filter_query": f'{{{col_id}}} contains "HOLD"', "column_id": col_id}, "color": "var(--ta-caution-light)", "fontWeight": "700"},
+                {"if": {"filter_query": f'{{{col_id}}} contains "NEUTRAL"', "column_id": col_id}, "color": "var(--ta-caution-light)", "fontWeight": "700"},
             ]
         )
 
@@ -170,7 +170,7 @@ def _table_component(table: TableBlock):
             style_table={"overflowX": "auto", "minWidth": "100%"},
             style_header={
                 "backgroundColor": PALETTE["surface-sunken"],
-                "color": "#F8FAFC",
+                "color": "var(--ta-text-bright)",
                 "fontWeight": "700",
                 "border": "0",
                 "borderBottom": "1px solid rgba(148, 163, 184, 0.28)",
@@ -178,7 +178,7 @@ def _table_component(table: TableBlock):
             },
             style_cell={
                 "backgroundColor": "rgba(30, 41, 59, 0.66)",
-                "color": "#E5E7EB",
+                "color": "var(--ta-text-soft)",
                 "border": "0",
                 "borderBottom": "1px solid rgba(51, 65, 85, 0.55)",
                 "fontFamily": "Inter, Segoe UI, sans-serif",

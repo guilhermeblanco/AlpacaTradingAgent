@@ -9,6 +9,7 @@ and each panel picked its own green.
 
 from __future__ import annotations
 
+import pathlib
 import re
 import unittest
 
@@ -177,3 +178,65 @@ class PanelVocabularyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NoLiteralsLeftTests(unittest.TestCase):
+    """Every colour goes through a token, so a theme can replace it.
+
+    A hex value written into a stylesheet or an inline style belongs to
+    one theme and silently survives into the other. These are the checks
+    that keep a second theme possible at all.
+    """
+
+    ROOT = pathlib.Path(__file__).resolve().parent.parent
+
+    def test_the_stylesheet_holds_no_colour_of_its_own(self):
+        css = (self.ROOT / "webui" / "assets" / "custom.css").read_text()
+
+        self.assertEqual(re.findall(r"#[0-9A-Fa-f]{3,8}\b", css), [])
+
+    def test_no_alpha_colour_is_pinned_to_a_theme(self):
+        """`rgba(59, 130, 246, 0.1)` names a colour; the token plus an
+        alpha at the point of use names a role."""
+        css = (self.ROOT / "webui" / "assets" / "custom.css").read_text()
+
+        self.assertEqual(re.findall(r"rgba\([^)]*\)", css), [])
+
+    def test_no_component_writes_a_colour_inline(self):
+        for path in sorted((self.ROOT / "webui").rglob("*.py")):
+            if path.name == "tokens.py":
+                continue  # the palette itself, which is where hex belongs
+            with self.subTest(module=path.relative_to(self.ROOT)):
+                self.assertEqual(
+                    re.findall(r'"#[0-9A-Fa-f]{6}"', path.read_text()),
+                    [],
+                    f"{path.name} pins a colour to one theme",
+                )
+
+    def test_every_token_the_stylesheet_uses_is_defined(self):
+        from webui.config.tokens import css_variables
+        from webui.utils.styles import CSS
+
+        css = (self.ROOT / "webui" / "assets" / "custom.css").read_text()
+        defined = set(re.findall(r"(--ta-[a-z0-9-]+)\s*:", css_variables()))
+        used = set(re.findall(r"var\((--ta-[a-z0-9-]+)\)", css + CSS))
+
+        self.assertEqual(sorted(used - defined), [])
+
+    def test_every_colour_token_publishes_its_channels(self):
+        """So an alpha variant can be built without naming the colour."""
+        from webui.config.tokens import PALETTE, css_variables
+
+        rendered = css_variables()
+
+        for name in PALETTE:
+            with self.subTest(token=name):
+                self.assertIn(f"--ta-{name}-rgb:", rendered)
+
+    def test_the_channels_match_the_colour(self):
+        from webui.config.tokens import rgb_triplet
+
+        self.assertEqual(rgb_triplet("#3B82F6"), "59 130 246")
+        self.assertEqual(rgb_triplet("#000000"), "0 0 0")
+        self.assertEqual(rgb_triplet("#FFFFFF"), "255 255 255")
+
