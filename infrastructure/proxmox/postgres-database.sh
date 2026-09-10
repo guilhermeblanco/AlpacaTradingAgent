@@ -57,6 +57,17 @@ msg_err(){ echo -e " ${RD}✗${CL} $1" >&2; }
 trap 'msg_err "$APP failed (line $LINENO)"' ERR
 [ "$(id -u)" -eq 0 ] || { msg_err "run as root on the Proxmox node"; exit 1; }
 
+# A near miss on the variable name would otherwise fall through to the
+# network path and fail several steps later complaining about psql, which
+# points at the wrong problem entirely. Catch it here and say the real thing.
+for _near_miss in PGCTID PG_CT_ID PGCT_ID CTID PG_CONTAINER PG_VMID; do
+  if [ -n "$(eval "printf '%s' \"\${${_near_miss}:-}\"")" ] && [ -z "$PG_CTID" ]; then
+    msg_err "found ${_near_miss} in the environment — the variable is PG_CTID."
+    msg_err "    PG_CTID=$(eval "printf '%s' \"\${${_near_miss}}\"") $0"
+    exit 1
+  fi
+done
+
 GENERATED=0
 if [ -z "$APP_PASSWORD" ]; then
   APP_PASSWORD="$(head -c 24 /dev/urandom | base64 | tr -d '/+=' | head -c 24)"
@@ -115,7 +126,14 @@ if [ -n "$PG_CTID" ]; then
   pct status "$PG_CTID" >/dev/null 2>&1 || { msg_err "no LXC $PG_CTID on this node"; exit 1; }
   msg_info "reaching PostgreSQL through pct exec on CT $PG_CTID"
 else
-  command -v psql >/dev/null || { msg_err "psql not found on this node; install postgresql-client or use PG_CTID"; exit 1; }
+  if ! command -v psql >/dev/null; then
+    msg_err "psql is not installed on this node, and PG_CTID is not set."
+    msg_err "If PostgreSQL is an LXC here, that is the easier path — no password,"
+    msg_err "no network exposure, nothing to install:"
+    msg_err "    PG_CTID=<its ctid> $0        # pct list, to find it"
+    msg_err "Otherwise: apt install postgresql-client, then set PG_HOST and PGPASSWORD."
+    exit 1
+  fi
   [ -n "${PGPASSWORD:-}" ] || msg_warn "PGPASSWORD is not set; psql may prompt or fail"
   msg_info "reaching PostgreSQL at ${PG_HOST}:${PG_PORT} as ${PG_SUPERUSER}"
 fi

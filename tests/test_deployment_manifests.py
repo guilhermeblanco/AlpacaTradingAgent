@@ -271,6 +271,15 @@ class ProxmoxScriptTests(unittest.TestCase):
             with self.subTest(script=name):
                 self.assertIn("set -euo pipefail", script)
 
+    def test_the_database_script_catches_a_misspelt_ctid(self):
+        """`PGCTID=102` silently took the network path and then failed
+        several steps later complaining about psql, which points at the
+        wrong problem. The variable is PG_CTID; a near miss says so."""
+        script = (REPO / "infrastructure" / "proxmox" / "postgres-database.sh").read_text()
+
+        self.assertIn("PGCTID", script)
+        self.assertIn("the variable is PG_CTID", script)
+
     def test_the_database_script_never_drops_anything(self):
         script = (REPO / "infrastructure" / "proxmox" / "postgres-database.sh").read_text()
 
