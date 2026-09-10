@@ -22,20 +22,20 @@ __TOKENS__
 .report-box {
     height: 500px;
     overflow-y: auto;
-    border: 1px solid #ddd;
+    border: 1px solid var(--ta-border);
     border-radius: 4px;
     padding: 10px;
-    background-color: #f9f9f9;
+    background-color: var(--ta-surface-inset);
 }
 .status-table {
     border-collapse: collapse;
     width: 100%;
     font-size: 14px;
     margin-bottom: 15px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    box-shadow: 0 2px 4px rgb(var(--ta-shadow-rgb) / 0.1);
 }
 .status-table td, .status-table th {
-    border: 1px solid #ccc;
+    border: 1px solid var(--ta-border);
     padding: 10px;
     transition: background-color 0.5s ease;
 }
@@ -47,28 +47,28 @@ __TOKENS__
 }
 /* Ensure text is visible on all rows regardless of background */
 .status-table td {
-    color: #333;
+    color: var(--ta-text);
     font-weight: 500;
 }
 .status-table th {
     padding-top: 12px;
     padding-bottom: 12px;
     text-align: left;
-    background-color: #2C3E50;
+    background-color: var(--ta-surface);
     color: white;
     font-weight: bold;
 }
 .pending {
-    color: #7F8C8D !important;
+    color: var(--ta-text-muted) !important;
     font-weight: bold;
 }
 .in-progress {
-    color: #2980B9 !important;
+    color: var(--ta-accent) !important;
     font-weight: bold;
     animation: pulse-blue 2s infinite;
 }
 .completed {
-    color: #27AE60 !important;
+    color: var(--ta-positive) !important;
     font-weight: bold;
     animation: flash-green 1s 1;
 }
@@ -78,7 +78,7 @@ __TOKENS__
     100% { opacity: 0.7; }
 }
 @keyframes flash-green {
-    0% { background-color: rgba(39, 174, 96, 0.3); }
+    0% { background-color: rgb(var(--ta-positive-rgb) / 0.3); }
     100% { background-color: transparent; }
 }
 .tabs {
@@ -89,28 +89,28 @@ __TOKENS__
     padding: 8px 16px !important;
     border-radius: 4px;
     font-weight: bold !important;
-    border: 1px solid #ddd !important;
-    background-color: #f8f9fa !important;
-    color: #333 !important;
+    border: 1px solid var(--ta-border) !important;
+    background-color: var(--ta-surface-inset) !important;
+    color: var(--ta-text) !important;
 }
 .time-period-btn.active {
-    background-color: #2C3E50 !important;
+    background-color: var(--ta-surface) !important;
     color: white !important;
-    border-color: #2C3E50 !important;
+    border-color: var(--ta-surface) !important;
 }
 .chart-controls {
     padding: 10px;
-    background-color: #f9f9f9;
+    background-color: var(--ta-surface-inset);
     border-radius: 4px;
     margin-bottom: 10px;
-    border: 1px solid #ddd;
+    border: 1px solid var(--ta-border);
     display: flex;
     justify-content: center;
 }
 .chart-controls-heading {
     margin: 0;
     padding: 10px;
-    background-color: #2C3E50;
+    background-color: var(--ta-surface);
     color: white;
     border-radius: 4px 4px 0 0;
     font-weight: bold;
@@ -119,7 +119,7 @@ __TOKENS__
 .stats-container {
     margin-top: 15px;
     padding: 12px;
-    background-color: #2C3E50;
+    background-color: var(--ta-surface);
     border-radius: 5px;
     font-size: 15px;
     color: white !important;
@@ -130,7 +130,7 @@ __TOKENS__
     display: inline-block;
     margin-left: 10px;
     padding: 3px 8px;
-    background-color: #27AE60;
+    background-color: var(--ta-positive);
     border-radius: 3px;
     font-size: var(--ta-size-small);
     animation: pulse 2s infinite;

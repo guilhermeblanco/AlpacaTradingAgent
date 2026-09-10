@@ -39,7 +39,7 @@ def create_prompt_modal():
                                 className="prompt-content",
                                 style={
                                     "background": "var(--ta-background)",
-                                    "border": "1px solid #334155",
+                                    "border": "1px solid var(--ta-border)",
                                     "border-radius": "8px",
                                     "padding": "1.5rem",
                                     "font-family": "monospace",

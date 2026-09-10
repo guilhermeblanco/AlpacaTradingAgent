@@ -210,15 +210,97 @@ class NoLiteralsLeftTests(unittest.TestCase):
 
         self.assertEqual(re.findall(r"rgba\([^)]*\)", css), [])
 
-    def test_no_component_writes_a_colour_inline(self):
-        for path in sorted((self.ROOT / "webui").rglob("*.py")):
+    def test_nothing_in_the_package_writes_a_colour_at_all(self):
+        """Every form, not just a double-quoted one.
+
+        The first version of this checked `"#RRGGBB"` and nothing else,
+        so it passed while a hundred literals sat in single quotes, in
+        f-strings, and inside CSS embedded in Python — including the
+        dark gradient that left two panels dark on a light page.
+        """
+        for path in sorted(
+            list((self.ROOT / "webui").rglob("*.py"))
+            + list((self.ROOT / "webui").rglob("*.js"))
+            + list((self.ROOT / "webui").rglob("*.css"))
+        ):
             if path.name == "tokens.py":
                 continue  # the palette itself, which is where hex belongs
             with self.subTest(module=path.relative_to(self.ROOT)):
                 self.assertEqual(
-                    re.findall(r'"#[0-9A-Fa-f]{6}"', path.read_text()),
+                    re.findall(r"#[0-9A-Fa-f]{3,8}\b", path.read_text()),
                     [],
                     f"{path.name} pins a colour to one theme",
+                )
+
+    def test_nothing_in_the_package_writes_an_alpha_colour_either(self):
+        """`rgba(30, 41, 59, 0.5)` names a colour as surely as a hex
+        does. Plotly is the exception and builds its own from a token's
+        value, through one helper."""
+        for path in sorted(
+            list((self.ROOT / "webui").rglob("*.py"))
+            + list((self.ROOT / "webui").rglob("*.js"))
+            + list((self.ROOT / "webui").rglob("*.css"))
+        ):
+            source = path.read_text()
+            if path.name == "figures.py":
+                continue  # translucent(), which exists to build them
+            with self.subTest(module=path.relative_to(self.ROOT)):
+                self.assertEqual(
+                    re.findall(r"rgba\(\s*\d", source),
+                    [],
+                    f"{path.name} pins an alpha colour to one theme",
+                )
+
+    def test_no_css_variable_is_handed_to_plotly(self):
+        """A figure is JSON, not CSS. `rgb(var(--x) / 0.1)` in a
+        `bgcolor` is never resolved and the colour is silently dropped —
+        which is what a bulk conversion of this kind does if nobody
+        looks."""
+        plotly_attributes = (
+            "bgcolor", "marker_color", "fillcolor", "gridcolor",
+            "paper_bgcolor", "plot_bgcolor", "bordercolor", "zerolinecolor",
+        )
+        pattern = re.compile(
+            r"(" + "|".join(plotly_attributes) + r")\s*=\s*[^\n,)]*var\(--ta-"
+        )
+
+        for path in sorted((self.ROOT / "webui").rglob("*.py")):
+            with self.subTest(module=path.relative_to(self.ROOT)):
+                self.assertEqual(pattern.findall(path.read_text()), [])
+
+    def test_an_iframe_document_carries_the_palette(self):
+        """Custom properties do not cross an iframe boundary, so a
+        document of its own resolves `var(--ta-surface)` to nothing."""
+        for path in sorted((self.ROOT / "webui").rglob("*.py")):
+            source = path.read_text()
+            if "<!DOCTYPE html>" not in source or path.name == "app_dash.py":
+                continue
+            with self.subTest(module=path.relative_to(self.ROOT)):
+                self.assertIn("iframe_style_block", source)
+
+    def test_text_on_a_saturated_ground_uses_its_own_token(self):
+        """`text-bright` is the far end from the *page* ground, which on
+        a blue tab is near-black in light mode. A filled control needs
+        the token that means "on a colour"."""
+        css = (self.ROOT / "webui" / "assets" / "custom.css").read_text()
+        saturated = (
+            "--ta-accent", "--ta-accent-hover", "--ta-positive",
+            "--ta-negative", "--ta-caution",
+        )
+
+        for rule in css.split("}"):
+            if "color: var(--ta-text-bright)" not in rule:
+                continue
+            background = [
+                line for line in rule.splitlines() if "background" in line
+            ]
+            with self.subTest(rule=rule.strip().splitlines()[0] if rule.strip() else ""):
+                self.assertFalse(
+                    any(
+                        f"var({token})" in " ".join(background)
+                        for token in saturated
+                    ),
+                    "text-bright on a saturated background",
                 )
 
     def test_every_token_the_stylesheet_uses_is_defined(self):

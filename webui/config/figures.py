@@ -63,6 +63,19 @@ HEIGHT_MEDIUM = 300
 HEIGHT_LARGE = 380
 
 
+def translucent(hex_value: str, alpha: float) -> str:
+    """A Plotly colour with alpha, from a palette value.
+
+    Plotly is handed JSON, not CSS, so `rgb(var(--x) / 0.1)` means
+    nothing to it — the variable is never resolved and the colour is
+    silently dropped. Figures take the palette's value and build the
+    rgba themselves.
+    """
+    from webui.config.tokens import rgb_triplet
+
+    return f"rgba({rgb_triplet(hex_value).replace(' ', ', ')}, {alpha})"
+
+
 def style(
     figure: go.Figure,
     *,
