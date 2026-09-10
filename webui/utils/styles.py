@@ -420,6 +420,94 @@ __TOKENS__
     border-top: 1px solid var(--ta-border);
 }
 
+/* ── Configuration ───────────────────────────────────────────────────
+   Pages down the side, sections across the top. The nav column is
+   sticky because a settings page is long and the list of pages is the
+   only way back out of one. */
+
+.config-nav-column {
+    min-width: 0;
+}
+
+.config-nav {
+    position: sticky;
+    top: var(--ta-space-md);
+}
+
+.config-page-link {
+    color: var(--ta-text-muted);
+    border-radius: var(--ta-radius);
+    padding: var(--ta-space-sm) var(--ta-space-md);
+    font-weight: var(--ta-weight-medium);
+}
+
+.config-page-link:hover {
+    color: var(--ta-text);
+    background: var(--ta-surface-inset);
+}
+
+.config-page-link.active {
+    color: var(--ta-text-bright);
+    background: var(--ta-accent);
+}
+
+.config-body-column,
+.config-page {
+    min-width: 0;
+}
+
+.config-section-tabs .nav-link {
+    color: var(--ta-text-muted);
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+}
+
+.config-section-tabs .nav-link.active {
+    color: var(--ta-text);
+    background: transparent;
+    border-bottom-color: var(--ta-accent);
+}
+
+/* ── Integrations ────────────────────────────────────────────────────
+   A list of what is configured, not a form per provider this build can
+   talk to. */
+
+.integration-section + .integration-section {
+    margin-top: var(--ta-space-lg);
+}
+
+.integration-kind {
+    color: var(--ta-text-muted);
+    font-size: var(--ta-size-small);
+    letter-spacing: 0.06em;
+}
+
+.integration-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--ta-space-md);
+    flex-wrap: wrap;
+    padding: var(--ta-space-sm) 0;
+    border-bottom: 1px solid var(--ta-border);
+}
+
+.integration-row:last-child {
+    border-bottom: none;
+}
+
+/* ── Theme toggle ────────────────────────────────────────────────── */
+
+.theme-toggle {
+    color: var(--ta-text-muted);
+    padding: var(--ta-space-xs) var(--ta-space-sm);
+}
+
+.theme-toggle:hover {
+    color: var(--ta-text);
+}
+
 /* ── Set up ──────────────────────────────────────────────────────────── */
 
 .setup-requirement {

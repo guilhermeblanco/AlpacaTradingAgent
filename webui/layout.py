@@ -33,6 +33,7 @@ from webui.components.alpaca_account import render_alpaca_account_section
 from webui.components.safety_panel import create_safety_panel
 from webui.components.cost_panel import create_cost_panel
 from webui.components.api_config_modal import create_api_config_modal
+from webui.components.configuration import create_configuration
 from webui.components.integrations_panel import create_integrations_modal
 from webui.components.operations_panel import create_operations_panel
 from webui.components.decision_explorer import create_decision_explorer
@@ -45,7 +46,7 @@ from webui.components.platform_settings import create_platform_settings
 from webui.components.setup_panel import create_setup_panel
 from webui.components.setup_wizard import create_setup_wizard
 from webui.config.constants import COLORS, REFRESH_INTERVALS
-from webui.config.navigation import DEFAULT_STAGE, STAGES
+from webui.config.navigation import STAGES, landing_stage
 
 
 def create_intervals():
@@ -112,9 +113,16 @@ PANEL_FACTORIES = {
     "safety_panel": create_safety_panel,
     "alpaca_account": _alpaca_account_card,
     "cost_panel": create_cost_panel,
+    # Reached through Configuration → Requirements rather than a stage
+    # of its own; see webui/config/navigation.py.
     "setup_panel": create_setup_panel,
     "platform_settings": create_platform_settings,
 }
+
+# The Configuration stage is built from the table above rather than from
+# imports of its own, so adding a panel to a page does not mean listing
+# it in two places.
+PANEL_FACTORIES["configuration"] = lambda: create_configuration(PANEL_FACTORIES)
 
 
 def panel_shell(name, component):
@@ -148,14 +156,33 @@ def create_stage_body(stage):
     )
 
 
-def create_stage_tabs():
+def setup_is_complete() -> bool:
+    """Whether everything required is configured.
+
+    Read at layout time, and only to decide which tab you arrive on. It
+    re-evaluates on a reload, which is the right granularity for
+    something that changes about once.
+    """
+    try:
+        from tradingagents.setup import evaluate_readiness
+
+        return evaluate_readiness().ready
+    except Exception:
+        # Unable to tell. Landing on Configuration is the recoverable
+        # mistake; landing on an empty Dashboard when configuration is
+        # what is broken is not.
+        return False
+
+
+def create_stage_tabs(ready: bool | None = None):
     """The tab bar and every stage's content.
 
-    All bodies are built here rather than in a callback. Bootstrap hides an
-    inactive pane with CSS and leaves it mounted, so intervals keep running
-    and callbacks keep resolving across tabs; building lazily would break
-    both for the sake of a first paint nobody is waiting on.
+    All bodies are built here rather than in a callback. Bootstrap hides
+    an inactive pane with CSS and leaves it mounted, so intervals keep
+    running and callbacks keep resolving across tabs; building lazily
+    would break both for the sake of a first paint nobody is waiting on.
     """
+    ready = setup_is_complete() if ready is None else ready
     return dbc.Tabs(
         [
             dbc.Tab(
@@ -168,7 +195,10 @@ def create_stage_tabs():
             for stage in STAGES
         ],
         id="stage-tabs",
-        active_tab=DEFAULT_STAGE,
+        # Dashboard once the deployment works; before that it is a board
+        # with nothing on it, so Configuration is the more useful place
+        # to be standing when the wizard is dismissed.
+        active_tab=landing_stage(ready),
         className="stage-tabs",
     )
 
