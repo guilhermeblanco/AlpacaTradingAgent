@@ -58,18 +58,20 @@ def register_api_config_callbacks(app):
     api_ids = [item["id"] for item in api_configs]
     config_keys = [CONFIG_KEY_BY_ID[api_id] for api_id in api_ids]
 
+    # The header button opens the Integrations screen now, which shows
+    # what is configured rather than one field per provider this build
+    # can talk to. This modal is still reachable from Set up, because it
+    # is how a plain vault entry is set — the arrangement a deployment
+    # made before instances existed, which still resolves underneath
+    # them. It goes when nothing needs that path any more.
     @app.callback(
         Output("api-config-modal", "is_open"),
-        Input("open-api-config-btn", "n_clicks"),
         Input("close-api-config-btn", "n_clicks"),
         State("api-config-modal", "is_open"),
         prevent_initial_call=True,
     )
-    def toggle_api_config_modal(open_clicks, close_clicks, is_open):
-        trigger = ctx.triggered_id
-        if trigger == "open-api-config-btn":
-            return True
-        if trigger == "close-api-config-btn":
+    def toggle_api_config_modal(close_clicks, is_open):
+        if ctx.triggered_id == "close-api-config-btn":
             return False
         return is_open
 

@@ -33,6 +33,7 @@ from webui.components.alpaca_account import render_alpaca_account_section
 from webui.components.safety_panel import create_safety_panel
 from webui.components.cost_panel import create_cost_panel
 from webui.components.api_config_modal import create_api_config_modal
+from webui.components.integrations_panel import create_integrations_modal
 from webui.components.operations_panel import create_operations_panel
 from webui.components.decision_explorer import create_decision_explorer
 from webui.components.workbench import create_workbench_panel
@@ -199,6 +200,7 @@ def create_main_layout():
             *create_intervals(),
             *create_stores(),
             create_api_config_modal(),
+            create_integrations_modal(),
             create_setup_wizard(),
             *create_pulse_components(),
 
