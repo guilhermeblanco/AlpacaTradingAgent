@@ -41,6 +41,7 @@ from webui.components.vitals import create_vitals_strip
 from webui.callbacks.pulse_callbacks import create_pulse_components
 from webui.components.evaluation_panel import create_evaluation_panel
 from webui.components.setup_panel import create_setup_panel
+from webui.components.setup_wizard import create_setup_wizard
 from webui.config.constants import COLORS, REFRESH_INTERVALS
 from webui.config.navigation import DEFAULT_STAGE, STAGES
 
@@ -196,6 +197,7 @@ def create_main_layout():
             *create_intervals(),
             *create_stores(),
             create_api_config_modal(),
+            create_setup_wizard(),
             *create_pulse_components(),
 
             create_header(),
